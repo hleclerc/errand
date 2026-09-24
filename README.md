@@ -29,6 +29,28 @@ all](examples/01-minimal/), [four environments over three machines](examples/02-
 [an existing pytest / Catch2 / cargo project adopted in three
 lines](examples/03-existing-suite/).
 
+## Installing
+
+```bash
+pip install errand-run
+```
+
+The *distribution* is called `errand-run` — `errand` on PyPI is somebody else's project — but what
+you type, and what you import, is `errand`.
+
+It has **no dependencies, and it is not going to get any.** errand's job is to build the environment
+the work runs in, so it has to be able to run before any environment exists: it writes YAML without
+pyyaml and draws its screen with the standard library's curses for that reason alone. Python 3.10 or
+later, on a unix.
+
+Working on errand itself:
+
+```bash
+make venv       # a virtual environment with errand installed in it, editable
+make test       # the suite -- which is written with errand, and is the longest worked example
+make            # everything else, including the release order
+```
+
 ## Declaring work
 
 An entry is a piece of work that produces something. You declare it next to the code it exercises,

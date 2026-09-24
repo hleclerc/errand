@@ -3,35 +3,54 @@ requires = [ "hatchling" ]
 build-backend = "hatchling.build"
 
 [project]
+# The import name and the command are `errand`; the DISTRIBUTION is
+# `errand-run`, because `errand` on PyPI belongs to somebody else's project.
 name = "errand-run"
-version = "0.1.0.dev0"
+dynamic = [ "version" ]          # read from errand/__init__.py: one place, not two
 description = "Run work here, in a container or on another machine, and bring back what it produced"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = "MIT"
+license-files = [ "LICENSE" ]
 authors = [ { name = "Hugo Leclerc" } ]
 keywords = [ "benchmark", "experiment", "runner", "remote", "reproducibility", "hpc" ]
 classifiers = [
     "Development Status :: 3 - Alpha",
+    "Environment :: Console",
     "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "Operating System :: POSIX",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
     "Topic :: Software Development :: Testing",
     "Topic :: System :: Distributed Computing",
 ]
 
-# NOTHING here, on purpose. `./run env create` bootstraps the environment, so it
-# has to work before any environment exists -- the core cannot import a package
-# that isn't installed yet. See [project.optional-dependencies].
+# NOTHING, on purpose, and it is a property worth keeping. errand's job is to
+# BUILD the environment the work runs in, so it has to be able to run before
+# any environment exists -- including before its own dependencies could have
+# been installed. It writes YAML without pyyaml and draws its screen with the
+# curses in the standard library for exactly that reason.
 dependencies = [ ]
-
-[project.optional-dependencies]
-# result files are written as JSON when pyyaml isn't there
-yaml = [ "pyyaml" ]
 
 [project.scripts]
 errand = "errand.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/hleclerc/errand"
+Source = "https://github.com/hleclerc/errand"
+Issues = "https://github.com/hleclerc/errand/issues"
+
+[tool.hatch.version]
+path = "errand/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = [ "errand" ]
+
+# The sdist carries what it takes to check the thing out: the suite ( which is
+# written with errand, so it is also the longest worked example ) and the three
+# examples. Not the output trees, and not `errand.local.py`, which names one
+# person's machines.
+[tool.hatch.build.targets.sdist]
+include = [ "errand", "tests", "examples", "README.md", "LICENSE", "Makefile", "pyproject.toml" ]
+exclude = [ "**/__pycache__", "**/runs", "**/.errand", "**/target", "errand.local.py" ]

@@ -678,6 +678,7 @@ def build_parser( tag_names = ( ) ):
     p.add_argument( "--watch", action = "store_true", help = "the same, live" )
     p.add_argument( "--forget", default = None, help = "drop a submission from the list" )
     p.add_argument( "-h", "--help", action = "store_true", help = "show what matched, and its parameters" )
+    p.add_argument( "-V", "--version", action = "store_true", help = "which errand this is" )
     for name in tag_names:
         p.add_argument( f"--{name.replace( '_', '-' )}", dest = f"tag_{name}", default = None,
                         help = f"environments whose {name} tag matches (comma = matrix)" )
@@ -735,6 +736,13 @@ def main( argv = None ):
     parser = build_parser( config.tag_names() )
     known, _ = parser.parse_known_args( argv )
     known.pattern = positional_of( parser, argv )
+
+    if known.version:
+        # The version of the PACKAGE and the file it came out of: an editable
+        # install and a copy on PYTHONPATH answer the same otherwise, and which
+        # one is answering is exactly what is being asked.
+        print( f"errand {__version__}  ({Path( __file__ ).resolve().parent})" )
+        return 0
 
     if known.tui:
         # Imported here and nowhere else: it needs `curses`, which not every
