@@ -1,0 +1,13 @@
+Bootstrap: docker
+From: nvidia/cuda:13.0.0-devel-ubuntu24.04
+
+# errand rebuilds this image when the recipe changes -- the fingerprint it
+# keeps beside the .sif covers this file and the `pip` list of the layer that
+# names it. Nothing to run by hand.
+
+%post
+    apt-get update && apt-get install -y python3 python3-pip git
+    ln -sf /usr/bin/python3 /usr/local/bin/python
+
+%environment
+    export PYTHONUNBUFFERED=1

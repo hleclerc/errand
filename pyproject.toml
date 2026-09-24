@@ -1,0 +1,37 @@
+[build-system]
+requires = [ "hatchling" ]
+build-backend = "hatchling.build"
+
+[project]
+name = "errand-run"
+version = "0.1.0.dev0"
+description = "Run work here, in a container or on another machine, and bring back what it produced"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [ { name = "Hugo Leclerc" } ]
+keywords = [ "benchmark", "experiment", "runner", "remote", "reproducibility", "hpc" ]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Topic :: Software Development :: Testing",
+    "Topic :: System :: Distributed Computing",
+]
+
+# NOTHING here, on purpose. `./run env create` bootstraps the environment, so it
+# has to work before any environment exists -- the core cannot import a package
+# that isn't installed yet. See [project.optional-dependencies].
+dependencies = [ ]
+
+[project.optional-dependencies]
+# result files are written as JSON when pyyaml isn't there
+yaml = [ "pyyaml" ]
+
+[project.scripts]
+errand = "errand.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/hleclerc/errand"
+
+[tool.hatch.build.targets.wheel]
+packages = [ "errand" ]
