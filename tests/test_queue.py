@@ -20,18 +20,23 @@ def private_queue( ):
     """A queue of our own, so a test never waits on what the machine is really
     doing -- and puts the real one back, so the entries that run after this
     file do not inherit a directory that has been deleted."""
-    before = os.environ.get( "XDG_RUNTIME_DIR" )
+    before = { k: os.environ.get( k ) for k in ( "XDG_RUNTIME_DIR", Q.CLAIM ) }
     with tempfile.TemporaryDirectory() as tmp:
         os.environ[ "XDG_RUNTIME_DIR" ] = tmp
+        # These entries exercise the queue itself, so they have to look like a
+        # TOP-LEVEL run: the entry running them holds a claim, and an inherited
+        # one would turn every claim below into a no-op.
+        os.environ.pop( Q.CLAIM, None )
         Q._capacity = None
         try:
             yield Path( tmp )
         finally:
             Q._capacity = None
-            if before is None:
-                os.environ.pop( "XDG_RUNTIME_DIR", None )
-            else:
-                os.environ[ "XDG_RUNTIME_DIR" ] = before
+            for key, old in before.items():
+                if old is None:
+                    os.environ.pop( key, None )
+                else:
+                    os.environ[ key ] = old
 
 
 if test( "a size is read the way a person writes one" ):
@@ -154,8 +159,10 @@ if test( "a batch system already decides, so errand does not" ):
     try:
         assert Q.someone_else_is_scheduling() == "slurm"
         with private_queue():
-            with Q.claim( { "cpus": 999 }, exclusive = True, label = "x" ) as path:
-                assert path is None, "inside an allocation there is nothing to claim"
+            with Q.claim( { "cpus": 999 }, exclusive = True, label = "x" ) as granted:
+                assert granted.path is None, "inside an allocation there is nothing to claim"
+                # ...and every card the allocation gave us is ours to use
+                assert granted.devices == Q.devices()
             assert Q.held() == [ ]
     finally:
         del os.environ[ "SLURM_JOB_ID" ]
@@ -207,6 +214,7 @@ if p := bench( "greedy" ):
         project = write_project( Path( tmp ) / "proj", "", { "bench_greedy.py": WORK } )
 
         env = dict( os.environ )
+        env.pop( "ERRAND_CLAIM", None )      # two top-level runs, not two nested ones
         env[ "XDG_RUNTIME_DIR" ] = str( tmp )
         env[ "PYTHONPATH" ] = str( Path( __import__( "errand" ).__file__ ).resolve().parent.parent )
 
@@ -274,3 +282,25 @@ if test( "the lock carries the host, like everything else in the queue" ):
             pass
         names = [ p.name for p in Q.queue_dir().iterdir() ]
         assert any( n.startswith( f"lock-{Q.host()}" ) for n in names ), names
+
+
+if test( "an errand inside an errand inherits the claim rather than waiting for it" ):
+    # The entry that started it is holding one while it waits, so a child that
+    # queued would wait for a claim that cannot be released until the child is
+    # done. A quiet deadlock, and the reason the claim is handed down.
+    with private_queue():
+        with Q.claim( { "gpus": 0, "cpus": 1 }, label = "outer" ) as outer:
+            handed = outer.handed_down()
+            assert Q.CLAIM in handed
+
+            before = os.environ.get( Q.CLAIM )
+            os.environ.update( handed )
+            try:
+                with Q.claim( { }, exclusive = True, label = "inner" ) as inner:
+                    assert inner.path is None, "the inner claim must not take a second slot"
+                    assert len( Q.held() ) == 1, "only the outer claim is real"
+            finally:
+                if before is None:
+                    os.environ.pop( Q.CLAIM, None )
+                else:
+                    os.environ[ Q.CLAIM ] = before

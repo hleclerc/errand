@@ -25,6 +25,12 @@ WHEN SOMEBODY ELSE OWNS THE MACHINE, ERRAND DOES NOT QUEUE. Inside a Slurm,
 PBS, OAR or LSF allocation the scheduler has already decided what this process
 may have, and a second queue on top of it would only wait for itself. See
 `someone_else_is_scheduling`.
+
+The same rule applies to errand itself. An entry that runs another errand is
+holding a claim while it waits for the child, so a child that queued would
+wait for a claim its own parent will not release until the child is done --
+a deadlock, and a quiet one. The claim is therefore INHERITED: `ERRAND_CLAIM`
+says the machine has already been granted to this process tree.
 """
 from __future__ import annotations
 
@@ -47,6 +53,10 @@ POLL        = 0.25
 # Every batch system announces itself in the environment of the job it starts.
 ALLOCATION_VARS = ( "SLURM_JOB_ID", "PBS_JOBID", "OAR_JOB_ID", "LSB_JOBID",
                     "SGE_TASK_ID", "FLUX_JOB_ID" )
+
+# Set on everything an entry starts: the machine was already granted to this
+# process tree, so nothing inside it queues again.
+CLAIM = "ERRAND_CLAIM"
 
 
 def someone_else_is_scheduling( ) -> str | None:
@@ -242,11 +252,18 @@ def _fits( needs: dict, exclusive: bool, others: list ):
 @contextlib.contextmanager
 def claim( needs: dict, *, exclusive = False, label = "", enabled = True, echo = None ):
     """Hold a share of the machine for the duration of the block."""
+    inherited = os.environ.get( CLAIM )
+    if inherited is not None:
+        # Already paid for by whoever started us. Queueing again would wait for
+        # a claim that cannot be released until we are done with it.
+        yield Granted( path = None, devices = _devices_of( inherited ) )
+        return
+
     scheduler = someone_else_is_scheduling()
     if not enabled or os.environ.get( "ERRAND_NO_QUEUE" ) or scheduler:
         if scheduler and echo:
             echo( f"  ({scheduler} already decided what this process may have)" )
-        yield None
+        yield Granted( path = None, devices = devices() if scheduler else [ ] )
         return
 
     needs = normalize( needs )
@@ -278,11 +295,19 @@ def claim( needs: dict, *, exclusive = False, label = "", enabled = True, echo =
         mine.unlink( missing_ok = True )
 
 
+def _devices_of( spelt: str ) -> list:
+    return [ int( d ) for d in spelt.split( "," ) if d.strip().isdigit() ]
+
+
 @dataclass
 class Granted:
     """What the machine gave: where the claim is, and which devices are ours."""
-    path   : Path
+    path   : Path | None
     devices: list
+
+    def handed_down( self ) -> dict:
+        """What everything this entry starts must be told."""
+        return { CLAIM: ",".join( str( d ) for d in self.devices ) }
 
     def env( self ) -> dict:
         """What a child has to be told so it uses the cards it was given.

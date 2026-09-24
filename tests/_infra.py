@@ -143,13 +143,23 @@ def write_project( directory: Path, errandfile: str, files: dict, vendor = False
     return directory
 
 
-def run_errand( directory: Path, *args ):
-    """`errand` as a real subprocess, in `directory`. -> ( returncode, output )."""
+def run_errand( directory: Path, *args, timeout = 600 ):
+    """`errand` as a real subprocess, in `directory`. -> ( returncode, output ).
+
+    A TOP-LEVEL invocation, on a queue of its own. Both matter: an inherited
+    claim would make the run under test skip the queue entirely, and the real
+    queue would make it wait for -- or deadlock against -- the claim held by
+    the entry that started it.
+    """
     import errand
     env = dict( os.environ )
+    env.pop( "ERRAND_CLAIM", None )
+    queue = directory / ".queue"
+    queue.mkdir( parents = True, exist_ok = True )
+    env[ "XDG_RUNTIME_DIR" ] = str( queue )
     package_root = str( Path( errand.__file__ ).resolve().parent.parent )
     env[ "PYTHONPATH" ] = os.pathsep.join(
         [ package_root, *filter( None, [ env.get( "PYTHONPATH" ) ] ) ] )
     got = subprocess.run( [ "python3", "-m", "errand", *args ], cwd = directory, env = env,
-                          capture_output = True, text = True, timeout = 600 )
+                          capture_output = True, text = True, timeout = timeout )
     return got.returncode, got.stdout + got.stderr

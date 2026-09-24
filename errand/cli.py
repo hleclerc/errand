@@ -165,11 +165,12 @@ def aggregate_needs( entries ):
 
 
 def run_entries( entries, modules, *, root, out_root, overrides, env_name, tags,
-                 container, version, report, queued = True ):
+                 container, version, report, queued = True, quiet = False ):
     E.set_tags( tags )
     where = R.place( container )
-    print( head( f"\n{'=' * 10} {len( entries )} entr{'y' if len( entries ) == 1 else 'ies'}"
-                 f"  {env_name}  {where} {'=' * 10}" ), flush = True )
+    if not quiet:
+        print( head( f"\n{'=' * 10} {len( entries )} entr{'y' if len( entries ) == 1 else 'ies'}"
+                     f"  {env_name}  {where} {'=' * 10}" ), flush = True )
 
     for e in entries:
         try:
@@ -199,8 +200,11 @@ def run_entries( entries, modules, *, root, out_root, overrides, env_name, tags,
             # Being told WHICH card is the whole point of asking for one: two
             # entries that both picked the first would share it and neither
             # would measure anything.
-            with _with_env( granted.env() if granted else { } ):
-                if granted and granted.devices:
+            # Everything this entry starts inherits the claim: an errand it
+            # runs must not queue for a machine its own parent is holding.
+            handed = { **granted.env(), **granted.handed_down() } if granted else { }
+            with _with_env( handed ):
+                if granted and granted.devices and granted.path:
                     print( dim( f"  gpu {','.join( str( d ) for d in granted.devices )}" ),
                            flush = True )
                 started = time.perf_counter()
@@ -241,6 +245,99 @@ def run_entries( entries, modules, *, root, out_root, overrides, env_name, tags,
         R.refresh( entry_root )
 
     return report
+
+
+# ── running, several at once ─────────────────────────────────────────────────
+#
+# One process per entry, because the isolation between entries IS the module
+# reload, and a reload only isolates within one interpreter. Serial runs stay
+# in this process: they are faster that way and their output arrives live.
+#
+# A child is told which entry by call site (`--at file:line`) and what its
+# parameters are through the environment -- not as flags, because a resolved
+# value is allowed to contain a comma and a comma on the command line means a
+# matrix.
+
+PARAMS = "ERRAND_PARAMS"
+
+
+def job_count( asked ) -> int:
+    if asked in ( None, "", "1" ):
+        return 1
+    if str( asked ) == "auto":
+        return max( 1, os.cpu_count() or 1 )
+    try:
+        return max( 1, int( asked ) )
+    except ValueError:
+        raise ValueError( f"-j: expected a number or `auto`, got {asked!r}" )
+
+
+def run_in_processes( entries, combos, *, root, out_root, env, tags, how_many, report,
+                      out_prefix ):
+    """Each entry, in its own process, up to `how_many` at a time.
+
+    What came of it is read back from the result file rather than parsed out of
+    the child's chatter: the path was worked out before the child started, and
+    the file is the record either way.
+    """
+    import subprocess
+
+    from . import yamlish
+
+    pending = [ ( e, values ) for _, values in combos for e in entries ]
+    running, done = [ ], 0
+    total = len( pending )
+    print( head( f"\n{'=' * 10} {total} entr{'y' if total == 1 else 'ies'}"
+                 f"  {env.name}  {out_prefix}  -j {how_many} {'=' * 10}" ), flush = True )
+
+    def start( e, values ):
+        child = dict( os.environ )
+        child[ PARAMS ] = yamlish.dump( { k: v for k, v in values.items() } ).strip()
+        child[ "PYTHONUNBUFFERED" ] = "1"
+        argv = [ sys.executable, "-m", "errand", "--at", f"{e.file}:{e.line}",
+                 "--root", str( root ), "--out", str( out_root ), "--env", env.name ]
+        return ( e, values,
+                 subprocess.Popen( argv, cwd = root, env = child, text = True,
+                                   stdout = subprocess.PIPE, stderr = subprocess.STDOUT ) )
+
+    while pending or running:
+        while pending and len( running ) < how_many:
+            running.append( start( *pending.pop( 0 ) ) )
+
+        e, values, child = running.pop( 0 )
+        output = child.communicate()[ 0 ]
+        done += 1
+        # In completion order, as a block: interleaved lines from several
+        # entries at once are unreadable, and worse, unattributable.
+        sys.stdout.write( output )
+        sys.stdout.flush()
+
+        resolved = E.resolve_params( e.params, values )
+        leaf, _ = R.dirs_for( out_root, e, resolved, R.place( env.container ) )
+        got = yamlish.read( leaf / R.RESULT ) or { }
+        status = got.get( "status" ) or ( "PASS" if child.returncode == 0 else "FAIL" )
+        if status == "SKIP":
+            report.skipped.append( ( e, got.get( "error" ), None ) )
+        elif status != "PASS":
+            report.failed.append( ( e, got.get( "error" ) or f"exit {child.returncode}" ) )
+    return report
+
+
+def run_one( at, *, root, out_root, env_name, tags, container, version, report, queued ):
+    """The child side of the above: exactly the entry at FILE:LINE."""
+    from . import yamlish
+
+    path, _, line = at.rpartition( ":" )
+    entries, modules = discovery.select_at( Path( path ), int( line ), root )
+    if not entries:
+        print( bad( f"no entry at {at}" ) )
+        return 1
+
+    values = yamlish.load( os.environ.get( PARAMS, "" ) ) if os.environ.get( PARAMS ) else { }
+    run_entries( entries, modules, root = root, out_root = out_root, overrides = values,
+                 env_name = env_name, tags = tags, container = container, version = version,
+                 report = report, queued = queued, quiet = True )
+    return 1 if report.failed else 0
 
 
 # ── running, elsewhere ───────────────────────────────────────────────────────
@@ -298,6 +395,13 @@ def print_envs( root ):
     print( dim( f"\n  choose one with --env <name>, or by tag: "
                 f"{ ' '.join( '--' + n for n in config.tag_names() ) or '(no tags declared)' }" ) )
     return 0
+
+
+def _put_src_on_path( root ):
+    sys.path.insert( 0, str( root ) )
+    for extra in ( config.settings.src or [ "src" ] ):
+        if ( root / extra ).is_dir():
+            sys.path.insert( 0, str( root / extra ) )
 
 
 def ssh_root( env, root ):
@@ -363,7 +467,10 @@ def build_parser( tag_names = ( ) ):
     p.add_argument( "--dry-run", action = "store_true", help = "say what setup would do" )
     p.add_argument( "--out", default = None, help = "output tree (default: runs)" )
     p.add_argument( "--root", default = None, help = "project root (default: found from the cwd)" )
-    p.add_argument( "-j", "--jobs", default = None, help = "how many at once" )
+    p.add_argument( "-j", "--jobs", default = "1",
+                    help = "how many entries at once: a number, or `auto`" )
+    p.add_argument( "--at", default = None,
+                    help = argparse.SUPPRESS )   # internal: run exactly the entry at FILE:LINE
     p.add_argument( "--no-queue", action = "store_true",
                     help = "do not wait for the machine to be free" )
     p.add_argument( "--queue", action = "store_true", help = "what the host is busy with, and stop" )
@@ -432,6 +539,24 @@ def main( argv = None ):
     if known.queue:
         return print_queue()
 
+    if known.at:
+        # A child running exactly one entry: no discovery over the tree, no
+        # environment selection ( it is already inside one ), no epilogue.
+        # `--env` names it when the parent dispatched to one of several; being
+        # INSIDE one ( a container, another machine ) names it instead, and
+        # wins, because that is where this process actually is.
+        inside = os.environ.get( IN_ENV )
+        env_obj = ( config.envs.get( inside ) if inside
+                    else config.envs.get( known.env ) if known.env
+                    else config.default_env() )
+        _put_src_on_path( root )
+        return run_one( known.at, root = root, out_root = out_root,
+                        env_name = ( env_obj.name if env_obj else known.env or "default" ),
+                        tags = _tags_from_env() or ( env_obj.tags if env_obj else { } ),
+                        container = env_obj.container if env_obj else None,
+                        version = __version__, report = Report(),
+                        queued = not known.no_queue )
+
     kinds = set()
     for k in known.kind:
         if k not in KINDS:
@@ -439,10 +564,7 @@ def main( argv = None ):
             return 2
         kinds.add( KINDS[ k ] )
 
-    sys.path.insert( 0, str( root ) )
-    for extra in ( config.settings.src or [ "src" ] ):
-        if ( root / extra ).is_dir():
-            sys.path.insert( 0, str( root / extra ) )
+    _put_src_on_path( root )
 
     try:
         selected, modules = discovery.select(
@@ -471,6 +593,7 @@ def main( argv = None ):
 
     try:
         combos = expand( { n: getattr( args, n, None ) for n in declared }, declared )
+        how_many = job_count( args.jobs )
     except ValueError as err:
         print( bad( str( err ) ) )
         return 1
@@ -526,6 +649,12 @@ def main( argv = None ):
         os.environ.update( L.compose( [ l for l in env.stack if isinstance( l, L.Vars ) ],
                                       L.Command( [ "python" ] ),
                                       L.Context( root = root, tags = tags ) ).env )
+
+        if how_many > 1:
+            run_in_processes( selected, combos, root = root, out_root = out_root, env = env,
+                              tags = tags, how_many = how_many, report = report,
+                              out_prefix = R.place( env.container ) )
+            continue
 
         for i, ( varied, values ) in enumerate( combos ):
             if varied:

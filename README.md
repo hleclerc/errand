@@ -294,6 +294,24 @@ errand --queue        # what the host has, and what is holding it
 errand --no-queue     # this run does not wait, and does not hold
 ```
 
+```bash
+errand -j 8           # eight entries at a time
+errand -j auto        # as many as the machine has cores
+errand                # one at a time: the default
+```
+
+`-j` runs **one process per entry**, because the isolation between entries is the module reload and
+a reload only isolates within one interpreter. A serial run stays in this process, where it is
+faster and its output arrives live; each parallel entry's output is held and printed whole, in
+completion order, since interleaved lines from several entries at once are unreadable and, worse,
+unattributable. What came of a child is read back from its result file rather than parsed out of its
+chatter — the path was worked out before the child started, and the file is the record either way.
+
+**An errand started from inside an errand inherits the claim** instead of waiting for it. The entry
+that started it is holding one while it waits, so a child that queued would be waiting for something
+its own parent cannot release until the child is done. Same rule as the batch systems: what has
+already been granted is not asked for twice.
+
 **A card is assigned, not merely counted.** An entry that asked for `gpus = 1` is told *which* one,
 through `CUDA_VISIBLE_DEVICES` (and the `HIP`/`ROCR` spellings); two entries that both asked for one
 get different cards. Counting alone would let them both pick the first and neither would measure
@@ -590,10 +608,6 @@ One thing is deliberately left to you: a matrix that spans a laptop and a cluste
 will produce numbers that are not comparable, and `errand` will not stop you. It runs what you ask
 where you ask and records where each number came from; deciding what may be compared to what is
 yours.
-
-Not done yet: running several entries at once inside ONE invocation. The queue already keeps
-separate invocations out of each other's way, which is the case that bites; entries within a single
-run still go one after another, because isolating them from each other means a process apiece.
 
 Known to be unresolved: what a summary should say *across* places. Min and max per row are enough to
 read, but deciding that a machine got slower is a different question, and one that wants to know

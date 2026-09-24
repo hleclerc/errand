@@ -138,6 +138,20 @@ def collect( files: list[ Path ], root: Path ):
     return list( E.collected ), modules
 
 
+def select_at( path: Path, line: int, root: Path ):
+    """The one entry declared at `path:line` -- and only that file imported.
+
+    A child running a single entry has no use for the rest of the tree, and
+    paying for a full discovery in every one of them is what would make a
+    process per entry too expensive to be worth having.
+    """
+    entries, modules = collect( [ path ], root )
+    for e in entries:
+        if e.line == line:
+            return [ e ], modules
+    return [ ], modules
+
+
 def select( pattern, root, kinds = None, entry_tags = None, bulk_only = False, exclude = ( ) ):
     """Everything the command line asked for: ( entries, modules )."""
     from .expr import matches
