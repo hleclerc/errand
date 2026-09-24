@@ -39,7 +39,7 @@ if test( "an entry is its call site, so two may share a name" ):
         test( "same" )
     got = collected_of( two )
     assert len( got ) == 2
-    assert got[ 0 ].key != got[ 1 ].key
+    assert got[ 0 ].site != got[ 1 ].site
     # and the site is the USER's line, not the preset's inside errand
     assert all( e.file.name == "test_entries.py" for e in got )
 

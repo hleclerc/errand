@@ -29,6 +29,7 @@ __all__ = [
     "configure", "env", "provider", "main",
     "Vars", "Venv", "Micromamba", "Conda", "Uv", "Nix", "Guix", "Module",
     "Apptainer", "Docker", "Podman", "Ssh", "Slurm",
+    "Provider", "Outcome", "RunContext", "Pytest", "Catch2", "Cargo",
 ]
 
 # Everything past the declaration surface is reached lazily: an entry file
@@ -52,6 +53,12 @@ _LAZY = {
     "Podman"    : "errand.layers",
     "Ssh"       : "errand.layers",
     "Slurm"     : "errand.layers",
+    "Provider"  : "errand.providers",
+    "Outcome"   : "errand.providers",
+    "RunContext": "errand.providers",
+    "Pytest"    : "errand.providers",
+    "Catch2"    : "errand.providers",
+    "Cargo"     : "errand.providers",
 }
 
 

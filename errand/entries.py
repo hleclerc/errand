@@ -57,6 +57,11 @@ class Args:
 
 
 class Entry:
+    # A provider ( None: this file's own two-phase guard ) and the opaque key it
+    # uses to find this entry again when asked to run it.
+    provider = None
+    key      = None
+
     def __init__( self, name, tags, params, traits, resources, file, line, module ):
         self.name      = name
         self.tags      = tags          # list[str], free-form, filtered by -e
@@ -68,7 +73,7 @@ class Entry:
         self.module    = module
 
     @property
-    def key( self ):
+    def site( self ):
         """Identity: where it is written, not what it is called."""
         return ( self.module, self.line )
 
@@ -163,7 +168,7 @@ def entry( name, tags = None, /, **kw ):
                                  frame.f_code.co_filename, line, module ) )
         return False
 
-    if target is None or ( module, line ) != target.key:
+    if target is None or ( module, line ) != target.site:
         return False
 
     return Args( results = results, out_dir = out_dir( ), **dict( _resolved ) )

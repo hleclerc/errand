@@ -27,6 +27,11 @@ SKIP_DIRS = {
 
 MARKER = "errand"
 
+# The project's own files: they mention errand by nature, and re-executing one
+# as if it declared work would register everything it declares a SECOND time --
+# providers twice over, environments twice over, every entry duplicated.
+NOT_WORK = ( "errandfile.py", "errand.py", "errand.local.py" )
+
 # The package errand imports candidate files under. A synthetic root, so that a
 # file under tests/ is never confused with an installed package of the same
 # name, while ancestor directories still act as packages -- which is what makes
@@ -49,7 +54,7 @@ def candidates( root: Path, exclude = ( ) ) -> list[ Path ]:
     here = Path( __file__ ).resolve().parent      # errand's own sources mention the marker
     out = [ ]
     for p in iter_py_files( root, exclude ):
-        if here in p.resolve().parents or p.name == "errand.py":
+        if here in p.resolve().parents or p.name in NOT_WORK:
             continue
         try:
             if MARKER in p.read_text( errors = "ignore" ):
@@ -65,6 +70,13 @@ def parse_pattern( pattern: str | None, files: list[ Path ], root: Path ):
     """-> [ ( matched_files, name_glob | None ), ... ], one per comma-separated spec."""
     specs = [ s.strip() for s in pattern.split( "," ) ] if pattern else [ "" ]
     return [ _one_spec( s, files, root ) for s in specs ]
+
+
+def _declares_entries( path: Path ) -> bool:
+    try:
+        return MARKER in path.read_text( errors = "ignore" )
+    except OSError:
+        return False
 
 
 def _one_spec( spec, files, root ):
@@ -152,22 +164,42 @@ def select_at( path: Path, line: int, root: Path ):
     return [ ], modules
 
 
-def select( pattern, root, kinds = None, entry_tags = None, bulk_only = False, exclude = ( ) ):
+def select( pattern, root, kinds = None, entry_tags = None, bulk_only = False, exclude = ( ),
+            providers = ( ) ):
     """Everything the command line asked for: ( entries, modules )."""
     from .expr import matches
 
+    # One pool of files, so that "a bare name must resolve to exactly one" is
+    # checked across every provider at once rather than inside each.
     files = candidates( root, exclude )
+    for p in providers:
+        files += [ f for f in p.files() if f not in files ]
+    files = sorted( set( files ), key = str )
+
     specs = parse_pattern( pattern, files, root )
     wanted = sorted( { f for matched, _ in specs for f in matched }, key = str )
 
-    all_entries, modules = collect( wanted, root )
+    mine = [ f for f in wanted if f.suffix == ".py" and _declares_entries( f ) ]
+    all_entries, modules = collect( mine, root )
+    for p in providers:
+        all_entries += p.collect( specs )
+
+    # The `::name` that chose a whole-file entry is not consumed here: a
+    # provider that runs files hands it to the binary as its own filter.
+    from .providers import selector_of
+    selectors = { }
 
     out = [ ]
     for e in all_entries:
         for matched, name_glob in specs:
             if e.file not in matched:
                 continue
-            if name_glob is not None and not fnmatch.fnmatchcase( e.name, name_glob ):
+            # A provider whose entries are whole files consumes the `::name`
+            # itself; filtering on it here would reject the entry for not
+            # being called after one of its own cases.
+            consumed = e.provider is not None and e.provider.whole_files
+            if name_glob is not None and not consumed and \
+               not fnmatch.fnmatchcase( e.name, name_glob ):
                 continue
             if kinds and e.kind not in kinds:
                 continue
@@ -176,5 +208,7 @@ def select( pattern, root, kinds = None, entry_tags = None, bulk_only = False, e
             if entry_tags and not matches( entry_tags, e.tags ):
                 continue
             out.append( e )
+            if e.provider is not None:
+                selectors[ e.name ] = selector_of( specs, e.file )
             break
-    return out, modules
+    return out, modules, selectors

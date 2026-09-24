@@ -589,6 +589,13 @@ first look, never silent, and the cure is to write the line.
 Discovery over a large tree is not free, and will be cached against file mtimes. Later; it is an
 optimization, not a design question.
 
+`Pytest` asks pytest for its own tests rather than reimplementing its collection rules — that is how
+a runner starts quietly disagreeing with the tool it wraps — so its entries are per test and its
+marks are entry tags. `Catch2` is per *file*, because the cases of a compiled suite cannot be
+enumerated without building it and `collect()` has to work before anything is built; the `::name`
+goes to the binary as its own filter. `Cargo` asks `cargo metadata`, which knows the targets without
+compiling any of them.
+
 Writing a provider for something else is a three-method protocol; see the wiki.
 
 ## Status
@@ -596,8 +603,8 @@ Writing a provider for something else is a three-method protocol; see the wiki.
 Everything above works and is covered by errand's own suite, which is written with errand. Not
 released: the API may still move.
 
-Still to write: the providers for other languages (the protocol is settled, the implementations are
-not), and `errand init`.
+Still to write: `errand init`, and providers beyond the three that ship (GoogleTest, doctest, ctest,
+JavaScript).
 
 One thing is deliberately left to you: a matrix that spans a laptop and a cluster partition at once
 will produce numbers that are not comparable, and `errand` will not stop you. It runs what you ask

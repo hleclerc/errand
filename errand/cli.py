@@ -11,7 +11,7 @@ import time
 import traceback
 from pathlib import Path
 
-from . import batch, config, discovery, entries as E, layers as L, local, queue, results as R, setup
+from . import batch, config, discovery, entries as E, layers as L, local, providers as P, queue, results as R, setup
 
 BOLD, DIM, GREEN, RED, YELLOW, CYAN, RESET = (
     "\033[1m", "\033[2m", "\033[32m", "\033[31m", "\033[33m", "\033[36m", "\033[0m" )
@@ -165,8 +165,10 @@ def aggregate_needs( entries ):
 
 
 def run_entries( entries, modules, *, root, out_root, overrides, env_name, tags,
-                 container, version, report, queued = True, quiet = False ):
+                 container, version, report, queued = True, quiet = False,
+                 selectors = None ):
     E.set_tags( tags )
+    selectors = selectors or { }
     where = R.place( container )
     if not quiet:
         print( head( f"\n{'=' * 10} {len( entries )} entr{'y' if len( entries ) == 1 else 'ies'}"
@@ -210,7 +212,19 @@ def run_entries( entries, modules, *, root, out_root, overrides, env_name, tags,
                 started = time.perf_counter()
                 with capture() as buf:
                     try:
-                        discovery.import_file( modules[ e.module ], root )
+                        if e.provider is None:
+                            discovery.import_file( modules[ e.module ], root )
+                        else:
+                            # Somebody else's suite: it runs itself, and only
+                            # says what came of it. Everything around the run
+                            # is the same as for anything here.
+                            got = e.provider.run( e, P.RunContext(
+                                root = root, out_dir = leaf, params = resolved,
+                                env = dict( handed ), selector = selectors.get( e.name ) ) )
+                            status, error = got.status, got.error
+                            E.results.update( got.results )
+                            if got.output:
+                                print( got.output, end = "" )
                     except local.Skipped as s:
                         status, error, hint = "SKIP", s.reason, s.hint
                     except BaseException as exc:         # SystemExit included
@@ -714,9 +728,10 @@ def main( argv = None ):
     _put_src_on_path( root )
 
     try:
-        selected, modules = discovery.select(
+        selected, modules, selectors = discovery.select(
             known.pattern, root, kinds = kinds, entry_tags = known.entry_tags,
             bulk_only = not known.pattern and not kinds, exclude = config.settings.exclude,
+            providers = config.providers,
         )
     except ValueError as err:
         print( bad( str( err ) ) )
@@ -813,7 +828,7 @@ def main( argv = None ):
             run_entries( selected, modules, root = root, out_root = out_root,
                          overrides = values, env_name = env.name, tags = tags,
                          container = env.container, version = __version__, report = report,
-                         queued = not args.no_queue )
+                         queued = not args.no_queue, selectors = selectors )
 
     return _epilogue( report, rc )
 
