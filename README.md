@@ -25,7 +25,7 @@ the work, its parameters, its environment and its date. Numbers, files, logs and
 and comparison between dates, machines and parameter sets falls out of the directory tree.
 
 Three worked examples, in order, in [`examples/`](examples/): [no configuration at
-all](examples/01-minimal/), [six environments over three machines](examples/02-environments/), and
+all](examples/01-minimal/), [four environments over three machines](examples/02-environments/), and
 [an existing pytest / Catch2 / cargo project adopted in three
 lines](examples/03-existing-suite/).
 
@@ -153,7 +153,7 @@ env( "local", [ Micromamba( "myenv", python = "3.13", requirements = "requiremen
 
 env( "gpu", [ Apptainer( image = "containers/cuda.sif", recipe = "containers/cuda.def",
                          pip = [ "jax[cuda13]" ] ) ],
-     driver = "jax", cuda = True, fp = "32|64" )
+     driver = "jax", cuda = True )
 
 env( "cluster", [ Ssh( host = "gpu-box", root = "/home/me/proj" ),
                   Slurm( partition = "gpu", gpus = 1, time = "2:00:00" ),
@@ -440,9 +440,9 @@ anything else is the same view over the same tree.
 None is needed. `errand` with no configuration at all finds your entries and runs them in the
 interpreter you started it with.
 
-To declare environments, tags and the rest, put an `errand.py` at the root of the project. It is
-ordinary Python, loaded once by path — never as a module called `errand`, so it does not shadow the
-package it imports from. There is no entry point to call and nothing to return:
+To declare environments, tags and the rest, put an **`errandfile.py`** at the root of the project —
+the same idea as a Makefile or a Dockerfile. It is ordinary Python, loaded once by path and under a
+private name, with no entry point to call and nothing to return:
 
 ```python
 from errand import configure, env, provider, Micromamba, Apptainer, Ssh
@@ -457,9 +457,14 @@ env( "gpu", [ Apptainer( image = "containers/cuda.sif", recipe = "containers/cud
 provider( Catch2( dir = "tests/cpp" ) )
 ```
 
+Calling it `errandfile.py` also works, and is a trap worth naming: a module of that name at the root of
+a project **shadows the package** wherever the root is on `sys.path`, which is to say for
+`python -m errand` and for any script started from there. `errand` says so out loud when it finds
+one. The `errandfile.py` spelling has no such problem.
+
 ```python
 configure(
-    root   = None,     # repo root; found by walking up from the cwd for errand.py
+    root   = None,     # repo root; found by walking up from the cwd for errandfile.py
     out    = "runs",   # where the output tree goes
     layout = None,     # override the path scheme
     src    = [ ],      # paths prepended to every child's PYTHONPATH
@@ -479,11 +484,38 @@ if entry( "docs", bulk = False ):
 errand docs
 ```
 
+### What only this machine can supply
+
+Reaching an ssh host, or a queue you are allowed to submit to, depends on who is running. None of it
+can be committed and none of it can be invented, so it goes in an untracked **`errand.local.py`**
+beside the errandfile, and an entry asks for what it needs by name:
+
+```python
+from errand import test, need
+
+if test( "it runs over there" ):
+    host = need( "ssh_host", "a machine you can ssh to without a password", example = "gpu-box" )
+```
+
+When it is not there the entry is **skipped** — never passed — and the run ends with a block saying
+what was missing and exactly what to write where:
+
+```
+  3 skipped:
+    it runs over there  (test_ssh.py:18)  needs `ssh_host` -- a machine you can ssh to without a password
+      errand.local.py does not exist yet. Create it (it is not tracked) with:
+          ssh_host = 'gpu-box'
+```
+
+A skip is its own status, in the output and in `result.yaml`. `skip( "reason" )` says it directly
+for anything else that makes an entry inapplicable today. A suite that quietly tested nothing must
+not be able to look like a suite that passed.
+
 ## Other languages
 
 An entry does not have to be a Python call site. Providers for C++ (Catch2, GoogleTest, doctest),
 Rust (`cargo test`, Criterion), JavaScript and plain executables come with `errand`, and one line
-in `errand.py` puts an existing suite under it — with an output directory, summaries, environment
+in `errandfile.py` puts an existing suite under it — with an output directory, summaries, environment
 matrices and remote repatriation, none of which it had before:
 
 ```python
@@ -499,8 +531,8 @@ land in `result.yaml` beside everyone else's.
 
 A provider finds its own entries the way its ecosystem does — `pytest`'s collection rules, the
 `test_*.cpp` under a directory, `cargo`'s targets. That is a guess about your layout, so it is a
-guess you write down: a provider line in `errand.py` is the declaration of what will be looked for
-and where, and it takes the arguments to say something else. With no `errand.py` at all, `errand`
+guess you write down: a provider line in `errandfile.py` is the declaration of what will be looked for
+and where, and it takes the arguments to say something else. With no `errandfile.py` at all, `errand`
 guesses on its own and **tells you what it guessed** before running anything — convenient for a
 first look, never silent, and the cure is to write the line.
 

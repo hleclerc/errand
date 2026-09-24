@@ -10,6 +10,7 @@ SHAPES = [
     { "params": { "n": 5000, "method": "newton" }, "results": { "seconds": 12.406 } },
     { "tags": { "driver": "jax", "cuda": True, "fp": "64" } },
     { "list": [ 1, 2, 3 ], "empty_list": [ ], "empty_map": { } },
+    { "layers": { "0:venv:python3": "abc", "1:apptainer:cuda.sif": "def" } },
     { "entries": { "a": { "status": "PASS", "runs": 1 },
                    "b": { "status": "FAIL", "runs": 2 } } },
 ]
@@ -33,6 +34,15 @@ if test( "strings that could be mistaken for something else" ):
         "leading"  : " padded",
     }
     assert load( dump( tricky ) ) == tricky
+
+
+if test( "a key may hold a colon, or a comma" ):
+    # `0:venv:python3` is unambiguous to a human and a trap for a parser: there
+    # is nothing in the line that says which colon separates key from value.
+    keyed = { "0:venv:python3": "abc", "a, b": 1, "plain": 2 }
+    assert load( dump( keyed ) ) == keyed
+    nested = { "layers": { "0:venv:python3": "abc", "1:apptainer:cuda.sif": "def" } }
+    assert load( dump( nested ) ) == nested
 
 
 if test( "floats survive" ):

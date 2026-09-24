@@ -21,13 +21,32 @@ from .entries import (          # noqa: F401  -- the public surface of a file of
     tag,
     test,
 )
+from .local import Skipped, have, need, skip   # noqa: F401
 
 __all__ = [
-    "Args", "Param", "bench", "entry", "experiment", "has_tag", "out_dir", "tag", "test",
-    "main",
+    "Args", "Param", "Skipped", "bench", "entry", "experiment", "has_tag", "have",
+    "need", "out_dir", "skip", "tag", "test",
+    "configure", "env", "provider", "main",
+    "Vars", "Venv", "Micromamba", "Conda", "Uv", "Apptainer", "Docker", "Ssh",
 ]
 
-_LAZY = { "main": "errand.cli" }
+# Everything past the declaration surface is reached lazily: an entry file
+# imports from here, and finding entries means importing EVERY candidate file,
+# so that path must stay as cheap as a couple of stdlib modules.
+_LAZY = {
+    "main"      : "errand.cli",
+    "configure" : "errand.config",
+    "env"       : "errand.config",
+    "provider"  : "errand.config",
+    "Vars"      : "errand.layers",
+    "Venv"      : "errand.layers",
+    "Micromamba": "errand.layers",
+    "Conda"     : "errand.layers",
+    "Uv"        : "errand.layers",
+    "Apptainer" : "errand.layers",
+    "Docker"    : "errand.layers",
+    "Ssh"       : "errand.layers",
+}
 
 
 def __getattr__( name ):

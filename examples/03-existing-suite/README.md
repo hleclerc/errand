@@ -1,10 +1,10 @@
 # 03 — a project that already has a suite
 
-A pytest suite, a Catch2 suite and a cargo one, none of them modified. Three lines in `errand.py`
+A pytest suite, a Catch2 suite and a cargo one, none of them modified. Three lines in `errandfile.py`
 put all three under `errand`.
 
 ```
-errand.py                  three providers, two environments
+errandfile.py                  three providers, two environments
 tests/test_api.py          ordinary pytest, still runs under `pytest`
 cpp/test_geometry.cpp      ordinary Catch2, still runs on its own
 rust/                      ordinary cargo
@@ -46,16 +46,16 @@ and the numbers accumulate per machine and per date, next to the Python ones, in
 
 ## Guessing, and writing the guess down
 
-Run `errand` in a project with no `errand.py` at all and it will find these suites by itself — and
+Run `errand` in a project with no `errandfile.py` at all and it will find these suites by itself — and
 say so before running anything:
 
 ```
-  no errand.py; guessed:  pytest (tests/)  ·  catch2 (cpp/)  ·  cargo (rust/)
+  no errandfile.py; guessed:  pytest (tests/)  ·  catch2 (cpp/)  ·  cargo (rust/)
   write them down to stop guessing:  errand --write-config
 ```
 
 Every framework locates its tests by assuming something about your layout, so there is no version of
-this that does not guess. What `errand.py` changes is that the assumption is visible, versioned, and
+this that does not guess. What `errandfile.py` changes is that the assumption is visible, versioned, and
 arguable — `Pytest( dirs = [ "tests" ] )` says exactly what will be looked at, and takes arguments
 to say something else.
 

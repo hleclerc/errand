@@ -4,7 +4,7 @@ Four environments over three machines, declared in one file, and one benchmark t
 any of them.
 
 ```
-errand.py            where and how things run
+errandfile.py            where and how things run
 requirements.txt     what the local environment installs
 containers/cuda.def  what the image is built from
 src/solver.py        the work; knows nothing about errand
@@ -39,7 +39,7 @@ errand -k bench --fp 32
 errand -k bench -t 'cuda & !remote' # by expression
 ```
 
-Tags are the keyword arguments on `env( … )` in `errand.py`. Nothing declares them in advance, and
+Tags are the keyword arguments on `env( … )` in `errandfile.py`. Nothing declares them in advance, and
 an environment that omits a name matches any value of it.
 
 ## Running in several places at once

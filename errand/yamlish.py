@@ -27,9 +27,12 @@ def _scalar( v ):
         # repr keeps round-tripping; inf/nan are not YAML numbers, so quote them
         return repr( v ) if v == v and abs( v ) != float( "inf" ) else f"'{v!r}'"
     s = str( v )
+    # A colon anywhere, not just before a space: a KEY like `0:venv:python3`
+    # is unambiguous to a human and a trap for a parser, which has no way to
+    # know which of the three separates the key from the value.
     if ( s == "" or s[ 0 ] in _NEEDS_QUOTES or s[ 0 ] == " " or s[ -1 ] == " "
          or s in ( "null", "true", "false", "yes", "no", "~" )
-         or _looks_numeric( s ) or ": " in s or " #" in s ):
+         or _looks_numeric( s ) or ":" in s or " #" in s or "," in s ):
         return "'" + s.replace( "'", "''" ) + "'"
     return s
 
@@ -120,7 +123,7 @@ def _parse_value( s ):
             return { }
         out = { }
         for item in _split_top( body ):
-            k, _, v = item.partition( ":" )
+            k, v = _split_key( item.strip() )
             out[ _parse_scalar( k ) ] = _parse_value( v )
         return out
     if s.startswith( "[" ) and s.endswith( "]" ):
@@ -129,13 +132,27 @@ def _parse_value( s ):
     return _parse_scalar( s )
 
 
+def _split_key( line ):
+    """Key and value of `k: v`, cutting at the first colon OUTSIDE quotes."""
+    quote = None
+    for i, c in enumerate( line ):
+        if quote:
+            if c == quote:
+                quote = None
+        elif c in "'\"":
+            quote = c
+        elif c == ":":
+            return line[ : i ], line[ i + 1 : ]
+    return line, ""
+
+
 def load( text: str ) -> dict:
     out, current = { }, None
     for raw in text.splitlines():
         if not raw.strip() or raw.lstrip().startswith( "#" ):
             continue
         indented = raw[ 0 ] in " \t"
-        key, _, value = raw.strip().partition( ":" )
+        key, value = _split_key( raw.strip() )
         key = _parse_scalar( key )
         if indented:
             if current is None:
