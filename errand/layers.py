@@ -45,6 +45,9 @@ class Context:
     # this command carries. Only a layer that can ASK somebody for it -- a batch
     # system -- has any use for it.
     needs : dict = field( default_factory = dict )
+    # `--batch`: let go rather than wait. Only a layer that has two ways of
+    # starting something -- a batch system -- has anything to do with it.
+    batch : bool = False
 
 
 def compose( stack, cmd: Command, ctx: Context ) -> Command:
@@ -435,6 +438,11 @@ class Slurm:
         return out + list( self.extra )
 
     def wrap( self, cmd: Command, ctx: Context ) -> Command:
+        if ctx.batch:
+            # `sbatch` IS the detachment: it returns as soon as the job is
+            # queued. `--parsable` makes it print the id and nothing else.
+            return Command( [ "sbatch", "--parsable", *self.flags( ctx ),
+                              "--wrap", cmd.shell() ], { } )
         return Command( [ "srun", *self.flags( ctx ), *cmd.argv ], cmd.env )
 
     def describe( self ):

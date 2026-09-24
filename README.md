@@ -418,75 +418,66 @@ otherwise never read the rc file that puts micromamba, cargo or nvm on `PATH`.
 ## Detached runs
 
 `--batch` launches the work and gives you the shell back. It is a *mode*, not a layer: it means the
-same thing in every context, and what changes is only how each one detaches.
+same thing in every context, and what changes is only how each one lets go.
 
 ```bash
-errand --batch -k bench "solvers::*" --env gpu,cluster --fp 32,64
-  submitted b7f3 · 8 runs · 4 on gpu-box (slurm 918273…918276), 4 local
+errand --batch -k bench --env gpu,cluster --fp 32,64
+  submitted b7f3 - 8 run(s) - 4 on login.hpc (batch 918273), 4 on this machine (local 41288)
+  errand --status    errand --watch
 ```
 
 | context | waiting | detached |
 |---|---|---|
-| local | subprocess | own session, survives the terminal |
-| `Ssh` | ssh, output streamed | started over there and let go |
-| `Slurm`, `Oar`, `Pbs`, … | `srun` | `sbatch` and friends |
+| local | subprocess | a session of its own, which survives the terminal |
+| `Ssh` | ssh, output streamed | started over there and released, output to a file |
+| `Slurm`, … | `srun` | `sbatch`, which *is* the detachment: it returns as soon as the job is queued |
 
-A layer that can detach says so, and answers three questions about a handle afterwards: is it still
-alive, what is its state, and how do I cancel it. That is the same shape as the pair a layer already
-implements to build itself.
+Nothing else about the run changes — same paths, same queue, same output. And because the paths were
+worked out before anything started, **the arrival of a result file where one was expected is itself
+the completion signal.** No protocol between the two sides, no daemon, nothing that can get out of
+sync: the output tree is the state.
 
-Nothing else changes. The queue that shares the machine is the same queue, so a detached exclusive
-benchmark still gets the host to itself. The paths are the same paths — and since they were computed
-before the run started, **the arrival of a `result.yaml` where one was expected is itself the
-completion signal.** There is no protocol to speak between the two sides, no daemon, and no
-agreement to get out of sync: the output tree is the state.
+What is kept locally is only what the tree cannot say — which runs belong to one submission, and
+what handle each place was given. The side that expanded the matrix is the only one that ever knew
+those runs went together.
 
-Results are pulled when you ask, not pushed. A finished remote run sits there until something
-collects it, which is what the monitor does.
+**Where a run happened is looked for, not predicted.** The place is part of the path and this side
+does not know it: a remote run carries the other machine's name, and a batch job carries the name of
+whichever compute node the scheduler picked. The parameter directory *is* predictable, being a hash
+of what was asked for, so that is what gets searched, and the result naming this run's environment
+and parameters is the one.
 
-A handle is only as good as what issued it: a batch system's job id outlives a reboot, a bare pid
-does not and gets reused. So a handle is never trusted on its own — it is paired with the heartbeat
-the [queue](#sharing-the-machine) already keeps, and a run is alive when something is still
-breathing for it, whatever the handle claims. The record of an invocation — which runs across which
-machines belong to the same submission — is kept **locally**, since the side that expanded the
-matrix is the only one that ever knew they went together.
+Results are pulled, not pushed. A finished remote run sits there until something collects it, which
+is what asking does.
 
 ## Keeping track
 
 ```bash
-errand --status      # one shot, plain text, greppable
-errand --watch       # the same, live and interactive
+errand --status        # one shot, plain text
+errand --watch         # the same, live, until everything has landed
+errand --forget b7f3   # drop a submission from the list, keeping its results
 ```
 
 ```
- errand · 2 running · 6 pending · 12 done                       gpu-box 6/8   local 2/16
-
- ▾ b7f3  solvers::*  --fp 32,64 --env gpu,cluster     12:04    8 runs   ▓▓▓▓▓▓░░  6/8
-                     fp=32              fp=64
-     gpu      n=1000  ✓  12.4 s          ✓  11.2 s
-              n=5000  ✓  61.2 s          ⟳  4m12s
-     cluster  n=1000  ✓  13.1 s          ⋯  pending   slurm 918275, prio 12
-              n=5000  ✓  64.8 s          ⋯  pending   slurm 918276
- ▾ 21ac  shapes::viz                                  12:31    1 run    ▓░░░░░░░  0/1
-     local            ⟳  0m08s
- ▸ 4e90  test_Cell::*                                 11:20    5 runs   ▓▓▓▓▓▓▓▓  5/5  ✓
-
- [enter] output dir   [l] logs   [c] cancel   [d] diff two cells   [/] filter   [q] quit
+b7f3  -k bench --fp 32,64 --env gpu,cluster   2026-09-24 12:04   6/8 [######  ]
+    gpu: local 41288 on this machine - finished
+    cluster: batch 918273 on login.hpc - running
+                        cuda.sif@thishost       node15@login.hpc
+      cost  fp=32, n=1000   ok seconds=12.4        ok seconds=13.1
+      cost  fp=32, n=5000   ok seconds=61.2        ok seconds=64.8
+      cost  fp=64, n=1000   ok seconds=11.2        ...
+      cost  fp=64, n=5000   ...                    ...
 ```
 
-Grouped by invocation, because that is the unit you submitted and the unit you will compare. Inside
-one, the matrix reads as a **table** — parameters down, environments and tags across — since that is
-the shape it actually has, and a flat list of eight lines hides the one axis you were varying. Two
-axes fit on screen; beyond that the extra ones become the row label.
+Grouped by submission, because that is the unit you launched and the unit you will compare. Inside
+one, the matrix reads as a **table** — parameters down, places across — since that is the shape it
+has, and a flat list of eight lines hides the one axis you were varying. A cell shows the kept
+number once there is one, so a column slower than its neighbour is visible without opening anything.
 
-Cells show elapsed time while running and the kept number once done, so a column that is slower than
-its neighbour is visible without opening anything. `--watch` polls the output tree and the batch
-systems; it holds no state of its own, so it can be started, killed and restarted at any point, and
-several can watch at once.
-
-A page in a browser would show this same table and answer the same question, so there is nothing to
-choose between them: the terminal comes first because it is where the work is already happening, and
-anything else is the same view over the same tree.
+`--watch` holds no state of its own: it polls the tree and the batch systems, so it can be started,
+killed and restarted at any point, and several can watch at once. A page in a browser would show
+this same table and answer the same question; the terminal comes first because it is where the work
+is already happening.
 
 ## Configuration
 
@@ -602,7 +593,11 @@ Writing a provider for something else is a three-method protocol; see the wiki.
 
 ## Status
 
-Design settled, nothing implemented yet. What is written above is what is being built.
+Everything above works and is covered by errand's own suite, which is written with errand. Not
+released: the API may still move.
+
+Still to write: the providers for other languages (the protocol is settled, the implementations are
+not), and `errand init`.
 
 One thing is deliberately left to you: a matrix that spans a laptop and a cluster partition at once
 will produce numbers that are not comparable, and `errand` will not stop you. It runs what you ask

@@ -11,7 +11,7 @@ import time
 import traceback
 from pathlib import Path
 
-from . import config, discovery, entries as E, layers as L, local, queue, results as R, setup
+from . import batch, config, discovery, entries as E, layers as L, local, queue, results as R, setup
 
 BOLD, DIM, GREEN, RED, YELLOW, CYAN, RESET = (
     "\033[1m", "\033[2m", "\033[32m", "\033[31m", "\033[33m", "\033[36m", "\033[0m" )
@@ -375,6 +375,141 @@ def dispatch( env, tags, argv, *, root, out_root, entries, overrides_list ):
                     echo = lambda s: print( dim( s ), flush = True ) )
 
 
+# ── letting go, and looking back ─────────────────────────────────────────────
+
+def submit( targets, entries, combos, argv, *, root, out_root ):
+    """Launch each environment's share and come straight back."""
+    ident = batch.new_id( root )
+    stripped = [ a for a in argv if a not in ( "--batch", "--status", "--watch" ) ]
+
+    runs, places, pull = [ ], [ ], set()
+    for env, tags in targets:
+        for _, values in combos:
+            for e in entries:
+                resolved = E.resolve_params( e.params, values )
+                # The parameter directory is predictable; the PLACE under it is
+                # not -- a remote run carries the other machine's name and a
+                # batch job whichever node the scheduler picked. So the record
+                # names what it knows, and the state is looked for beneath it.
+                leaf, entry_root = R.dirs_for( out_root, e, resolved, "?" )
+                runs.append( { "label": e.name, "file": e.file.name, "env": env.name,
+                               "place": "?", "params": _plain_params( resolved ),
+                               "under": str( leaf.parent.parent.relative_to( root ) ) } )
+                pull.add( str( entry_root.relative_to( root ) ) )
+
+        child_argv = _without_value( stripped, "--env" ) + [ "--env", env.name ]
+        got = batch.detach( env, tags, child_argv, root = root,
+                            log = batch.batch_dir( root ) / f"{ident}-{R.slug( env.name )}.log",
+                            child_env = { IN_ENV: env.name,
+                                          TAGS: ",".join( f"{k}={v}" for k, v in sorted( tags.items() ) ),
+                                          "PYTHONUNBUFFERED": "1" } )
+        got[ "env" ] = env.name
+        places.append( got )
+
+    record = { "id": ident, "when": batch.now(), "command": " ".join( stripped ),
+               "runs": runs, "places": places, "pull": sorted( pull ) }
+    batch.save( root, record )
+
+    failed = [ p for p in places if p[ "kind" ] == "failed" ]
+    shown = ", ".join( f"{len( runs ) // max( 1, len( places ) )} on {p.get( 'host' ) or 'this machine'}"
+                       f" ({p[ 'kind' ]} {p[ 'handle' ]})" for p in places if p not in failed )
+    print( f"  submitted {BOLD}{ident}{RESET} - {len( runs )} run(s)" + ( f" - {shown}" if shown else "" ) )
+    for p in failed:
+        print( bad( f"  {p[ 'env' ]}: could not start - {p.get( 'error', '' )}" ) )
+    print( dim( f"  errand --status    errand --watch" ) )
+    return 1 if failed else 0
+
+
+def _without_value( argv, flag ):
+    out, skip_next = [ ], False
+    for a in argv:
+        if skip_next:
+            skip_next = False
+            continue
+        if a == flag:
+            skip_next = True
+            continue
+        if a.startswith( flag + "=" ):
+            continue
+        out.append( a )
+    return out
+
+
+def _plain_params( resolved ):
+    return { k: ( v if isinstance( v, ( int, float, bool, str ) ) else repr( v ) )
+             for k, v in resolved.items() }
+
+
+MARKS = { batch.DONE: "ok", batch.RUNNING: "..", batch.LOST: "??" }
+
+
+def show_batches( root, live = False ):
+    records = batch.load_all( root )
+    if not records:
+        print( dim( "  nothing launched from here" ) )
+        return 0
+    try:
+        while True:
+            for record in records:
+                batch.collect( root, record )
+            if live:
+                print( "\033[2J\033[H", end = "" )
+            everything = [ ]
+            for record in records:
+                rows = batch.states( root, record )
+                everything += rows
+                _show_one( record, rows )
+            if not live or batch.finished( everything ):
+                return 0
+            time.sleep( 2.0 )
+    except KeyboardInterrupt:
+        return 0
+
+
+def _show_one( record, rows ):
+    done = sum( 1 for r in rows if r[ "state" ] == batch.DONE )
+    bar = "#" * ( 8 * done // max( 1, len( rows ) ) )
+    print( head( f"\n{record[ 'id' ]}  {record[ 'command' ] or '(everything)'}" )
+           + dim( f"   {record[ 'when' ]}   {done}/{len( rows )} [{bar:<8}]" ) )
+    for place in record.get( "places", [ ] ):
+        state = batch.alive( place )
+        how = "running" if state else ( "finished" if state is False else "unknown" )
+        print( dim( f"    {place[ 'env' ]}: {place[ 'kind' ]} {place.get( 'handle' ) or '-'}"
+                    f" on {place.get( 'host' ) or 'this machine'} - {how}" ) )
+
+    # Parameters down, places across: that is the shape a matrix actually has,
+    # and a flat list of eight lines hides the one axis that was varied.
+    places = sorted( { r[ "place" ] for r in rows } )
+    keys = sorted( { _key( r ) for r in rows } )
+    width = max( [ len( k ) for k in keys ] + [ 8 ] )
+    print( "      " + f"{'':<{width}}  " + "  ".join( f"{p[ :22 ]:<22}" for p in places ) )
+    for key in keys:
+        cells = [ ]
+        for place in places:
+            row = next( ( r for r in rows if _key( r ) == key and r[ "place" ] == place ), None )
+            cells.append( f"{_cell( row ):<22}" )
+        print( "      " + f"{key:<{width}}  " + "  ".join( cells ) )
+
+
+def _key( row ):
+    params = ", ".join( f"{k}={v}" for k, v in ( row.get( "params" ) or { } ).items() )
+    return f"{row[ 'label' ]}" + ( f"  {params}" if params else "" )
+
+
+def _cell( row ):
+    if row is None:
+        return "-"
+    if row[ "state" ] != batch.DONE:
+        return "..." if row[ "state" ] == batch.RUNNING else "lost"
+    mark = good( "ok" ) if row.get( "status" ) == "PASS" else (
+        warn( "skip" ) if row.get( "status" ) == "SKIP" else bad( "FAIL" ) )
+    numbers = [ f"{k}={v:g}" for k, v in ( row.get( "results" ) or { } ).items()
+                if isinstance( v, ( int, float ) ) and not isinstance( v, bool ) ]
+    seconds = row.get( "seconds" )
+    detail = numbers[ 0 ] if numbers else ( f"{seconds:g}s" if seconds else "" )
+    return f"{mark} {detail}".strip()
+
+
 # ── listing ──────────────────────────────────────────────────────────────────
 
 def print_envs( root ):
@@ -474,6 +609,11 @@ def build_parser( tag_names = ( ) ):
     p.add_argument( "--no-queue", action = "store_true",
                     help = "do not wait for the machine to be free" )
     p.add_argument( "--queue", action = "store_true", help = "what the host is busy with, and stop" )
+    p.add_argument( "--batch", action = "store_true",
+                    help = "launch it and give the shell back" )
+    p.add_argument( "--status", action = "store_true", help = "how the launched work is going" )
+    p.add_argument( "--watch", action = "store_true", help = "the same, live" )
+    p.add_argument( "--forget", default = None, help = "drop a submission from the list" )
     p.add_argument( "-h", "--help", action = "store_true", help = "show what matched, and its parameters" )
     for name in tag_names:
         p.add_argument( f"--{name.replace( '_', '-' )}", dest = f"tag_{name}", default = None,
@@ -535,6 +675,13 @@ def main( argv = None ):
 
     if known.envs:
         return print_envs( root )
+
+    if known.forget:
+        batch.forget( root, known.forget )
+        return 0
+
+    if known.status or known.watch:
+        return show_batches( root, live = known.watch )
 
     if known.queue:
         return print_queue()
@@ -623,6 +770,9 @@ def main( argv = None ):
         print( bad( f"nothing matched {args.pattern!r}" if args.pattern else "nothing to run" ) )
         _suggest( root )
         return 1
+
+    if args.batch:
+        return submit( targets, selected, combos, argv, root = root, out_root = out_root )
 
     report = Report()
     rc = 0

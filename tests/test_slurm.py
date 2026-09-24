@@ -170,3 +170,51 @@ if test( "inside an allocation errand does not queue on top", tags = [ "slurm", 
         assert Q.someone_else_is_scheduling() == "slurm"
     finally:
         del os.environ[ "SLURM_JOB_ID" ]
+
+
+if test( "--batch submits and comes straight back", tags = [ "slurm", "slow" ] ):
+    import time
+
+    from errand import batch as B
+
+    host, options = slurm_target()
+    partition = f"partition = {need( 'slurm_partition' )!r}, " if have( "slurm_partition" ) else ""
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path( tmp ) / "proj"
+        remote_root = shared_root( host, options, Path( tmp ).name )
+        project = write_project(
+            root,
+            PROJECT.format( host = host, root = remote_root, options = options,
+                            partition = partition ),
+            { "bench_alloc.py": WORK }, vendor = True )
+
+        started = time.perf_counter()
+        code, output = run_errand( project, "--batch", "bench_alloc", "--env", "batch" )
+        handed_back = time.perf_counter() - started
+        assert code == 0, output
+        # sbatch IS the detachment: it returns as soon as the job is queued,
+        # which is why nothing here has to be let go of separately.
+        assert handed_back < 90, f"it waited for a node ({handed_back:.1f}s)"
+
+        place = B.load_all( project )[ 0 ][ "places" ][ 0 ]
+        assert place[ "kind" ] == "batch", place
+        assert place[ "handle" ].isdigit(), place
+
+        def collected( ):
+            run_errand( project, "--status" )
+            return list( ( project / "runs" ).rglob( "result.yaml" ) )
+
+        deadline = time.time() + 300
+        while time.time() < deadline and not collected():
+            time.sleep( 3 )
+
+        got = [ yamlish.read( p ) for p in ( project / "runs" ).rglob( "result.yaml" ) ]
+        if not got:
+            skip( "the queue did not run the job in time",
+                  f"job {place[ 'handle' ]} was accepted; a busy cluster looks like this too" )
+        assert got[ 0 ][ "status" ] == "PASS", got
+        assert got[ 0 ][ "results" ][ "job" ], "it ran outside the allocation"
+        print( f"  job {place[ 'handle' ]} -> {got[ 0 ][ 'results' ][ 'node' ]}" )
+
+    subprocess.run( [ "ssh", *options, host, f"rm -rf {remote_root}" ] )
