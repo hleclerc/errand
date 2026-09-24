@@ -284,19 +284,36 @@ if p := test( "on the card", gpus = 1 ):
 against what you told `errand` the host has. `exclusive` is the blunt version, for when the answer
 is "all of it and no neighbours".
 
-An exclusive entry waits for what is already running and holds everything else back while it runs.
-Everything else runs concurrently up to the host's capacity. The queue is **one file per host**,
-shared by every `errand` on it — two terminals, two projects, one machine, no interference. `-j`
-overrides the capacity when you have a reason.
+An exclusive entry waits for what is already running and holds everything else back while it runs;
+everything else proceeds as long as the machine has the room. The queue lives **outside the
+process**, one per user per host, so it is shared by every `errand` on that machine — two terminals,
+two projects, no interference.
 
-A held slot records who holds it and is **touched while the work lives**. A slot whose timestamp has
-gone stale is reclaimed, and its owner, if it ever comes back, is told it lost it. That is the only
-honest way to tell a killed run from a long one: a benchmark that has been running for six hours is
+```bash
+errand --queue        # what the host has, and what is holding it
+errand --no-queue     # this run does not wait, and does not hold
+```
+
+A claim records who holds it and is **touched while the work lives**. One whose timestamp has gone
+stale is reclaimed, and its owner, if it ever comes back, finds it gone. That is the only honest way
+to tell a killed run from a long one: a benchmark that has been running for six hours is
 indistinguishable from a corpse except by whether anything is still breathing. The same heartbeat
-answers the same question for [detached runs](#detached-runs), so there is one mechanism, not two.
+answers the same question for [detached runs](#detached-runs) — one mechanism, not two.
 
-On a cluster the real queue is Slurm's, and `errand` submits to it through the `Slurm` layer rather
-than pretending to schedule what it does not own.
+Waiting happens **outside the measurement**. How long the machine was busy is not part of how long
+the work took, and counting it would make a benchmark's numbers depend on who else was around.
+
+### When somebody else owns the machine
+
+Inside a Slurm, PBS, OAR or LSF allocation, `errand` does not queue at all. The scheduler has
+already decided what this process may have, and a second queue on top of it would only wait for
+itself. What the work asks for is handed over instead: the `Slurm` layer turns the entries' `cpus`,
+`ram`, `gpus` and `exclusive` into `--cpus-per-task`, `--mem`, `--gpus` and `--exclusive` on the
+submission. A dispatched command carries several entries, so the allocation is the largest of them,
+and exclusive if any one of them is.
+
+What the environment states explicitly wins: whoever wrote `Slurm( cpus = 16 )` knew something about
+that partition an entry cannot.
 
 ## Where the output goes
 
@@ -555,6 +572,10 @@ One thing is deliberately left to you: a matrix that spans a laptop and a cluste
 will produce numbers that are not comparable, and `errand` will not stop you. It runs what you ask
 where you ask and records where each number came from; deciding what may be compared to what is
 yours.
+
+Not done yet: running several entries at once inside ONE invocation. The queue already keeps
+separate invocations out of each other's way, which is the case that bites; entries within a single
+run still go one after another, because isolating them from each other means a process apiece.
 
 Known to be unresolved: what a summary should say *across* places. Min and max per row are enough to
 read, but deciding that a machine got slower is a different question, and one that wants to know

@@ -11,7 +11,7 @@ import time
 import traceback
 from pathlib import Path
 
-from . import config, discovery, entries as E, layers as L, local, results as R, setup
+from . import config, discovery, entries as E, layers as L, local, queue, results as R, setup
 
 BOLD, DIM, GREEN, RED, YELLOW, CYAN, RESET = (
     "\033[1m", "\033[2m", "\033[32m", "\033[31m", "\033[33m", "\033[36m", "\033[0m" )
@@ -133,8 +133,24 @@ class Report:
         self.skipped = [ ]
 
 
+def aggregate_needs( entries ):
+    """What one command carries, as one machine's worth of asking.
+
+    A dispatched command runs SEVERAL entries in one allocation, so the
+    allocation has to be the largest of them -- and exclusive if any one of
+    them is.
+    """
+    out = { }
+    for e in entries:
+        for key, value in queue.normalize( e.resources ).items():
+            out[ key ] = max( out.get( key, 0.0 ), value )
+        if e.traits[ "exclusive" ]:
+            out[ "exclusive" ] = True
+    return out
+
+
 def run_entries( entries, modules, *, root, out_root, overrides, env_name, tags,
-                 container, version, report ):
+                 container, version, report, queued = True ):
     E.set_tags( tags )
     where = R.place( container )
     print( head( f"\n{'=' * 10} {len( entries )} entr{'y' if len( entries ) == 1 else 'ies'}"
@@ -158,16 +174,23 @@ def run_entries( entries, modules, *, root, out_root, overrides, env_name, tags,
             print( dim( f"  {e.name} ({site}) -- {shown}" ), flush = True )
 
         E.begin_run( e, resolved, leaf )
-        started, status, error, hint = time.perf_counter(), "PASS", None, None
-        with capture() as buf:
-            try:
-                discovery.import_file( modules[ e.module ], root )
-            except local.Skipped as s:
-                status, error, hint = "SKIP", s.reason, s.hint
-            except BaseException as exc:                 # SystemExit included
-                status, error = "FAIL", f"{type( exc ).__name__}: {exc}"
-                traceback.print_exc()
-        duration = time.perf_counter() - started
+        status, error, hint = "PASS", None, None
+        # The claim is taken OUTSIDE the timing: waiting for the machine is not
+        # part of how long the work takes, and recording it as if it were would
+        # make a benchmark's numbers depend on who else was busy.
+        with queue.claim( e.resources, exclusive = e.traits[ "exclusive" ],
+                          label = f"{e.file.name}::{e.name}", enabled = queued,
+                          echo = lambda m: print( dim( m ), flush = True ) ):
+            started = time.perf_counter()
+            with capture() as buf:
+                try:
+                    discovery.import_file( modules[ e.module ], root )
+                except local.Skipped as s:
+                    status, error, hint = "SKIP", s.reason, s.hint
+                except BaseException as exc:             # SystemExit included
+                    status, error = "FAIL", f"{type( exc ).__name__}: {exc}"
+                    traceback.print_exc()
+            duration = time.perf_counter() - started
         E.end_run()
 
         if status == "PASS":
@@ -208,7 +231,7 @@ def dispatch( env, tags, argv, *, root, out_root, entries, overrides_list ):
     and its resolved tags, NOT `--env`: re-selecting over there would send an
     ssh environment straight back out to the machine it is already on.
     """
-    ctx = L.Context( root = root, tags = tags )
+    ctx = L.Context( root = root, tags = tags, needs = aggregate_needs( entries ) )
     child_env = {
         IN_ENV: env.name,
         TAGS  : ",".join( f"{k}={v}" for k, v in sorted( tags.items() ) ),
@@ -249,6 +272,23 @@ def print_envs( root ):
         print( f"  {name:{width}}  {tags:28}  {dim( e.describe() )}{note}{mark}" )
     print( dim( f"\n  choose one with --env <name>, or by tag: "
                 f"{ ' '.join( '--' + n for n in config.tag_names() ) or '(no tags declared)' }" ) )
+    return 0
+
+
+def print_queue( ):
+    scheduler = queue.someone_else_is_scheduling()
+    print( head( f"\nThe machine ({queue.host()})" ) )
+    have = queue.capacity()
+    print( dim( f"  has  cpus={have[ 'cpus' ]:g}  ram={have[ 'ram' ]:.0f}M  gpus={have[ 'gpus' ]:g}" ) )
+    if scheduler:
+        print( dim( f"  {scheduler} already decides what runs here; errand does not queue" ) )
+        return 0
+    lines = queue.describe()
+    if not lines:
+        print( dim( "  nothing held" ) )
+    for line in lines:
+        print( f"  {line}" )
+    print( dim( f"  {queue.queue_dir()}" ) )
     return 0
 
 
@@ -295,6 +335,9 @@ def build_parser( tag_names = ( ) ):
     p.add_argument( "--out", default = None, help = "output tree (default: runs)" )
     p.add_argument( "--root", default = None, help = "project root (default: found from the cwd)" )
     p.add_argument( "-j", "--jobs", default = None, help = "how many at once" )
+    p.add_argument( "--no-queue", action = "store_true",
+                    help = "do not wait for the machine to be free" )
+    p.add_argument( "--queue", action = "store_true", help = "what the host is busy with, and stop" )
     p.add_argument( "-h", "--help", action = "store_true", help = "show what matched, and its parameters" )
     for name in tag_names:
         p.add_argument( f"--{name.replace( '_', '-' )}", dest = f"tag_{name}", default = None,
@@ -356,6 +399,9 @@ def main( argv = None ):
 
     if known.envs:
         return print_envs( root )
+
+    if known.queue:
+        return print_queue()
 
     kinds = set()
     for k in known.kind:
@@ -458,7 +504,8 @@ def main( argv = None ):
                 print( head( f"\n--- {i + 1}/{len( combos )}  {shown} ---" ), flush = True )
             run_entries( selected, modules, root = root, out_root = out_root,
                          overrides = values, env_name = env.name, tags = tags,
-                         container = env.container, version = __version__, report = report )
+                         container = env.container, version = __version__, report = report,
+                         queued = not args.no_queue )
 
     return _epilogue( report, rc )
 

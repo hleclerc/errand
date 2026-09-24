@@ -41,6 +41,10 @@ class Context:
     root  : Path
     tags  : dict = field( default_factory = dict )   # the SELECTED tags
     remote: bool = False
+    # What the work about to run asks of a machine, aggregated over the entries
+    # this command carries. Only a layer that can ASK somebody for it -- a batch
+    # system -- has any use for it.
+    needs : dict = field( default_factory = dict )
 
 
 def compose( stack, cmd: Command, ctx: Context ) -> Command:
@@ -399,17 +403,33 @@ class Slurm:
     account  : str | None = None
     extra    : list = field( default_factory = list )
 
-    def flags( self ):
+    def flags( self, ctx: Context | None = None ):
+        """What was declared, filled in from what the work asks for.
+
+        A batch system is a queue that already exists, so errand does not hold
+        a second one on top of it -- it hands the numbers over instead. What
+        the environment states explicitly always wins: the person who wrote
+        `cpus = 16` knew something about the partition that the entry does not.
+        """
+        needs = ( ctx.needs if ctx else { } ) or { }
+        cpus = self.cpus if self.cpus is not None else needs.get( "cpus" )
+        gpus = self.gpus if self.gpus is not None else needs.get( "gpus" )
+        ram  = needs.get( "ram" )
+
         out = [ ]
         for flag, value in ( ( "--partition", self.partition ), ( "--nodes", self.nodes ),
-                             ( "--cpus-per-task", self.cpus ), ( "--gpus", self.gpus ),
+                             ( "--cpus-per-task", cpus ), ( "--gpus", gpus ),
                              ( "--time", self.time ), ( "--account", self.account ) ):
             if value is not None:
-                out += [ flag, str( value ) ]
+                out += [ flag, str( int( value ) if isinstance( value, float ) else value ) ]
+        if ram:
+            out += [ "--mem", f"{int( ram )}M" ]
+        if needs.get( "exclusive" ):
+            out += [ "--exclusive" ]
         return out + list( self.extra )
 
     def wrap( self, cmd: Command, ctx: Context ) -> Command:
-        return Command( [ "srun", *self.flags(), *cmd.argv ], cmd.env )
+        return Command( [ "srun", *self.flags( ctx ), *cmd.argv ], cmd.env )
 
     def describe( self ):
         return f"slurm:{self.partition or 'default'}"
