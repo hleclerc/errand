@@ -61,15 +61,16 @@ Each combination gets its own directory, so the results end up side by side:
 ```
 runs/bench_solver__solve/
   4b81e0/                             <- n=10000 method=cg
-    thishost/2026-09-24/result.yaml
-    cuda.sif@thishost/2026-09-24/result.yaml
-    cuda.sif@gpu-box/2026-09-24/result.yaml
+    local@thishost/2026-09-24/result.yaml
+    gpu@thishost/2026-09-24/result.yaml
+    gpu@gpu-box/2026-09-24/result.yaml
     summary.yaml                      <- one row per place: this is the comparison
   summary.yaml                        <- one row per parameter set
 ```
 
-`{place}` is the host, prefixed by the container when there was one. Both matter: the same image on
-two machines is two different sets of numbers.
+`{place}` is the environment and the machine. Both matter: the same environment on two machines is
+two different sets of numbers, and the same machine with two environments likewise -- which is the
+whole reason you declared two.
 
 ## Leaving it to run
 

@@ -44,14 +44,21 @@ def param_hash( resolved: dict ) -> str | None:
     return hashlib.sha256( repr( sorted( resolved.items() ) ).encode() ).hexdigest()[ : 10 ]
 
 
-def place( container: str | None = None ) -> str:
-    """Where this ran: the host, prefixed by the container when there was one.
+def place( env: str | None = None ) -> str:
+    """Where this ran: the environment, and the machine.
 
-    Both matter and neither is enough -- the same image on two machines is two
-    different sets of numbers, and so is the same machine with two images.
+    Both matter and neither is enough. The same machine with two environments
+    is two different sets of numbers -- a different compiler, a different
+    image, single precision instead of double -- and the same environment on
+    two machines is two more. So both name the directory, and a run can never
+    land on top of a run that was not the same run.
+
+    The environment stands for its container rather than the other way round:
+    an image is one of the things an environment IS, and the name is the one
+    the project chose.
     """
     host = socket.gethostname().split( "." )[ 0 ] or platform.node() or "localhost"
-    return f"{slug( container )}@{slug( host )}" if container else slug( host )
+    return f"{slug( env )}@{slug( host )}" if env else slug( host )
 
 
 def label( entry ) -> str:
@@ -118,10 +125,19 @@ def ram_mb( ) -> float:
 
 def write_result( leaf: Path, *, entry, root, env_name, where, tags, status, error,
                   duration_s, ram, params, results, output_text, version ):
+    # The output file is normally written live, as the run talks; all that is
+    # left here is to say whether it holds anything. Writing it again would
+    # only risk replacing a complete file with a truncated buffer.
     output_file = None
-    if output_text.strip():
+    live = leaf / OUTPUT
+    if live.exists():
+        if live.stat().st_size:
+            output_file = OUTPUT
+        else:
+            live.unlink()
+    elif output_text.strip():
         output_file = OUTPUT
-        ( leaf / OUTPUT ).write_text( output_text )
+        live.write_text( output_text )
 
     commit, dirty = git_commit( root )
     data = {

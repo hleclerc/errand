@@ -217,6 +217,16 @@ def states( root: Path, record: dict ) -> list:
 
 
 def _result_for( root: Path, run: dict ):
+    path = result_path_for( root, run )
+    return yamlish.read( path ) if path else None
+
+
+def result_path_for( root: Path, run: dict ):
+    """WHERE this run's result file landed, or None while it is still owed.
+
+    The path and not just its contents, because whoever wants to watch the run
+    wants `output.txt` beside it.
+    """
     under = root / run[ "under" ]
     if not under.is_dir():
         return None
@@ -226,7 +236,7 @@ def _result_for( root: Path, run: dict ):
             continue
         if got.get( "env" ) == run.get( "env" ) and ( got.get( "params" ) or { } ) == \
            ( run.get( "params" ) or { } ):
-            return got
+            return path
     return None
 
 

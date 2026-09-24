@@ -11,7 +11,7 @@ import time
 import traceback
 from pathlib import Path
 
-from . import batch, config, discovery, entries as E, layers as L, local, providers as P, queue, results as R, setup
+from . import batch, config, discovery, entries as E, history, layers as L, local, providers as P, queue, results as R, setup
 
 BOLD, DIM, GREEN, RED, YELLOW, CYAN, RESET = (
     "\033[1m", "\033[2m", "\033[32m", "\033[31m", "\033[33m", "\033[36m", "\033[0m" )
@@ -69,16 +69,30 @@ class Tee:
 
 
 @contextlib.contextmanager
-def capture( ):
-    """Mirror stdout/stderr into a buffer while still printing live, so the run
-    keeps its console feed and output.txt gets written anyway."""
+def capture( path: Path | None = None ):
+    """Mirror stdout/stderr into a buffer -- and into `path` -- while still
+    printing live.
+
+    The file is written AS IT GOES, not at the end: it is the only place a case
+    running elsewhere, or beside seven others under `-j`, says anything at all.
+    `tail -f` works on it, and so does the screen, which is the same thing.
+    """
     buf = io.StringIO()
+    handle = None
+    if path is not None:
+        try:
+            handle = open( path, "w", buffering = 1 )
+        except OSError:
+            handle = None                # a run must not fail over its own log
     old_out, old_err = sys.stdout, sys.stderr
-    sys.stdout, sys.stderr = Tee( old_out, buf ), Tee( old_err, buf )
+    streams = [ old_out, buf ] + ( [ handle ] if handle else [ ] )
+    sys.stdout, sys.stderr = Tee( *streams ), Tee( old_err, buf, *( [ handle ] if handle else [ ] ) )
     try:
         yield buf
     finally:
         sys.stdout, sys.stderr = old_out, old_err
+        if handle:
+            handle.close()
 
 
 @contextlib.contextmanager
@@ -165,11 +179,10 @@ def aggregate_needs( entries ):
 
 
 def run_entries( entries, modules, *, root, out_root, overrides, env_name, tags,
-                 container, version, report, queued = True, quiet = False,
-                 selectors = None ):
+                 version, report, queued = True, quiet = False, selectors = None ):
     E.set_tags( tags )
     selectors = selectors or { }
-    where = R.place( container )
+    where = R.place( env_name )
     if not quiet:
         print( head( f"\n{'=' * 10} {len( entries )} entr{'y' if len( entries ) == 1 else 'ies'}"
                      f"  {env_name}  {where} {'=' * 10}" ), flush = True )
@@ -210,7 +223,7 @@ def run_entries( entries, modules, *, root, out_root, overrides, env_name, tags,
                     print( dim( f"  gpu {','.join( str( d ) for d in granted.devices )}" ),
                            flush = True )
                 started = time.perf_counter()
-                with capture() as buf:
+                with capture( leaf / R.OUTPUT ) as buf:
                     try:
                         if e.provider is None:
                             discovery.import_file( modules[ e.module ], root )
@@ -327,7 +340,7 @@ def run_in_processes( entries, combos, *, root, out_root, env, tags, how_many, r
         sys.stdout.flush()
 
         resolved = E.resolve_params( e.params, values )
-        leaf, _ = R.dirs_for( out_root, e, resolved, R.place( env.container ) )
+        leaf, _ = R.dirs_for( out_root, e, resolved, R.place( env.name ) )
         got = yamlish.read( leaf / R.RESULT ) or { }
         status = got.get( "status" ) or ( "PASS" if child.returncode == 0 else "FAIL" )
         if status == "SKIP":
@@ -337,7 +350,7 @@ def run_in_processes( entries, combos, *, root, out_root, env, tags, how_many, r
     return report
 
 
-def run_one( at, *, root, out_root, env_name, tags, container, version, report, queued ):
+def run_one( at, *, root, out_root, env_name, tags, version, report, queued ):
     """The child side of the above: exactly the entry at FILE:LINE."""
     from . import yamlish
 
@@ -349,7 +362,7 @@ def run_one( at, *, root, out_root, env_name, tags, container, version, report, 
 
     values = yamlish.load( os.environ.get( PARAMS, "" ) ) if os.environ.get( PARAMS ) else { }
     run_entries( entries, modules, root = root, out_root = out_root, overrides = values,
-                 env_name = env_name, tags = tags, container = container, version = version,
+                 env_name = env_name, tags = tags, version = version,
                  report = report, queued = queued, quiet = True )
     return 1 if report.failed else 0
 
@@ -391,26 +404,44 @@ def dispatch( env, tags, argv, *, root, out_root, entries, overrides_list ):
 
 # ── letting go, and looking back ─────────────────────────────────────────────
 
+def plan_of( targets, entries, combos, *, root, out_root ):
+    """Every run this command is about to produce, and where to look for it.
+
+    One row per ( environment, parameter combination, entry ). The parameter
+    directory is predictable -- it is a hash of what was asked for -- while the
+    PLACE under it may not be: a remote run carries the other machine's name,
+    and a batch job carries whichever compute node the scheduler picked. So a
+    row names the place when it is knowable and says so when it is not, and
+    whoever reads the tree searches beneath `under`.
+
+    Worked out here, once, for everyone who needs it before the fact: the
+    targeted rsync pull, the completion signal, and the screen that wants to
+    show each case's output as it is written.
+    """
+    runs = [ ]
+    for env, tags in targets:
+        unknowable = env.ssh is not None or L.batch_of( env.stack ) is not None
+        for _, values in combos:
+            for e in entries:
+                resolved = E.resolve_params( e.params, values )
+                leaf, entry_root = R.dirs_for( out_root, e, resolved, "?" )
+                runs.append( { "label": e.name, "file": e.file.name, "env": env.name,
+                               "place": "?" if unknowable else R.place( env.name ),
+                               "params": _plain_params( resolved ),
+                               "under": str( leaf.parent.parent.relative_to( root ) ),
+                               "entry_root": str( entry_root.relative_to( root ) ) } )
+    return runs
+
+
 def submit( targets, entries, combos, argv, *, root, out_root ):
     """Launch each environment's share and come straight back."""
     ident = batch.new_id( root )
     stripped = [ a for a in argv if a not in ( "--batch", "--status", "--watch" ) ]
 
-    runs, places, pull = [ ], [ ], set()
+    runs = plan_of( targets, entries, combos, root = root, out_root = out_root )
+    pull = { r[ "entry_root" ] for r in runs }
+    places = [ ]
     for env, tags in targets:
-        for _, values in combos:
-            for e in entries:
-                resolved = E.resolve_params( e.params, values )
-                # The parameter directory is predictable; the PLACE under it is
-                # not -- a remote run carries the other machine's name and a
-                # batch job whichever node the scheduler picked. So the record
-                # names what it knows, and the state is looked for beneath it.
-                leaf, entry_root = R.dirs_for( out_root, e, resolved, "?" )
-                runs.append( { "label": e.name, "file": e.file.name, "env": env.name,
-                               "place": "?", "params": _plain_params( resolved ),
-                               "under": str( leaf.parent.parent.relative_to( root ) ) } )
-                pull.add( str( entry_root.relative_to( root ) ) )
-
         child_argv = _without_value( stripped, "--env" ) + [ "--env", env.name ]
         got = batch.detach( env, tags, child_argv, root = root,
                             log = batch.batch_dir( root ) / f"{ident}-{R.slug( env.name )}.log",
@@ -641,6 +672,8 @@ def build_parser( tag_names = ( ) ):
     p.add_argument( "--queue", action = "store_true", help = "what the host is busy with, and stop" )
     p.add_argument( "--batch", action = "store_true",
                     help = "launch it and give the shell back" )
+    p.add_argument( "--tui", action = "store_true",
+                    help = "the screen: tick what to run, watch each case as it talks" )
     p.add_argument( "--status", action = "store_true", help = "how the launched work is going" )
     p.add_argument( "--watch", action = "store_true", help = "the same, live" )
     p.add_argument( "--forget", default = None, help = "drop a submission from the list" )
@@ -703,6 +736,13 @@ def main( argv = None ):
     known, _ = parser.parse_known_args( argv )
     known.pattern = positional_of( parser, argv )
 
+    if known.tui:
+        # Imported here and nowhere else: it needs `curses`, which not every
+        # interpreter carries, and a missing screen must not cost the command
+        # line.
+        from . import tui
+        return tui.main( root = root, out_root = out_root )
+
     if known.envs:
         return print_envs( root )
 
@@ -730,7 +770,6 @@ def main( argv = None ):
         return run_one( known.at, root = root, out_root = out_root,
                         env_name = ( env_obj.name if env_obj else known.env or "default" ),
                         tags = _tags_from_env() or ( env_obj.tags if env_obj else { } ),
-                        container = env_obj.container if env_obj else None,
                         version = __version__, report = Report(),
                         queued = not known.no_queue )
 
@@ -802,6 +841,12 @@ def main( argv = None ):
         _suggest( root )
         return 1
 
+    # Recorded as the command it was, so it can be run again -- from the shell
+    # or from the screen. Only on the side that was ASKED: the child of a
+    # dispatch runs a command nobody typed, over there.
+    if inside is None:
+        history.push( root, argv )
+
     if args.batch:
         return submit( targets, selected, combos, argv, root = root, out_root = out_root )
 
@@ -844,7 +889,7 @@ def main( argv = None ):
         if how_many > 1:
             run_in_processes( selected, combos, root = root, out_root = out_root, env = env,
                               tags = tags, how_many = how_many, report = report,
-                              out_prefix = R.place( env.container ) )
+                              out_prefix = R.place( env.name ) )
             continue
 
         for i, ( varied, values ) in enumerate( combos ):
@@ -853,7 +898,7 @@ def main( argv = None ):
                 print( head( f"\n--- {i + 1}/{len( combos )}  {shown} ---" ), flush = True )
             run_entries( selected, modules, root = root, out_root = out_root,
                          overrides = values, env_name = env.name, tags = tags,
-                         container = env.container, version = __version__, report = report,
+                         version = __version__, report = report,
                          queued = not args.no_queue, selectors = selectors )
 
     return _epilogue( report, rc )

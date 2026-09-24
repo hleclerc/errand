@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 
 from errand import test, yamlish
-from errand import batch as B, layers as L
+from errand import batch as B, layers as L, results as R
 
 from _infra import run_errand, ssh_target, write_project
 
@@ -103,9 +103,12 @@ if test( "the record holds only what the tree cannot say", tags = [ "slow" ] ):
         record = records[ 0 ]
         assert [ r[ "label" ] for r in record[ "runs" ] ] == [ "slow" ]
         assert record[ "places" ][ 0 ][ "kind" ] == "local"
-        # where it ran is not in the record: it is read back out of the result
-        assert record[ "runs" ][ 0 ][ "place" ] == "?"
-        assert B.states( project, record )[ 0 ][ "place" ] != "?"
+        # This one was detached HERE, so where it would run was knowable before
+        # it ran, and the record says so. A place is "?" only when this side
+        # genuinely cannot know it -- another machine, or whichever compute node
+        # a scheduler picks -- and then it is read back out of the result.
+        assert record[ "runs" ][ 0 ][ "place" ] == R.place( "default" )
+        assert B.states( project, record )[ 0 ][ "place" ] == R.place( "default" )
 
         # the state is read from the tree, so it survives the handle dying
         record[ "places" ][ 0 ][ "handle" ] = "999999999"

@@ -95,6 +95,7 @@ errand "solvers::a,shapes::b"     # several specs
 errand -k bench                   # benchmarks only
 errand -k exp "solvers::*"        # experiments only, in solvers.py
 errand --help                     # the matched entries, with their parameters
+errand --tui                      # one screen: tick what to run, watch it run
 ```
 
 The positional pattern is a comma-separated list of `file[::name]` specs, both sides globbable. The
@@ -103,9 +104,10 @@ project distinction; a bare file part with no `*` must resolve to exactly one fi
 error listing the candidates. The pattern is the only way to narrow by location — there is no
 `--directory`.
 
-Finding candidate files is a text check, not an import: a file is a candidate if it mentions
+Finding candidate files is a text check, not an import: a file is a candidate if it **imports**
 `errand`. So a source file that happens to share its entry's name (`Cell.py` next to `test_Cell.py`)
-is never mistaken for one.
+is never mistaken for one — and neither is a file that merely mentions errand in a comment, which
+would otherwise be imported and executed on the strength of a word.
 
 Entries carry free-form tags, and `--entry-tags` filters on them:
 
@@ -361,20 +363,25 @@ runs/{file}__{name}/[params]/{place}/{date}/
 runs/{file}__{name}/[params]/{place}/latest -> {date}
 ```
 
-*This is the default layout; it is configurable.* `{place}` is the host's name, prefixed by the
-container's when the run happened in one — `gpu-box`, `cuda.sif@gpu-box`. Both matter and neither is
-enough: the same image on two machines is two different sets of numbers, and the same machine with
-two images likewise. `latest/` is a symlink, so every run can be dated without costing you a stable
-path — leave a tab open on `latest/shape.png` and reload it.
+*This is the default layout; it is configurable.* `{place}` is the environment and the machine —
+`default@gpu-box`, `cuda@gpu-box`. Both matter and neither is enough: the same environment on two
+machines is two different sets of numbers, and the same machine with two environments likewise, which
+is the whole reason you declared two. The environment stands for its container rather than the other
+way round: an image is one of the things an environment *is*, and the name is the one you chose.
+`latest/` is a symlink, so every run can be dated without costing you a stable path — leave a tab
+open on `latest/shape.png` and reload it.
 
-The leaf always holds `result.yaml`, plus `output.txt` if the body printed anything:
+The leaf always holds `result.yaml`, plus `output.txt` if the body printed anything. `output.txt` is
+written **as the run talks**, not at the end: it is the only place a case running over there, or
+beside seven others under `-j`, says anything at all — so `tail -f` works on it, and so does the
+screen, which is the same thing.
 
 ```yaml
 name: cost
 file: bench/solvers.py
 line: 42
 env: gpu
-place: cuda.sif
+place: gpu@gpu-box
 host: gpu-box
 commit: 4f2a1b9           # + dirty: true when the tree was not clean
 errand: 0.1.0
@@ -441,11 +448,12 @@ What is kept locally is only what the tree cannot say — which runs belong to o
 what handle each place was given. The side that expanded the matrix is the only one that ever knew
 those runs went together.
 
-**Where a run happened is looked for, not predicted.** The place is part of the path and this side
-does not know it: a remote run carries the other machine's name, and a batch job carries the name of
-whichever compute node the scheduler picked. The parameter directory *is* predictable, being a hash
-of what was asked for, so that is what gets searched, and the result naming this run's environment
-and parameters is the one.
+**Where a run happened is looked for when it cannot be known.** A run detached on this machine has a
+predictable place and the record says so. A remote one does not — it carries the other machine's
+name — and neither does a batch job, which carries the name of whichever compute node the scheduler
+picked. The parameter directory *is* predictable in every case, being a hash of what was asked for,
+so that is what gets searched, and the result naming this run's environment and parameters is the
+one.
 
 Results are pulled, not pushed. A finished remote run sits there until something collects it, which
 is what asking does.
@@ -462,7 +470,7 @@ errand --forget b7f3   # drop a submission from the list, keeping its results
 b7f3  -k bench --fp 32,64 --env gpu,cluster   2026-09-24 12:04   6/8 [######  ]
     gpu: local 41288 on this machine - finished
     cluster: batch 918273 on login.hpc - running
-                        cuda.sif@thishost       node15@login.hpc
+                        gpu@thishost            cluster@node15
       cost  fp=32, n=1000   ok seconds=12.4        ok seconds=13.1
       cost  fp=32, n=5000   ok seconds=61.2        ok seconds=64.8
       cost  fp=64, n=1000   ok seconds=11.2        ...
@@ -478,6 +486,67 @@ number once there is one, so a column slower than its neighbour is visible witho
 killed and restarted at any point, and several can watch at once. A page in a browser would show
 this same table and answer the same question; the terminal comes first because it is where the work
 is already happening.
+
+## The screen
+
+```bash
+errand --tui
+```
+
+One screen: a list on the left, and facing it whatever the cursor is on — an entry's parameters, an
+environment's layers, or, once something is running, the output of that one case.
+
+```
+ errand  myproject  -j 4  [running]
+ 1 entries  2 envs  3 tags  4 params  5 runs  6 history
+ runs                                  | solve  n=5000  [gpu]
+ $   the command                       |   gpu   gpu@gpu-box
+ ok  solve  n=1000  [local]  PASS 11s  |   running
+ ok  solve  n=1000  [gpu]    PASS 12s  |
+ ..  solve  n=5000  [local]  running   | iteration 41   residual 3.1e-07
+ ..  solve  n=5000  [gpu]    running   | iteration 42   residual 1.9e-07
+ ---------------------------------------------------------------------
+ $ errand bench_solver --env local,gpu --n 1000,5000 -j 4
+ space tick   r run   b detach   j jobs   / filter   ? keys   q quit
+```
+
+Three things hold it up.
+
+**It runs nothing itself.** Every launch goes through the errand command line written at the bottom
+of the screen, started as an ordinary child: `r` runs it, `b` runs it detached, `!` lets you edit it
+by hand first. There is nothing the screen can do that the shell cannot, nothing it knows that the
+command line does not, and what you learn here you can type tomorrow. The history (`6`) is the same
+file either way — a command typed in a shell appears in it, and a line of it runs again with enter.
+
+**A box you can tick is a matrix.** Ticking two entries, two environments, two values of a tag and
+two values of a parameter asks for eight runs, for exactly the reason a comma does — and it produces
+exactly that comma. Values with `choices` come as boxes; anything else is typed, commas and all. A
+filter (`/`) hides rows; it never unticks them.
+
+**The pane facing a case is the file that case is writing.** Not a share of one pipe: the paths were
+worked out before the run started, so each case's output is a file whose name this side already
+knows. Which is why it reads the same under `-j 8`, for a run on another machine, and for a batch
+job submitted yesterday — three situations in which a single stream of interleaved lines says
+nothing about any particular case. `b` detaches, the screen goes on following it, and a screen
+opened tomorrow follows it too, because the state was never in the screen.
+
+| key | |
+|---|---|
+| `1`…`6`, tab | the list: entries, envs, tags, params, runs, history |
+| space | tick — several ticks is a matrix |
+| `a` `A` `v` | tick all, none, invert — only what the filter shows |
+| enter | type a value, or run a line of history |
+| `/` | filter the list |
+| `r` `b` | run, run detached |
+| `j` | how many at once (`-j`) |
+| `x` | interrupt what is running |
+| `!` | edit the command by hand, then run it |
+| `<` `>` `=` | scroll the pane; `=` sticks it back to the bottom |
+| `d` | read the project again |
+| `q` `Q` | leave; leave and stop what is running |
+
+A run started from the screen belongs to the screen, so `q` refuses while one is going — `--batch`
+is how work is meant to outlive the window.
 
 ## Configuration
 

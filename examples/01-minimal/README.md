@@ -48,6 +48,17 @@ from the entry, its parameters, where it ran and when — which is also how the 
 predicted before a run happens on another machine, and rsynced back afterwards. That is the next
 example.
 
+## The same thing, on a screen
+
+```bash
+errand --tui
+```
+
+The entries are a list of boxes; ticking two of them, or two values of `--n`, is the same matrix a
+comma would ask for. `r` runs what the bottom line says, and each case's output arrives in the pane
+facing it. Nothing is hidden behind the screen: the bottom line is the command, and it works just as
+well typed.
+
 ## Notice
 
 - **No `if __name__ == "__main__":`.** The guard is the entry, and there can be five of them in one

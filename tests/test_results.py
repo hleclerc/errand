@@ -46,7 +46,10 @@ if test( "two entries of the same name in different files do not collide" ):
 
 if test( "a container is part of where it ran" ):
     assert R.place() == R.place( None )
-    assert R.place( "cuda.sif" ).endswith( "@" + R.place() )
+    # Two environments on one machine are two sets of numbers, and a directory
+    # each: before this, the second silently cleared the first.
+    assert R.place( "gpu" ).endswith( "@" + R.place() )
+    assert R.place( "gpu" ) != R.place( "cpu" )
 
 
 if test( "summaries are rebuilt from the tree, at every level" ):
