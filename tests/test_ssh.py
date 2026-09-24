@@ -13,7 +13,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from errand import test, need, have, skip
+from errand import test, have
 from errand import layers as L, yamlish
 
 from _infra import run_errand, ssh_target, write_project
@@ -129,14 +129,9 @@ if test( "only what this invocation asked for comes back", tags = [ "ssh", "slow
     subprocess.run( [ "ssh", *options, host, f"rm -rf {remote_root}" ] )
 
 
-if test( "a batch queue takes the submission", tags = [ "slurm" ] ):
-    partition = need( "slurm_partition", "a Slurm partition you may submit to", example = "gpu" )
-    skip( f"not written yet -- would submit to {partition}" )
-
-
 if test( "the local file says what it has" ):
     # Always runs: it is what makes a thin setup visible rather than silent.
     from errand import local
     print( local.status() )
-    for key in ( "ssh_host", "ssh_root", "ssh_options", "slurm_partition" ):
+    for key in ( "ssh_host", "ssh_root", "ssh_options", "slurm_host", "slurm_partition" ):
         print( f"  {key}: {'yes' if have( key ) else 'no'}" )

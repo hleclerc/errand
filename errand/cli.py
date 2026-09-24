@@ -239,6 +239,9 @@ def dispatch( env, tags, argv, *, root, out_root, entries, overrides_list ):
     }
     cmd = L.Command( [ "python", "-m", "errand", *argv ], child_env )
 
+    for message in L.warnings_for( env.stack, ssh_root( env, root ) ):
+        print( warn( f"  warning: {message}" ), flush = True )
+
     ssh = env.ssh
     if ssh is None:
         wrapped = L.compose( env.stack, cmd, ctx )
@@ -273,6 +276,10 @@ def print_envs( root ):
     print( dim( f"\n  choose one with --env <name>, or by tag: "
                 f"{ ' '.join( '--' + n for n in config.tag_names() ) or '(no tags declared)' }" ) )
     return 0
+
+
+def ssh_root( env, root ):
+    return env.ssh.remote_root( L.Context( root = root ) ) if env.ssh else root
 
 
 def print_queue( ):

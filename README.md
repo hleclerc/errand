@@ -313,7 +313,19 @@ submission. A dispatched command carries several entries, so the allocation is t
 and exclusive if any one of them is.
 
 What the environment states explicitly wins: whoever wrote `Slurm( cpus = 16 )` knew something about
-that partition an entry cannot.
+that partition an entry cannot. **Everything is optional, `partition` included** — what is not
+stated is not passed, and the cluster applies its own default, which stays correct when the cluster
+is rearranged and a name copied out of somebody else's script does not.
+
+```python
+env( "cluster", [ Ssh( host = "login.hpc", root = "/home/me/proj" ),   # NOT /tmp
+                  Slurm( time = "2:00:00" ) ] )                        # the default partition
+```
+
+The root must be on a **shared filesystem**. A batch job runs on a compute node, and `/tmp` there
+is not the `/tmp` you pushed to — the job lands somewhere that has never heard of your project, and
+says so in terms of a failed `chdir` followed by an import error, neither of which points at the
+cause. `errand` checks for that before submitting and tells you plainly.
 
 ## Where the output goes
 

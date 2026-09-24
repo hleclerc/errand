@@ -142,3 +142,15 @@ if test( "nix and guix are the same shape as the rest" ):
         [ "nix", "develop", ".#dev", "-c" ]
     assert folded( [ L.Guix( packages = [ "python" ] ) ] ).argv[ : 4 ] == \
         [ "guix", "shell", "python", "--" ]
+
+
+if test( "a batch job on a node-local root is a warning, not a mystery" ):
+    # It fails deep in the job, with a chdir complaint from the batch system
+    # and then an import error -- nothing that points at the actual cause.
+    stack = [ L.Ssh( host = "h", root = "/tmp/proj" ), L.Slurm() ]
+    said = L.warnings_for( stack, Path( "/tmp/proj" ) )
+    assert said and "node-local" in said[ 0 ] and "shared filesystem" in said[ 0 ]
+
+    assert L.warnings_for( stack, Path( "/home/me/proj" ) ) == [ ]
+    # ...and without a batch system, /tmp is nobody's business
+    assert L.warnings_for( [ L.Ssh( host = "h" ) ], Path( "/tmp/proj" ) ) == [ ]

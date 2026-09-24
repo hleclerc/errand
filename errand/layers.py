@@ -394,8 +394,14 @@ class Slurm:
     Not an interpreter-selecting layer: it puts the command inside an
     allocation and leaves it otherwise alone, so it stacks in front of a
     container or an environment exactly as `Ssh` does in front of it.
+
+    EVERYTHING IS OPTIONAL, `partition` included. What is not stated is not
+    passed, and Slurm then applies its own default -- which is the right answer
+    far more often than a partition name copied out of somebody else's script:
+    the cluster already knows which one is the default, and it is the one that
+    stays correct when the cluster is rearranged.
     """
-    partition: str | None = None
+    partition: str | None = None     # None: the cluster's own default partition
     nodes    : int | None = None
     cpus     : int | None = None
     gpus     : int | None = None
@@ -432,7 +438,7 @@ class Slurm:
         return Command( [ "srun", *self.flags( ctx ), *cmd.argv ], cmd.env )
 
     def describe( self ):
-        return f"slurm:{self.partition or 'default'}"
+        return f"slurm:{self.partition or 'default partition'}"
 
 
 
@@ -528,6 +534,31 @@ def _quiet( argv ) -> bool:
                                stderr = subprocess.DEVNULL ).returncode == 0
     except OSError:
         return False
+
+
+# Paths that a compute node does not generally share with the machine you
+# submitted from. Getting this wrong fails deep inside the job, with a message
+# from the batch system about chdir and then an import error -- nothing that
+# points at the actual cause.
+NODE_LOCAL = ( "/tmp", "/var/tmp", "/dev/shm", "/scratch/local", "/localscratch" )
+
+
+def batch_of( stack ):
+    return next( ( l for l in stack if isinstance( l, Slurm ) ), None )
+
+
+def warnings_for( stack, root ) -> list:
+    """What is about to go wrong in a way the error will not explain."""
+    out = [ ]
+    if batch_of( stack ) is not None:
+        where = str( root )
+        if any( where == p or where.startswith( p + "/" ) for p in NODE_LOCAL ):
+            out.append(
+                f"{where} is node-local: a batch job runs on a compute node, which does not "
+                f"share it with the machine you submit from.\n"
+                f"  the job will not find the project -- put the root on a shared filesystem "
+                f"( your home, /scratch, /work )" )
+    return out
 
 
 def container_of( stack ):
