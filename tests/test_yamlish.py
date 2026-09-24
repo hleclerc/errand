@@ -1,5 +1,6 @@
 """errand writes YAML without PyYAML; what it writes it must read back."""
 import math
+import pathlib
 
 from errand import test
 from errand.yamlish import dump, load
@@ -43,6 +44,24 @@ if test( "a key may hold a colon, or a comma" ):
     assert load( dump( keyed ) ) == keyed
     nested = { "layers": { "0:venv:python3": "abc", "1:apptainer:cuda.sif": "def" } }
     assert load( dump( nested ) ) == nested
+
+
+if test( "a failure cannot corrupt the record of itself" ):
+    # An assertion message is exactly the kind of value that has newlines in
+    # it, and it is written to the same file that says the run failed.
+    messy = { "error": "AssertionError: two lines\nand a\ttab",
+              "trace": 'File "x.py", line 3\n  assert a == b\n' }
+    assert load( dump( messy ) ) == messy
+
+
+if test( "an unreadable file costs its own row, not the rebuild" ):
+    import tempfile
+    from errand.yamlish import read
+    with tempfile.TemporaryDirectory() as tmp:
+        broken = pathlib.Path( tmp ) / "result.yaml"
+        broken.write_text( "  this was never ours\n:::\n" )
+        assert read( broken ) is None
+        assert read( pathlib.Path( tmp ) / "absent.yaml" ) is None
 
 
 if test( "floats survive" ):

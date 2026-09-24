@@ -297,6 +297,39 @@ def build_parser( tag_names = ( ) ):
     return p
 
 
+def positional_of( parser, argv ):
+    """The pattern, read out of argv before the parameter flags are known.
+
+    Parameters cannot be declared until the entries are known, and the entries
+    cannot be found without the pattern -- so the first pass meets flags it has
+    never heard of. `parse_known_args` hands their VALUES back as leftovers,
+    and argparse then happily takes the first of them as the positional: with
+    `--n 3,4` it would look for a file called `3,4`. (`--n=3,4` survives, which
+    is what kept this hidden.)
+
+    So the pattern is read here instead: anything after an option it does not
+    recognize belongs to that option.
+    """
+    takes_value = { }
+    for action in parser._actions:
+        for option in action.option_strings:
+            takes_value[ option ] = action.nargs != 0
+
+    i = 0
+    while i < len( argv ):
+        token = argv[ i ]
+        if token == "--":
+            return argv[ i + 1 ] if i + 1 < len( argv ) else None
+        if token.startswith( "-" ) and token != "-":
+            name = token.split( "=", 1 )[ 0 ]
+            if "=" not in token and takes_value.get( name, True ):
+                i += 1                       # unknown flags are assumed to take a value
+            i += 1
+            continue
+        return token
+    return None
+
+
 def main( argv = None ):
     from . import __version__
 
@@ -314,6 +347,7 @@ def main( argv = None ):
 
     parser = build_parser( config.tag_names() )
     known, _ = parser.parse_known_args( argv )
+    known.pattern = positional_of( parser, argv )
 
     if known.envs:
         return print_envs( root )
@@ -333,7 +367,7 @@ def main( argv = None ):
     try:
         selected, modules = discovery.select(
             known.pattern, root, kinds = kinds, entry_tags = known.entry_tags,
-            bulk_only = not known.pattern and not kinds,
+            bulk_only = not known.pattern and not kinds, exclude = config.settings.exclude,
         )
     except ValueError as err:
         print( bad( str( err ) ) )
@@ -349,6 +383,7 @@ def main( argv = None ):
         parser.add_argument( f"--{name.replace( '_', '-' )}", dest = name, type = str,
                              default = None, help = p.help )
     args = parser.parse_args( argv )
+    args.pattern = known.pattern
 
     if args.help:
         print_entries( selected )
@@ -401,13 +436,16 @@ def main( argv = None ):
                             entries = selected, overrides_list = [ v for _, v in combos ] )
             continue
 
-        # Running here rather than in a child: the layers never got to rewrite a
-        # command, so whatever they meant to put in the environment has to be put
-        # there by hand. Without this an environment made only of `Vars` would
-        # select fine and do nothing.
-        os.environ.update( L.compose( env.stack, L.Command( [ "python" ] ),
-                                      L.Context( root = root, tags = tags ) ).env
-                           if env.stack else { } )
+        # Running here rather than in a child, either because nothing needed
+        # wrapping or because the wrapping already happened and this IS the
+        # child. Either way no command is about to be rewritten, so what the
+        # layers meant to put in the environment has to be put there directly --
+        # and `Vars` is the only kind that can act without a new process at all.
+        # (Composing the whole stack instead would reach the Ssh layer, whose
+        # answer to being folded is to refuse.)
+        os.environ.update( L.compose( [ l for l in env.stack if isinstance( l, L.Vars ) ],
+                                      L.Command( [ "python" ] ),
+                                      L.Context( root = root, tags = tags ) ).env )
 
         for i, ( varied, values ) in enumerate( combos ):
             if varied:

@@ -41,15 +41,29 @@ class Skipped( Exception ):
         self.hint   = hint
 
 
+def find( root: Path ):
+    """`errand.local.py` at `root` or above it.
+
+    Walking up matters: a suite often runs with its own subdirectory as the
+    root, while the file belongs to the checkout as a whole -- there is one per
+    machine, not one per directory.
+    """
+    for directory in [ root, *root.parents ]:
+        path = directory / LOCAL_FILE
+        if path.is_file():
+            return path
+    return None
+
+
 def load( root: Path ):
-    """Read `errand.local.py` at `root`, if it is there. Never an error."""
+    """Read `errand.local.py` at `root` or above. Never an error."""
     global _loaded_from, _missing_root
     _cache.clear()
     _loaded_from = None
     _missing_root = root
 
-    path = root / LOCAL_FILE
-    if not path.is_file():
+    path = find( root )
+    if path is None:
         return { }
 
     spec = importlib.util.spec_from_file_location( "_errand_local", path )

@@ -27,6 +27,14 @@ def _scalar( v ):
         # repr keeps round-tripping; inf/nan are not YAML numbers, so quote them
         return repr( v ) if v == v and abs( v ) != float( "inf" ) else f"'{v!r}'"
     s = str( v )
+    # A newline or a tab cannot survive a single-quoted scalar on one line, and
+    # a value that reaches here is often an error message, which is exactly the
+    # kind of thing that has newlines in it. Double quotes, with escapes: a
+    # failure must not be able to corrupt the record of itself.
+    if any( c in s for c in "\n\r\t\\\"" ):
+        escaped = ( s.replace( "\\", "\\\\" ).replace( '"', '\\"' )
+                     .replace( "\n", "\\n" ).replace( "\r", "\\r" ).replace( "\t", "\\t" ) )
+        return f'"{escaped}"'
     # A colon anywhere, not just before a space: a KEY like `0:venv:python3`
     # is unambiguous to a human and a trap for a parser, which has no way to
     # know which of the three separates the key from the value.
@@ -77,8 +85,19 @@ def _parse_scalar( s ):
         return True
     if s == "false":
         return False
-    if len( s ) >= 2 and s[ 0 ] == s[ -1 ] and s[ 0 ] in "'\"":
-        return s[ 1 : -1 ].replace( s[ 0 ] * 2, s[ 0 ] )
+    if len( s ) >= 2 and s[ 0 ] == s[ -1 ] == '"':
+        out, i, body = [ ], 0, s[ 1 : -1 ]
+        while i < len( body ):
+            c = body[ i ]
+            if c == "\\" and i + 1 < len( body ):
+                i += 1
+                out.append( { "n": "\n", "r": "\r", "t": "\t" }.get( body[ i ], body[ i ] ) )
+            else:
+                out.append( c )
+            i += 1
+        return "".join( out )
+    if len( s ) >= 2 and s[ 0 ] == s[ -1 ] == "'":
+        return s[ 1 : -1 ].replace( "''", "'" )
     try:
         return int( s )
     except ValueError:
@@ -168,10 +187,15 @@ def load( text: str ) -> dict:
 
 
 def read( path ):
-    """`load` of a file, or None when it isn't there."""
+    """`load` of a file, or None when it isn't there -- or cannot be read.
+
+    Summaries are rebuilt by re-reading whatever is in the tree, and a tree
+    outlives the version that wrote it. One unreadable file left over from
+    another day must cost its own row, not the whole rebuild.
+    """
     try:
         return load( path.read_text() )
-    except FileNotFoundError:
+    except ( OSError, ValueError, UnicodeDecodeError ):
         return None
 
 

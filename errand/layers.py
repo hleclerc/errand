@@ -316,10 +316,16 @@ RSYNC_EXCLUDES = [
 
 @dataclass
 class Ssh:
-    """Must be the first layer. Everything after it runs on `host`."""
-    host  : str
-    root  : str | None = None
-    python: str = "python3"
+    """Must be the first layer. Everything after it runs on `host`.
+
+    `options` are passed to both ssh and rsync -- a port, an identity file, a
+    jump host, a `StrictHostKeyChecking` you have decided about. rsync has to
+    get the same ones or it reaches a different machine than ssh does.
+    """
+    host   : str
+    root   : str | None = None
+    python : str = "python3"
+    options: list = field( default_factory = list )
 
     def wrap( self, cmd: Command, ctx: Context ) -> Command:
         # Never folded like the others: `run` takes over, because getting there
@@ -337,34 +343,44 @@ class Ssh:
         wrapped = compose( inner, Command( [ self.python, *cmd.argv[ 1 : ] ], cmd.env ), remote_ctx )
 
         echo( f"  rsync push -> {self.host}:{remote_ctx.root}" )
-        push( ctx.root, self.host, remote_ctx.root )
+        push( ctx.root, self.host, remote_ctx.root, self.options )
 
-        line = f"cd {shlex.quote( str( remote_ctx.root ) )} && {wrapped.shell()}"
+        line = f"mkdir -p {shlex.quote( str( remote_ctx.root ) )} && " \
+               f"cd {shlex.quote( str( remote_ctx.root ) )} && {wrapped.shell()}"
         # ssh runs non-interactively, so the remote shell never reads the rc
         # file that puts micromamba, cargo or nvm on PATH. Force an interactive
         # one, through the user's own $SHELL rather than a hard-coded bash.
-        code = subprocess.run( [ "ssh", self.host, f"$SHELL -ic {shlex.quote( line )}" ] ).returncode
+        code = subprocess.run( [ "ssh", *self.options, self.host,
+                                 f"$SHELL -ic {shlex.quote( line )}" ] ).returncode
 
         if pull:
             echo( f"  rsync pull  <- {self.host}:{remote_ctx.root} [{', '.join( pull )}]" )
-            fetch( pull, self.host, remote_ctx.root, ctx.root )
+            fetch( pull, self.host, remote_ctx.root, ctx.root, self.options )
         return code
 
 
-def push( local_root: Path, host: str, remote_root: Path ):
-    subprocess.run( [ "rsync", "-a", "--delete",
+def _rsh( options ):
+    """rsync must reach the machine ssh reaches, so it gets the same options."""
+    return [ "-e", "ssh " + " ".join( shlex.quote( o ) for o in options ) ] if options else [ ]
+
+
+def push( local_root: Path, host: str, remote_root: Path, options = ( ) ):
+    subprocess.run( [ "ssh", *options, host, f"mkdir -p {shlex.quote( str( remote_root ) )}" ],
+                    check = True )
+    subprocess.run( [ "rsync", "-a", "--delete", *_rsh( options ),
                       *[ f"--exclude={e}" for e in RSYNC_EXCLUDES ],
                       f"{local_root}/", f"{host}:{remote_root}/" ], check = True )
 
 
-def fetch( paths, host: str, remote_root: Path, local_root: Path ):
+def fetch( paths, host: str, remote_root: Path, local_root: Path, options = ( ) ):
     """Best effort: a path the remote run never created is nothing to bring back."""
     for p in paths:
         target = local_root / p
         target.mkdir( parents = True, exist_ok = True )
         # A trailing slash on BOTH sides: without it rsync nests the remote
         # directory INSIDE the local one whenever the latter already exists.
-        subprocess.run( [ "rsync", "-a", f"{host}:{remote_root}/{p}/", f"{target}/" ] )
+        subprocess.run( [ "rsync", "-a", *_rsh( options ),
+                          f"{host}:{remote_root}/{p}/", f"{target}/" ] )
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────

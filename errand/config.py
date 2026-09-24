@@ -59,6 +59,9 @@ class Settings:
     out    : str = "runs"
     src    : list = field( default_factory = list )
     default: str | None = None
+    # Directories discovery must not walk into: vendored code, fixtures, a copy
+    # of something that would be imported and should not be.
+    exclude: list = field( default_factory = list )
 
 
 settings  = Settings()

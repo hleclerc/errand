@@ -34,20 +34,21 @@ MARKER = "errand"
 SCAN_PKG = "_errand_scan"
 
 
-def iter_py_files( root: Path ):
+def iter_py_files( root: Path, exclude = ( ) ):
     import os
+    skip = SKIP_DIRS | { e.strip( "/" ) for e in exclude }
     for dirpath, dirnames, filenames in os.walk( root ):
         dirnames[ : ] = [ d for d in dirnames
-                          if d not in SKIP_DIRS and not d.endswith( ".egg-info" ) ]
+                          if d not in skip and not d.endswith( ".egg-info" ) ]
         for f in filenames:
             if f.endswith( ".py" ):
                 yield Path( dirpath ) / f
 
 
-def candidates( root: Path ) -> list[ Path ]:
+def candidates( root: Path, exclude = ( ) ) -> list[ Path ]:
     here = Path( __file__ ).resolve().parent      # errand's own sources mention the marker
     out = [ ]
-    for p in iter_py_files( root ):
+    for p in iter_py_files( root, exclude ):
         if here in p.resolve().parents or p.name == "errand.py":
             continue
         try:
@@ -137,11 +138,11 @@ def collect( files: list[ Path ], root: Path ):
     return list( E.collected ), modules
 
 
-def select( pattern, root, kinds = None, entry_tags = None, bulk_only = False ):
+def select( pattern, root, kinds = None, entry_tags = None, bulk_only = False, exclude = ( ) ):
     """Everything the command line asked for: ( entries, modules )."""
     from .expr import matches
 
-    files = candidates( root )
+    files = candidates( root, exclude )
     specs = parse_pattern( pattern, files, root )
     wanted = sorted( { f for matched, _ in specs for f in matched }, key = str )
 

@@ -170,7 +170,7 @@ env( "cluster", [ Ssh( host = "gpu-box", root = "/home/me/proj" ),
 | `Module( "gcc/13", "cuda/12" )` | Lmod / environment modules, the way a cluster picks a toolchain |
 | `Apptainer( image, recipe =, flags =, mounts =, pip = )` | wraps with `apptainer exec`, using the container's own interpreter |
 | `Docker( … )`, `Podman( … )` | likewise |
-| `Ssh( host, root =, python = )` | must be first; everything after it runs on that machine |
+| `Ssh( host, root =, python =, options = )` | must be first; everything after it runs on that machine. `options` go to ssh *and* rsync — a port, an identity, a jump host |
 | `Slurm( partition =, nodes =, gpus =, time =, … )` | goes through `srun`, or `sbatch` in [batch mode](#detached-runs) |
 | `Oar( … )`, `Pbs( … )`, `Sge( … )`, `Lsf( … )` | the same, for the other batch systems |
 | `Vars( { … } )` | environment variables for the child process |
@@ -467,8 +467,9 @@ configure(
     root   = None,     # repo root; found by walking up from the cwd for errandfile.py
     out    = "runs",   # where the output tree goes
     layout = None,     # override the path scheme
-    src    = [ ],      # paths prepended to every child's PYTHONPATH
-    default= None,     # the environment used when nothing is asked for
+    src     = [ ],     # paths prepended to every child's PYTHONPATH
+    exclude = [ ],     # directories discovery must not walk into
+    default = None,    # the environment used when nothing is asked for
 )
 ```
 
@@ -506,6 +507,11 @@ what was missing and exactly what to write where:
       errand.local.py does not exist yet. Create it (it is not tracked) with:
           ssh_host = 'gpu-box'
 ```
+
+Reach for it only for what genuinely cannot be defaulted. `ssh localhost` is a real ssh, a real
+rsync and a real round trip through a directory that is not the project's — only the hardware is
+shared, and the hardware is rarely what is being tested. A suite that exercises the remote path on
+anyone's machine is worth more than one that waits for a cluster.
 
 A skip is its own status, in the output and in `result.yaml`. `skip( "reason" )` says it directly
 for anything else that makes an entry inapplicable today. A suite that quietly tested nothing must
