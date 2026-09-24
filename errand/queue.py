@@ -7,7 +7,13 @@ project. That means state outside the process, and the smallest honest form of
 it is a directory of claims.
 
     <queue>/claims/<host>-<pid>-<n>.yaml    one file per held claim
-    <queue>/lock                            held only while deciding
+    <queue>/lock-<host>                     held only while deciding
+
+Every name carries the host, so a file is readable on its own and a queue
+directory that somehow ends up shared -- a TMPDIR on a network mount, an
+XDG_RUNTIME_DIR someone pointed at a home -- separates machines instead of
+merging them. The directory name carries it too; the belt is cheap enough to
+wear with the braces.
 
 A claim is TOUCHED while the work lives. One whose timestamp has gone stale is
 reclaimed, and its owner, if it ever comes back, is told it lost it. That is
@@ -29,6 +35,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from . import yamlish
@@ -94,12 +101,29 @@ def _total_ram_mb( ) -> float:
 
 
 def _gpu_count( ) -> int:
+    # What the caller can already see, when somebody upstream narrowed it.
+    visible = os.environ.get( "CUDA_VISIBLE_DEVICES" )
+    if visible is not None:
+        return len( [ v for v in visible.split( "," ) if v.strip() ] )
     try:
         got = subprocess.run( [ "nvidia-smi", "-L" ], capture_output = True, text = True,
                               timeout = 10 )
         return len( [ l for l in got.stdout.splitlines() if l.strip() ] ) if not got.returncode else 0
     except ( OSError, subprocess.SubprocessError ):
         return 0
+
+
+def devices( ) -> list:
+    """The device indices this process may use, in the caller's own numbering.
+
+    `CUDA_VISIBLE_DEVICES` renumbers from zero for whoever it is set on, so a
+    process that was itself given devices 2 and 5 sees 0 and 1 -- and must hand
+    0 and 1 down, not 2 and 5.
+    """
+    visible = os.environ.get( "CUDA_VISIBLE_DEVICES" )
+    if visible is not None:
+        return list( range( len( [ v for v in visible.split( "," ) if v.strip() ] ) ) )
+    return list( range( int( capacity()[ "gpus" ] ) ) )
 
 
 _capacity: dict | None = None
@@ -158,7 +182,7 @@ def _lock( ):
     except ImportError:                     # a platform without flock: decide unguarded
         yield
         return
-    path = queue_dir() / "lock"
+    path = queue_dir() / f"lock-{host()}"
     path.parent.mkdir( parents = True, exist_ok = True )
     handle = os.open( path, os.O_CREAT | os.O_RDWR, 0o600 )
     try:
@@ -168,25 +192,51 @@ def _lock( ):
         os.close( handle )
 
 
-def _fits( needs: dict, exclusive: bool, others: list ) -> str | None:
-    """None when it fits, else what it is waiting for."""
+def taken_devices( others: list ) -> set:
+    out = set()
+    for o in others:
+        for d in ( o.get( "devices" ) or [ ] ):
+            out.add( int( d ) )
+    return out
+
+
+def _fits( needs: dict, exclusive: bool, others: list ):
+    """( waiting_for, devices ). `waiting_for` is None when it fits."""
     if exclusive and others:
-        return f"the machine to itself ({len( others )} running)"
+        return f"the machine to itself ({len( others )} running)", [ ]
     if any( o.get( "exclusive" ) for o in others ):
         owner = next( o for o in others if o.get( "exclusive" ) )
-        return f"{owner.get( 'label', 'something' )}, which has the machine to itself"
+        return f"{owner.get( 'label', 'something' )}, which has the machine to itself", [ ]
 
     have = capacity()
     for key, wanted in needs.items():
+        if key == "gpus":
+            continue                            # counted by naming them, below
         used = sum( float( o.get( key, 0 ) or 0 ) for o in others )
         total = have.get( key, 0.0 )
         if total and wanted > total:
             # Asking for more than exists would wait for ever. Let it through
             # alone rather than deadlock on an impossible promise.
-            return None if not others else f"the machine to itself (needs {key}={wanted:g} of {total:g})"
+            if others:
+                return f"the machine to itself (needs {key}={wanted:g} of {total:g})", [ ]
+            continue
         if total and used + wanted > total:
-            return f"{key} ({used:g} of {total:g} taken, needs {wanted:g})"
-    return None
+            return f"{key} ({used:g} of {total:g} taken, needs {wanted:g})", [ ]
+
+    # Devices are ASSIGNED, not merely counted: an entry that asked for one GPU
+    # has to be told which, or two of them pick the same card and the numbers
+    # mean nothing.
+    wanted_gpus = int( needs.get( "gpus", 0 ) )
+    if exclusive:
+        return None, devices()
+    if not wanted_gpus:
+        return None, [ ]
+    free = [ d for d in devices() if d not in taken_devices( others ) ]
+    if len( free ) < wanted_gpus:
+        if not others:
+            return None, free       # more than exists: run alone with what there is
+        return f"gpus ({len( free )} free of {len( devices() )}, needs {wanted_gpus})", [ ]
+    return None, free[ : wanted_gpus ]
 
 
 @contextlib.contextmanager
@@ -206,10 +256,11 @@ def claim( needs: dict, *, exclusive = False, label = "", enabled = True, echo =
     while True:
         with _lock():
             others = [ o for o in held() if o[ "path" ] != str( mine ) ]
-            waiting = _fits( needs, exclusive, others )
+            waiting, got = _fits( needs, exclusive, others )
             if waiting is None:
                 yamlish.write( mine, { "label": label, "pid": os.getpid(), "host": host(),
-                                       "exclusive": exclusive, "since": time.time(), **needs } )
+                                       "exclusive": exclusive, "since": time.time(),
+                                       "devices": got, **needs } )
                 break
         if echo and waiting != waited_for:
             echo( f"  waiting for {waiting}" )
@@ -220,11 +271,31 @@ def claim( needs: dict, *, exclusive = False, label = "", enabled = True, echo =
     beat = threading.Thread( target = _heartbeat, args = ( mine, stop ), daemon = True )
     beat.start()
     try:
-        yield mine
+        yield Granted( path = mine, devices = got )
     finally:
         stop.set()
         beat.join( timeout = 1.0 )
         mine.unlink( missing_ok = True )
+
+
+@dataclass
+class Granted:
+    """What the machine gave: where the claim is, and which devices are ours."""
+    path   : Path
+    devices: list
+
+    def env( self ) -> dict:
+        """What a child has to be told so it uses the cards it was given.
+
+        Every framework reads one of these, and each renumbers from zero for
+        whoever it is set on -- which is why a nested claim hands down its own
+        0..n-1 rather than the indices it was itself given.
+        """
+        if not self.devices:
+            return { }
+        listed = ",".join( str( d ) for d in self.devices )
+        return { "CUDA_VISIBLE_DEVICES": listed, "HIP_VISIBLE_DEVICES": listed,
+                 "ROCR_VISIBLE_DEVICES": listed }
 
 
 def _heartbeat( path: Path, stop: threading.Event ):
@@ -241,6 +312,8 @@ def describe( ) -> list:
     for row in held():
         what = "the whole machine" if row.get( "exclusive" ) else ", ".join(
             f"{k}={row[ k ]:g}" for k in ( "cpus", "ram", "gpus" ) if row.get( k ) ) or "a slot"
+        if row.get( "devices" ):
+            what += "  gpu " + ",".join( str( d ) for d in row[ "devices" ] )
         age = time.time() - float( row.get( "since", time.time() ) )
         out.append( f"{row.get( 'label', '?' )}  {what}  {age:.0f}s  pid {row.get( 'pid' )}" )
     return out

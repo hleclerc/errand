@@ -81,6 +81,21 @@ def capture( ):
         sys.stdout, sys.stderr = old_out, old_err
 
 
+@contextlib.contextmanager
+def _with_env( values: dict ):
+    """Set, then put back exactly what was there -- including nothing."""
+    before = { k: os.environ.get( k ) for k in values }
+    os.environ.update( values )
+    try:
+        yield
+    finally:
+        for k, old in before.items():
+            if old is None:
+                os.environ.pop( k, None )
+            else:
+                os.environ[ k ] = old
+
+
 # ── matrices ─────────────────────────────────────────────────────────────────
 
 def expand( raw_values: dict, params: dict ):
@@ -180,17 +195,24 @@ def run_entries( entries, modules, *, root, out_root, overrides, env_name, tags,
         # make a benchmark's numbers depend on who else was busy.
         with queue.claim( e.resources, exclusive = e.traits[ "exclusive" ],
                           label = f"{e.file.name}::{e.name}", enabled = queued,
-                          echo = lambda m: print( dim( m ), flush = True ) ):
-            started = time.perf_counter()
-            with capture() as buf:
-                try:
-                    discovery.import_file( modules[ e.module ], root )
-                except local.Skipped as s:
-                    status, error, hint = "SKIP", s.reason, s.hint
-                except BaseException as exc:             # SystemExit included
-                    status, error = "FAIL", f"{type( exc ).__name__}: {exc}"
-                    traceback.print_exc()
-            duration = time.perf_counter() - started
+                          echo = lambda m: print( dim( m ), flush = True ) ) as granted:
+            # Being told WHICH card is the whole point of asking for one: two
+            # entries that both picked the first would share it and neither
+            # would measure anything.
+            with _with_env( granted.env() if granted else { } ):
+                if granted and granted.devices:
+                    print( dim( f"  gpu {','.join( str( d ) for d in granted.devices )}" ),
+                           flush = True )
+                started = time.perf_counter()
+                with capture() as buf:
+                    try:
+                        discovery.import_file( modules[ e.module ], root )
+                    except local.Skipped as s:
+                        status, error, hint = "SKIP", s.reason, s.hint
+                    except BaseException as exc:         # SystemExit included
+                        status, error = "FAIL", f"{type( exc ).__name__}: {exc}"
+                        traceback.print_exc()
+                duration = time.perf_counter() - started
         E.end_run()
 
         if status == "PASS":

@@ -294,6 +294,12 @@ errand --queue        # what the host has, and what is holding it
 errand --no-queue     # this run does not wait, and does not hold
 ```
 
+**A card is assigned, not merely counted.** An entry that asked for `gpus = 1` is told *which* one,
+through `CUDA_VISIBLE_DEVICES` (and the `HIP`/`ROCR` spellings); two entries that both asked for one
+get different cards. Counting alone would let them both pick the first and neither would measure
+anything. An exclusive run gets all of them. Claims nest correctly: a process that was itself given
+cards 2 and 5 sees them as 0 and 1, and hands 0 and 1 down.
+
 A claim records who holds it and is **touched while the work lives**. One whose timestamp has gone
 stale is reclaimed, and its owner, if it ever comes back, finds it gone. That is the only honest way
 to tell a killed run from a long one: a benchmark that has been running for six hours is
