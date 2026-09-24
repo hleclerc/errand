@@ -557,6 +557,22 @@ def ssh_root( env, root ):
     return env.ssh.remote_root( L.Context( root = root ) ) if env.ssh else root
 
 
+def prepare_providers( entries, *, root, out_root, tags ):
+    """Give each provider its one chance to get ready. -> [ ( who, why ) ] on trouble."""
+    out = [ ]
+    seen = [ ]
+    for e in entries:
+        if e.provider is not None and not any( e.provider is p for p in seen ):
+            seen.append( e.provider )
+    for p in seen:
+        mine = [ e for e in entries if e.provider is p ]
+        ctx = P.RunContext( root = root, out_dir = out_root, env = { } )
+        why = p.prepare( mine, ctx )
+        if why:
+            out.append( ( p.name, why ) )
+    return out
+
+
 def print_queue( ):
     scheduler = queue.someone_else_is_scheduling()
     print( head( f"\nThe machine ({queue.host()})" ) )
@@ -814,6 +830,16 @@ def main( argv = None ):
         os.environ.update( L.compose( [ l for l in env.stack if isinstance( l, L.Vars ) ],
                                       L.Command( [ "python" ] ),
                                       L.Context( root = root, tags = tags ) ).env )
+
+        # Build once, here, before anything runs: a suite is built once and not
+        # once per file, and under `-j` several children would otherwise write
+        # the same binary at the same time.
+        trouble = prepare_providers( selected, root = root, out_root = out_root, tags = tags )
+        if trouble:
+            for who, why in trouble:
+                print( bad( f"  {who}: {why}" ) )
+            rc = 1
+            continue
 
         if how_many > 1:
             run_in_processes( selected, combos, root = root, out_root = out_root, env = env,

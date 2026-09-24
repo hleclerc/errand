@@ -5,3 +5,9 @@ __pycache__/
 dist/
 errand.local.py
 .errand/
+
+# what the examples build when you run them
+examples/*/cpp/test_*
+!examples/*/cpp/test_*.cpp
+!examples/*/cpp/test_*.h
+examples/*/rust/target/

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import fnmatch
 import importlib.util
+import re
 import sys
 from pathlib import Path
 
@@ -25,7 +26,12 @@ SKIP_DIRS = {
     ".cache", ".idea", ".vscode", "target", "runs", ".claude",
 }
 
-MARKER = "errand"
+# A file declares work when it IMPORTS errand, not when it merely says the
+# word. A comment explaining that a suite is collected by errand, a docstring,
+# a string in somebody's fixture -- all of those mention it, and none of them
+# should be imported and executed on the strength of that.
+MARKER = re.compile( r"^[ \t]*(from[ \t]+errand(\.[\w.]+)?[ \t]+import|import[ \t]+errand\b)",
+                     re.MULTILINE )
 
 # The project's own files: they mention errand by nature, and re-executing one
 # as if it declared work would register everything it declares a SECOND time --
@@ -57,7 +63,7 @@ def candidates( root: Path, exclude = ( ) ) -> list[ Path ]:
         if here in p.resolve().parents or p.name in NOT_WORK:
             continue
         try:
-            if MARKER in p.read_text( errors = "ignore" ):
+            if MARKER.search( p.read_text( errors = "ignore" ) ):
                 out.append( p )
         except OSError:
             pass
@@ -74,7 +80,7 @@ def parse_pattern( pattern: str | None, files: list[ Path ], root: Path ):
 
 def _declares_entries( path: Path ) -> bool:
     try:
-        return MARKER in path.read_text( errors = "ignore" )
+        return bool( MARKER.search( path.read_text( errors = "ignore" ) ) )
     except OSError:
         return False
 
@@ -179,7 +185,11 @@ def select( pattern, root, kinds = None, entry_tags = None, bulk_only = False, e
     specs = parse_pattern( pattern, files, root )
     wanted = sorted( { f for matched, _ in specs for f in matched }, key = str )
 
-    mine = [ f for f in wanted if f.suffix == ".py" and _declares_entries( f ) ]
+    # A file a provider owns is that provider's, whatever it happens to import:
+    # a pytest suite that imports errand for a helper is still pytest's.
+    owned = { f for p in providers for f in p.files() }
+    mine = [ f for f in wanted
+             if f.suffix == ".py" and f not in owned and _declares_entries( f ) ]
     all_entries, modules = collect( mine, root )
     for p in providers:
         all_entries += p.collect( specs )

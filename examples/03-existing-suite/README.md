@@ -4,11 +4,16 @@ A pytest suite, a Catch2 suite and a cargo one, none of them modified. Three lin
 put all three under `errand`.
 
 ```
-errandfile.py                  three providers, two environments
-tests/test_api.py          ordinary pytest, still runs under `pytest`
-cpp/test_geometry.cpp      ordinary Catch2, still runs on its own
-rust/                      ordinary cargo
+errandfile.py            three providers, and nothing else
+tests/test_api.py        ordinary pytest, still runs under `pytest`
+cpp/test_geometry.cpp    ordinary Catch2, still runs on its own
+cpp/Makefile             whatever you already build with
+rust/                    ordinary cargo
 ```
+
+There are no environments here on purpose: this example is about adopting suites, and declaring one
+would have running it build a micromamba environment on your machine. Environments are
+[example 02](../02-environments/).
 
 ## Try it
 
@@ -58,6 +63,28 @@ Every framework locates its tests by assuming something about your layout, so th
 this that does not guess. What `errandfile.py` changes is that the assumption is visible, versioned, and
 arguable — `Pytest( dirs = [ "tests" ] )` says exactly what will be looked at, and takes arguments
 to say something else.
+
+## Compiling, and finding the binary
+
+errand compiles nothing itself. It runs the command you already build with, once, and then expects
+the binaries where you say they land:
+
+```python
+provider( Catch2( dir = "cpp", build = "make -C cpp" ) )
+provider( Catch2( dir = "cpp", build = "cmake --build build", binary = "build/{stem}" ) )
+```
+
+`build` runs **once before any entry of that provider** — not once per file, and not once per
+parallel process, which under `-j` would have several of them writing the same binary at the same
+time. `binary` says where a source's executable ends up, `{stem}` being the source's name; it
+defaults to `<dir>/<stem>`, which is where the Makefile here puts it. Leave `build` out entirely if
+something else already built them.
+
+Nothing about your build is errand's business. It does not know your compiler, your flags or your
+layout, and asking it to would be asking it to have opinions it has no way to hold.
+
+`cargo` needs none of this: `cargo test` builds what it runs, and `cargo metadata` lists the targets
+without building anything at all.
 
 ## Notice
 

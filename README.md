@@ -589,6 +589,22 @@ first look, never silent, and the cure is to write the line.
 Discovery over a large tree is not free, and will be cached against file mtimes. Later; it is an
 optimization, not a design question.
 
+**errand compiles nothing itself.** A provider that needs a build runs the command you already build
+with, once, before any of its entries — not once per file, and not once per parallel process:
+
+```python
+provider( Catch2( dir = "cpp", build = "make -C cpp" ) )
+provider( Catch2( dir = "cpp", build = "cmake --build build", binary = "build/{stem}" ) )
+```
+
+`binary` says where a source's executable lands, defaulting to `<dir>/<stem>`. Leave `build` out if
+something else already built them. Your compiler, your flags and your layout stay yours.
+
+**A missing tool is installed when the environment is errand's to install into.** A `Pytest`
+provider whose interpreter has no pytest installs it — into a venv, a micromamba environment, a
+container — and says so. Into the *system* interpreter it declines and tells you what to run: that
+one is shared with everything else on the machine, and it is not errand's to change.
+
 `Pytest` asks pytest for its own tests rather than reimplementing its collection rules — that is how
 a runner starts quietly disagreeing with the tool it wraps — so its entries are per test and its
 marks are entry tags. `Catch2` is per *file*, because the cases of a compiled suite cannot be

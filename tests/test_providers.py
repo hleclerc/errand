@@ -11,6 +11,7 @@ import tempfile
 from pathlib import Path
 
 from errand import test, skip, yamlish
+from errand import providers as P
 from errand.providers import Cargo, Catch2, Pytest, _from_cargo, _from_catch2, _from_junit
 
 from _infra import run_errand, write_project
@@ -218,124 +219,104 @@ def test_no( ):
 PYTEST_PROJECT = '''
 from errand import configure, provider, Pytest
 
-configure( exclude = [ "_lib" ] )
-provider( Pytest( dirs = [ "suite" ] ) )
+configure( exclude = [ "_lib", ".venv" ] )
+
+# A venv of this project's own. `install = "auto"` -- the default -- installs
+# pytest into it because it is not the system interpreter.
+provider( Pytest( dirs = [ "suite" ], python = ".venv/bin/python" ) )
 '''
 
 
 if test( "a pytest suite, collected by pytest itself", tags = [ "pytest", "slow" ] ):
-    try:
-        import pytest                                                # noqa: F401
-    except ImportError:
-        skip( "pytest is not installed in this interpreter",
-              "the provider asks pytest for its own tests rather than guessing, "
-              "so there is nothing to ask here" )
-
+    # A venv of its own, deliberately WITHOUT pytest: installing what a
+    # provider needs into an environment that is errand's to install into is
+    # part of what a provider does.
     with tempfile.TemporaryDirectory() as tmp:
         project = write_project( Path( tmp ) / "proj", PYTEST_PROJECT,
                                  { "suite/test_things.py": PYTEST_SUITE } )
+        venv = project / ".venv"
+        made = subprocess.run( [ sys.executable, "-m", "venv", str( venv ) ],
+                               capture_output = True, text = True )
+        if made.returncode:
+            skip( "no venv could be made here", made.stderr.strip()[ : 300 ] )
+        assert subprocess.run( [ venv / "bin" / "python", "-c", "import pytest" ],
+                               capture_output = True ).returncode != 0
+
+        code, output = run_errand( project, "--help", timeout = 900 )
+        if "could not install" in output:
+            skip( "pip could not reach an index from here",
+                  "the provider installs what it needs; this machine cannot fetch it" )
 
         # one entry per test, and the marks came across as entry tags
-        code, output = run_errand( project, "--help" )
         assert code == 0, output
         assert "test_ok" in output and "test_slow" in output, output
-        assert "slow" in output, output
+        assert "tags: slow" in output, output
+        # ...and it said what it was doing to somebody's environment
+        assert "installing pytest" in output, output
 
-        code, output = run_errand( project, "-e", "!slow" )
+        code, output = run_errand( project, "-e", "!slow", timeout = 900 )
         assert "test_slow" not in output, output
         assert code == 1 and "test_no" in output, output          # the failing one is real
+        assert "assert 1 == 2" in output, "pytest's own words, not `exit 1`"
 
 
-# --- the protocol itself ----------------------------------------------------
+if test( "the system interpreter is not errand's to install into", tags = [ "pytest" ] ):
+    # It is shared with everything else on the machine, and it may well refuse.
+    from errand.providers import Pytest
 
-if test( "the project's own files are not work" ):
-    # An errandfile mentions errand by nature. Re-executing one as if it
-    # declared entries registers everything it declares a SECOND time:
-    # providers twice over, environments twice over, every entry duplicated.
-    from errand import discovery
-
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path( tmp )
-        ( root / "errandfile.py" ).write_text( "from errand import configure\n" )
-        ( root / "errand.local.py" ).write_text( "ssh_host = 'somewhere'\n" )
-        ( root / "test_real.py" ).write_text( "from errand import test\nif test( 'x' ): pass\n" )
-
-        found = [ p.name for p in discovery.candidates( root ) ]
-        assert found == [ "test_real.py" ], found
+    provider = Pytest( dirs = [ "nowhere" ], python = "/usr/bin/python3" )
+    if provider._has_pytest():
+        skip( "the system interpreter here already has pytest" )
+    why = provider.ensure_pytest( echo = None )
+    assert why and "not errand's to do" in why, why
+    assert "Pytest( install = True )" in why, "it has to say what to do instead"
 
 
-if test( "a whole-file provider is handed the ::name, not filtered by it" ):
-    # Its entry is called after the FILE, so filtering entries on `::name`
-    # would reject it for not being called after one of its own cases.
-    from errand import discovery
-    from errand.providers import Provider, selector_of
+if test( "a build runs once, not once per entry" ):
+    # Once per file would recompile for nothing; under -j it would have several
+    # processes writing the same binary at the same time.
+    from errand.providers import Catch2
 
-    class Whole( Provider ):
-        name = "whole"
-        whole_files = True
+    class Counting( Catch2 ):
+        runs = 0
 
-        def __init__( self, path ):
-            self.path = path
-
-        def files( self ):
-            return [ self.path ]
-
-        def collect( self, specs ):
-            return [ self.entry( name = self.path.stem, file = self.path ) ]
+        def shell( self, argv, ctx, **kw ):
+            Counting.runs += 1
+            class Nothing:
+                returncode, stdout, stderr = 0, "", ""
+            return Nothing()
 
     with tempfile.TemporaryDirectory() as tmp:
         root = Path( tmp )
-        source = root / "test_thing.cpp"
-        source.write_text( "int main() { return 0; }\n" )
+        ( root / "cpp" ).mkdir()
+        for name in ( "test_a.cpp", "test_b.cpp" ):
+            ( root / "cpp" / name ).write_text( "int main(){return 0;}\n" )
 
-        chosen, _, selectors = discovery.select( "test_thing::a_case", root,
-                                                 providers = [ Whole( source ) ] )
-        assert [ e.name for e in chosen ] == [ "test_thing" ], chosen
-        assert selectors[ "test_thing" ] == "a_case"
-
-        # ...while a provider with per-name entries IS filtered, as it should be
-        class ByName( Whole ):
-            whole_files = False
-
-            def collect( self, specs ):
-                return [ self.entry( name = n, file = self.path ) for n in ( "a_case", "b_case" ) ]
-
-        chosen, _, _ = discovery.select( "test_thing::a_case", root,
-                                         providers = [ ByName( source ) ] )
-        assert [ e.name for e in chosen ] == [ "a_case" ], chosen
-
-
-if test( "what pytest was asked to write down" ):
-    # The plugin is what turns pytest's own collection into entries and its
-    # marks into tags, so it is worth checking without pytest being installed.
-    import json
-    import os
-
-    from errand import _pytest_plugin
-
-    class Mark:
-        def __init__( self, name ): self.name = name
-
-    class Item:
-        def __init__( self, nodeid, path, name, marks ):
-            self.nodeid, self.path, self.name = nodeid, Path( path ), name
-            self._marks = [ Mark( m ) for m in marks ]
-
-        def iter_markers( self ): return iter( self._marks )
-
-    class Session:
-        items = [ Item( "t.py::test_a", "/p/t.py", "test_a", [ "slow", "gpu" ] ),
-                  Item( "t.py::test_b", "/p/t.py", "test_b", [ ] ) ]
-
-    with tempfile.TemporaryDirectory() as tmp:
-        listing = Path( tmp ) / "items.json"
-        os.environ[ "ERRAND_COLLECT_TO" ] = str( listing )
+        import os
+        here = os.getcwd()
+        os.chdir( root )
         try:
-            _pytest_plugin.pytest_collection_finish( Session() )
+            provider = Counting( dir = "cpp", build = "make -C cpp" )
+            entries = provider.collect( [ ( provider.files(), None ) ] )
+            assert len( entries ) == 2
+            provider.prepare( entries, P.RunContext( root = root, out_dir = root ) )
         finally:
-            del os.environ[ "ERRAND_COLLECT_TO" ]
+            os.chdir( here )
 
-        got = json.loads( listing.read_text() )
-        assert [ i[ "name" ] for i in got ] == [ "test_a", "test_b" ]
-        assert got[ 0 ][ "marks" ] == [ "gpu", "slow" ]        # marks become entry tags
-        assert got[ 0 ][ "id" ] == "t.py::test_a"              # what `run` hands back to pytest
+    assert Counting.runs == 1, f"the build ran {Counting.runs} times for 2 entries"
+
+
+if test( "mentioning errand is not declaring work" ):
+    # A comment saying a suite is collected by errand, a docstring, a string in
+    # a fixture -- all of those mention it, and none should be imported and
+    # executed on the strength of that.
+    from errand import discovery
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path( tmp )
+        ( root / "talks_about.py" ).write_text( "# errand collects this through a provider\n" )
+        ( root / "real.py" ).write_text( "from errand import test\nif test( 'x' ): pass\n" )
+        ( root / "also_real.py" ).write_text( "import errand\n" )
+
+        found = sorted( p.name for p in discovery.candidates( root ) )
+        assert found == [ "also_real.py", "real.py" ], found

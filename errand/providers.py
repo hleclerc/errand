@@ -87,6 +87,15 @@ class Provider:
     def collect( self, specs ) -> list:
         return [ ]
 
+    def prepare( self, entries, ctx: RunContext ):
+        """Once, before any of `entries` runs. -> None, or why it cannot.
+
+        Building belongs here and not in `run`: a suite is built once, not once
+        per file, and `-j` would otherwise have several processes writing the
+        same binary at the same time.
+        """
+        return None
+
     def run( self, entry, ctx: RunContext ) -> Outcome:
         raise NotImplementedError
 
@@ -146,12 +155,59 @@ class Pytest( Provider ):
 
     name = "pytest"
 
-    def __init__( self, dirs = ( "tests", ), root = None, args = ( ), python = None ):
-        self.dirs   = list( dirs )
-        self.root   = Path( root ) if root else Path( "." )
-        self.args   = list( args )
-        self.python = python or sys.executable
-        self._items = None
+    def __init__( self, dirs = ( "tests", ), root = None, args = ( ), python = None,
+                  install = "auto", spec = "pytest" ):
+        self.dirs    = list( dirs )
+        self.root    = Path( root ) if root else Path( "." )
+        self.args    = list( args )
+        self.python  = python or sys.executable
+        self.install = install          # "auto" | True | False
+        self.spec    = spec
+        self._items  = None
+
+    # -- having a pytest at all ---------------------------------------------
+
+    def _has_pytest( self ):
+        return subprocess.run( [ self.python, "-c", "import pytest" ],
+                               capture_output = True ).returncode == 0
+
+    def _own_environment( self ):
+        """Is the target interpreter something other than the system's?
+
+        Installing into a micromamba environment, a venv or a container is what
+        errand does for every other requirement. Installing into the system
+        python is not errand's to do -- it is shared with everything else on
+        the machine, and it may well refuse.
+        """
+        got = subprocess.run(
+            [ self.python, "-c", "import sys; print( sys.prefix != sys.base_prefix )" ],
+            capture_output = True, text = True )
+        if got.stdout.strip() == "True":
+            return True
+        return bool( os.environ.get( "CONDA_PREFIX" ) or os.environ.get( "VIRTUAL_ENV" ) )
+
+    def ensure_pytest( self, echo = "say" ):
+        """-> None when there is a pytest to ask, else why there is not."""
+        if self._has_pytest():
+            return None
+        wanted = self.install is True or ( self.install == "auto" and self._own_environment() )
+        if not wanted:
+            return ( f"{self.python} has no pytest, and it is the system interpreter: "
+                     f"installing into it is not errand's to do.\n"
+                     f"  install it yourself, point the provider at another interpreter "
+                     f"( Pytest( python = ... ) ), or say Pytest( install = True )" )
+        # Never silent: installing something into somebody's environment is
+        # an act, and it is said out loud even when nobody asked to watch.
+        note = f"  installing {self.spec} into {self.python}"
+        print( note, file = sys.stderr ) if echo == "say" else ( echo and echo( note ) )
+        got = subprocess.run( [ self.python, "-m", "pip", "install", self.spec ],
+                              capture_output = True, text = True )
+        if got.returncode or not self._has_pytest():
+            return f"could not install {self.spec}:\n{( got.stdout + got.stderr )[ -2000 : ]}"
+        return None
+
+    def prepare( self, entries, ctx: RunContext ):
+        return self.ensure_pytest( )
 
     # -- collecting ---------------------------------------------------------
 
@@ -164,6 +220,12 @@ class Pytest( Provider ):
             return self._items
         self._items = [ ]
         if not any( Path( w ).exists() for w in self._where() ):
+            return self._items
+        why = self.ensure_pytest( )
+        if why is not None:
+            # An empty suite looks exactly like a suite that passed, so the
+            # reason is said out loud even though nobody asked for a status.
+            print( f"  pytest: {why}", file = sys.stderr )
             return self._items
         with tempfile.TemporaryDirectory() as tmp:
             listing = Path( tmp ) / "items.json"
@@ -276,18 +338,23 @@ class Catch2( Provider ):
             return Path( str( self.binary ).format( stem = path.stem, dir = self.dir ) )
         return self.dir / path.stem
 
+    def prepare( self, entries, ctx: RunContext ):
+        if not self.build:
+            return None
+        import shlex
+        built = self.shell( shlex.split( self.build ), ctx )
+        if built.returncode:
+            return f"the build failed:\n{( built.stdout + built.stderr )[ -3000 : ]}"
+        return None
+
     def run( self, entry, ctx: RunContext ) -> Outcome:
         text = ""
-        if self.build:
-            built = self.shell( self.build.split(), ctx )
-            text += built.stdout + built.stderr
-            if built.returncode:
-                return Outcome( status = "FAIL", error = "the build failed", output = text )
-
         binary = ctx.root / self._binary_for( Path( entry.key ) )
         if not binary.exists():
             return Outcome( status = "FAIL", output = text,
-                            error = f"no binary at {binary}: give Catch2 a `build=` or a `binary=`" )
+                            error = f"no binary at {binary}: tell Catch2 how to build it "
+                                    f"( build = \"make -C cpp\" ) or where it lands "
+                                    f"( binary = \"build/{{stem}}\" )" )
 
         report = ctx.out_dir / "catch2.xml"
         argv = [ binary, "--reporter", f"xml::out={report}", *self.args ]
