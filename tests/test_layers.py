@@ -111,3 +111,34 @@ if test( "an environment that declares nothing is never stale" ):
         root = Path( tmp )
         e = Env( "x", [ L.Vars( { "A": "1" } ) ] )
         assert setup.status( root, e, L.Context( root = root ) ) == setup.OK
+
+
+if test( "a batch allocation wraps, it does not replace the interpreter" ):
+    cmd = folded( [ L.Slurm( partition = "gpu", gpus = 1, time = "2:00:00" ) ] )
+    assert cmd.argv[ 0 ] == "srun"
+    assert cmd.argv[ -4 : ] == [ "python", "-m", "errand", "x" ]
+    assert "--partition" in cmd.argv and "gpu" in cmd.argv
+    # nothing unset becomes a flag: srun would take `--nodes None` literally
+    assert "--nodes" not in cmd.argv and "--account" not in cmd.argv
+
+
+if test( "slurm stacks in front of a container, ssh in front of both" ):
+    stack = [ L.Slurm( partition = "gpu" ), L.Apptainer( image = "c/x.sif" ) ]
+    cmd = folded( stack )
+    assert cmd.argv[ 0 ] == "srun"
+    assert "apptainer" in cmd.argv and cmd.argv.index( "apptainer" ) > cmd.argv.index( "srun" )
+
+
+if test( "a module load needs a shell to exist at all" ):
+    # `module` is a shell function, not a program.
+    cmd = folded( [ L.Module( "gcc/13", "cuda/12" ) ] )
+    assert cmd.argv[ : 2 ] == [ "sh", "-lc" ]
+    assert "module load gcc/13" in cmd.argv[ 2 ] and "module load cuda/12" in cmd.argv[ 2 ]
+    assert "exec" in cmd.argv[ 2 ]
+
+
+if test( "nix and guix are the same shape as the rest" ):
+    assert folded( [ L.Nix( flake = ".", shell = "dev" ) ] ).argv[ : 4 ] == \
+        [ "nix", "develop", ".#dev", "-c" ]
+    assert folded( [ L.Guix( packages = [ "python" ] ) ] ).argv[ : 4 ] == \
+        [ "guix", "shell", "python", "--" ]

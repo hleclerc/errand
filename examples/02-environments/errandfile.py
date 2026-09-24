@@ -3,7 +3,7 @@
 Ordinary Python, loaded once. There is no entry point to call and nothing to
 return -- `env`, `configure` and `provider` register what you give them.
 """
-from errand import configure, env, Micromamba, Apptainer, Ssh, Slurm, Vars
+from errand import configure, env, Micromamba, Apptainer, Docker, Ssh, Slurm, Vars
 
 configure(
     src = [ "src" ],           # prepended to every child's PYTHONPATH
@@ -47,6 +47,13 @@ env( "local",
 env( "gpu",
      CUDA + FTYPE,
      driver = "cuda", cuda = True )
+
+# The same idea where apptainer does not exist -- a mac, a laptop without root.
+# Only the layer changes: same tags, same fingerprint, same output paths.
+
+env( "boxed",
+     [ Docker( image = "errand-demo:1", recipe = "containers/Dockerfile" ) ] + FTYPE,
+     driver = "cpu", boxed = True )
 
 # A remote machine is not a separate concept. `Ssh` first, then the same
 # layers as anywhere else -- they run over there instead of here.

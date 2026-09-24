@@ -274,7 +274,12 @@ def print_entries( entries ):
 # ── entry point ──────────────────────────────────────────────────────────────
 
 def build_parser( tag_names = ( ) ):
-    p = argparse.ArgumentParser( prog = "errand", add_help = False, description =
+    # No abbreviations. Parameter flags are named by whoever wrote the entry,
+    # so any of them may one day be a prefix of a built-in one -- `--n=2,3` was
+    # read as `--no-setup=2,3`, which is not a mistake anybody would have
+    # thought to look for. An exact match, or nothing.
+    p = argparse.ArgumentParser( prog = "errand", add_help = False, allow_abbrev = False,
+        description =
         "Run work here, in a container or on another machine, and bring back what it produced." )
     p.add_argument( "pattern", nargs = "?", help = "file[::name] spec(s), comma-separated, globbable" )
     p.add_argument( "-k", "--kind", action = "append", default = [ ],

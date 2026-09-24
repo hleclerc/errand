@@ -256,7 +256,12 @@ class Apptainer:
             return [ ]     # an image someone else builds; nothing to say about it
         # Never through wrap(): that runs a command INSIDE the image, which does
         # not exist yet while it is being built.
-        steps = [ sh( [ "apptainer", "build", str( ctx.root / self.image ),
+        #
+        # `--force` unconditionally: this is only ever called once it has been
+        # decided that the image must be built, and apptainer's refusal to
+        # overwrite would otherwise make a STALE image unfixable -- the one case
+        # where rebuilding is the whole point.
+        steps = [ sh( [ "apptainer", "build", "--force", str( ctx.root / self.image ),
                         str( ctx.root / self.recipe ) ] ) ]
         if self.pip:
             steps.append( sh( [ "apptainer", "exec", str( ctx.root / self.image ),
@@ -266,22 +271,42 @@ class Apptainer:
 
 @dataclass
 class Docker:
+    """A container, run through the docker CLI.
+
+    `user` defaults to the caller's own. A run writes its results into the
+    project, and a daemon-backed container writes them as root unless told
+    otherwise -- so the output tree of a containerized run would come out
+    owned by somebody who is not you, and the next run outside the container
+    could not clear it. Podman, being rootless, already maps the caller, and
+    sets this to nothing.
+    """
     image : str
     recipe: str | None = None
     flags : list = field( default_factory = list )
     mounts: dict = field( default_factory = dict )
     pip   : list = field( default_factory = list )
     engine: str = "docker"
+    user  : str | None = "caller"
 
     @property
     def container( self ):
         return self.image.replace( "/", "_" ).replace( ":", "-" )
 
+    def _user_flags( self ):
+        if self.user is None:
+            return [ ]
+        if self.user != "caller":
+            return [ "--user", self.user ]
+        if hasattr( os, "getuid" ):
+            return [ "--user", f"{os.getuid()}:{os.getgid()}" ]
+        return [ ]
+
     def wrap( self, cmd: Command, ctx: Context ) -> Command:
         binds = [ f for src, dst in self.mounts.items()
                   for f in ( "-v", f"{ctx.root / src}:{dst}" ) ]
         envs = [ f for k, v in cmd.env.items() for f in ( "-e", f"{k}={v}" ) ]
-        return Command( [ self.engine, "run", "--rm", *self.flags, *binds, *envs,
+        return Command( [ self.engine, "run", "--rm", *self._user_flags(), *self.flags,
+                          *binds, *envs,
                           "-v", f"{ctx.root}:{ctx.root}", "-w", str( ctx.root ),
                           self.image, "python", *cmd.argv[ 1 : ] ], { } )
 
@@ -303,10 +328,93 @@ class Docker:
 
 @dataclass
 class Podman( Docker ):
+    """The same, rootless: it already runs as the caller, so no `--user`."""
     engine: str = "podman"
+    user  : str | None = None
+
+
+@dataclass
+class Nix:
+    """`nix develop <flake> -c …`."""
+    flake: str = "."
+    shell: str | None = None
+
+    def wrap( self, cmd: Command, ctx: Context ) -> Command:
+        target = f"{self.flake}#{self.shell}" if self.shell else self.flake
+        return Command( [ "nix", "develop", target, "-c", *cmd.argv ], cmd.env )
+
+    def describe( self ):
+        return f"nix:{self.flake}"
+
+
+@dataclass
+class Guix:
+    """`guix shell -m <manifest> -- …`."""
+    manifest: str | None = None
+    packages: list = field( default_factory = list )
+
+    def wrap( self, cmd: Command, ctx: Context ) -> Command:
+        spec = [ "-m", str( ctx.root / self.manifest ) ] if self.manifest else list( self.packages )
+        return Command( [ "guix", "shell", *spec, "--", *cmd.argv ], cmd.env )
+
+    def describe( self ):
+        return f"guix:{self.manifest or ' '.join( self.packages )}"
+
+
+@dataclass
+class Module:
+    """Lmod / environment modules -- how a cluster picks a toolchain.
+
+    `module` is a shell function, not a program, so this has to go through a
+    login shell to exist at all. That is the whole layer.
+    """
+    names: list
+
+    def __init__( self, *names ):
+        self.names = list( names )
+
+    def wrap( self, cmd: Command, ctx: Context ) -> Command:
+        loads = " && ".join( f"module load {shlex.quote( n )}" for n in self.names )
+        return Command( [ "sh", "-lc", f"{loads} && exec {cmd.shell()}" ], { } )
+
+    def describe( self ):
+        return "module:" + ",".join( self.names )
 
 
 # ── going elsewhere ──────────────────────────────────────────────────────────
+
+@dataclass
+class Slurm:
+    """A batch allocation. `srun` while you wait, `sbatch` under `--batch`.
+
+    Not an interpreter-selecting layer: it puts the command inside an
+    allocation and leaves it otherwise alone, so it stacks in front of a
+    container or an environment exactly as `Ssh` does in front of it.
+    """
+    partition: str | None = None
+    nodes    : int | None = None
+    cpus     : int | None = None
+    gpus     : int | None = None
+    time     : str | None = None
+    account  : str | None = None
+    extra    : list = field( default_factory = list )
+
+    def flags( self ):
+        out = [ ]
+        for flag, value in ( ( "--partition", self.partition ), ( "--nodes", self.nodes ),
+                             ( "--cpus-per-task", self.cpus ), ( "--gpus", self.gpus ),
+                             ( "--time", self.time ), ( "--account", self.account ) ):
+            if value is not None:
+                out += [ flag, str( value ) ]
+        return out + list( self.extra )
+
+    def wrap( self, cmd: Command, ctx: Context ) -> Command:
+        return Command( [ "srun", *self.flags(), *cmd.argv ], cmd.env )
+
+    def describe( self ):
+        return f"slurm:{self.partition or 'default'}"
+
+
 
 RSYNC_EXCLUDES = [
     ".git", "runs", "build", "dist", "__pycache__", "*.pyc", "*.so", "*.o",

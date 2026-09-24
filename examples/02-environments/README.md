@@ -20,11 +20,14 @@ errand --envs
 ```
 
 ```
-  local     driver=cpu                     micromamba:demo             ← default
-  gpu       driver=cuda  cuda              apptainer:cuda.sif          stale: recipe changed
-  box       driver=cuda  cuda  remote      ssh:gpu-box → apptainer     not built
-  cluster   driver=cuda  cuda  remote  fp=64   ssh:login.hpc → slurm:gpu   not built
+  local    driver=cpu                    micromamba:demo -> vars                     <- default
+  gpu      cuda  driver=cuda             apptainer:cuda.sif -> vars                  stale
+  boxed    boxed  driver=cpu             docker:errand-demo:1 -> vars                not built
+  box      cuda  driver=cuda  remote     ssh:gpu-box -> apptainer:cuda.sif -> vars   unknown
+  cluster  cuda  driver=cuda  fp=64  remote  ssh:login.hpc -> slurm:gpu -> …         unknown
 ```
+
+`unknown` is honest rather than optimistic: only the other machine can say what it has.
 
 You do not have to act on `stale` or `not built`. The next run that needs one of those environments
 builds it first — a changed `requirements.txt`, a new pip spec, an edited `.def`, all the same
@@ -97,5 +100,8 @@ an `sbatch`. Nothing else about the run changes — same paths, same queue, same
 - **`Ssh` and `Slurm` are layers like the others.** `cluster` is `Ssh` then `Slurm` then the same
   container the local `gpu` environment uses. There is no separate remote mode, no host file, no
   second config.
+- **`boxed` is `gpu` without apptainer.** Same tags, same fingerprint, same output paths — only
+  the layer differs, because apptainer does not exist on a mac and docker does. Choosing where to
+  run has nothing to say about which engine holds the image.
 - **Requirements live in the layer that installs them.** `requirements.txt` on the micromamba layer,
   `pip = [ … ]` on the container: whichever one changes is the one that gets rebuilt.

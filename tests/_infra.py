@@ -73,6 +73,52 @@ def _remote_tmp( ):
 
 VENDOR = "_lib"
 
+# Small, and on every registry. A container test wants an interpreter and
+# nothing else: what is being tested is the layer, not the image.
+BASE_IMAGE = "python:3-slim"
+
+
+def _responds( argv, timeout = 30 ):
+    if shutil.which( argv[ 0 ] ) is None:
+        return False
+    try:
+        return subprocess.run( argv, stdout = subprocess.DEVNULL, stderr = subprocess.DEVNULL,
+                               timeout = timeout ).returncode == 0
+    except ( OSError, subprocess.SubprocessError ):
+        return False
+
+
+def container_engines( ):
+    """Which engines are installed AND answering, here and now.
+
+    Installed is not enough: docker without a running daemon, or without the
+    caller in its group, is present and useless. The difference matters, and
+    the message says which it is.
+    """
+    out = { }
+    for name, probe in ( ( "apptainer", [ "apptainer", "--version" ] ),
+                         ( "docker",    [ "docker", "info" ] ),
+                         ( "podman",    [ "podman", "info" ] ) ):
+        if shutil.which( name ) is None:
+            out[ name ] = "absent"
+        elif _responds( probe ):
+            out[ name ] = "ready"
+        else:
+            out[ name ] = "installed but not answering"
+    return out
+
+
+def container_engine( only = None ):
+    """The first engine that can actually run something. Skips otherwise."""
+    state = container_engines()
+    for name, how in state.items():
+        if how == "ready" and ( only is None or name == only ):
+            return name
+    shown = ", ".join( f"{n}: {h}" for n, h in state.items() )
+    skip( f"no container engine to run in ({shown})",
+          "install one, or start its daemon -- `docker info` answering is the test.\n"
+          "  nothing here needs a GPU or a private registry, only " + BASE_IMAGE )
+
 
 def write_project( directory: Path, errandfile: str, files: dict, vendor = False ):
     """A whole little project on disk, for an end-to-end run.

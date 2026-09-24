@@ -27,7 +27,8 @@ __all__ = [
     "Args", "Param", "Skipped", "bench", "entry", "experiment", "has_tag", "have",
     "need", "out_dir", "skip", "tag", "test",
     "configure", "env", "provider", "main",
-    "Vars", "Venv", "Micromamba", "Conda", "Uv", "Apptainer", "Docker", "Ssh",
+    "Vars", "Venv", "Micromamba", "Conda", "Uv", "Nix", "Guix", "Module",
+    "Apptainer", "Docker", "Podman", "Ssh", "Slurm",
 ]
 
 # Everything past the declaration surface is reached lazily: an entry file
@@ -43,9 +44,14 @@ _LAZY = {
     "Micromamba": "errand.layers",
     "Conda"     : "errand.layers",
     "Uv"        : "errand.layers",
+    "Nix"       : "errand.layers",
+    "Guix"      : "errand.layers",
+    "Module"    : "errand.layers",
     "Apptainer" : "errand.layers",
     "Docker"    : "errand.layers",
+    "Podman"    : "errand.layers",
     "Ssh"       : "errand.layers",
+    "Slurm"     : "errand.layers",
 }
 
 
