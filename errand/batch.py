@@ -230,7 +230,9 @@ def result_path_for( root: Path, run: dict ):
     under = root / run[ "under" ]
     if not under.is_dir():
         return None
-    for path in sorted( under.glob( "*/*/result.yaml" ) ) + sorted( under.glob( "*/result.yaml" ) ):
+    # Newest first: the run directories are named after the moment they
+    # started, so sorting their names backwards IS sorting them by time.
+    for path in sorted( under.glob( "*/result.yaml" ), reverse = True ):
         got = yamlish.read( path )
         if not got:
             continue

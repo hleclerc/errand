@@ -419,12 +419,13 @@ def dispatch( env, tags, argv, *, root, out_root, entries, overrides_list ):
 def plan_of( targets, entries, combos, *, root, out_root ):
     """Every run this command is about to produce, and where to look for it.
 
-    One row per ( environment, parameter combination, entry ). The parameter
-    directory is predictable -- it is a hash of what was asked for -- while the
-    PLACE under it may not be: a remote run carries the other machine's name,
-    and a batch job carries whichever compute node the scheduler picked. So a
-    row names the place when it is knowable and says so when it is not, and
-    whoever reads the tree searches beneath `under`.
+    One row per ( environment, parameter combination, entry ). The case's own
+    directory is predictable -- it is its file and its name -- while the run
+    directory under it may not be, since its name carries the PLACE: a remote
+    run carries the other machine's name, and a batch job carries whichever
+    compute node the scheduler picked. So a row names the place when it is
+    knowable and says so when it is not, and whoever reads the tree searches
+    beneath `under`.
 
     Worked out here, once, for everyone who needs it before the fact: the
     targeted rsync pull, the completion signal, and the screen that wants to
@@ -436,11 +437,11 @@ def plan_of( targets, entries, combos, *, root, out_root ):
         for _, values in combos:
             for e in entries:
                 resolved = E.resolve_params( e.params, values )
-                leaf, entry_root = R.dirs_for( out_root, e, resolved, "?" )
+                _, entry_root = R.dirs_for( out_root, e, resolved, "?" )
                 runs.append( { "label": e.name, "file": e.file.name, "env": env.name,
                                "place": "?" if unknowable else R.place( env.name ),
                                "params": _plain_params( resolved ),
-                               "under": str( leaf.parent.parent.relative_to( root ) ),
+                               "under": str( entry_root.relative_to( root ) ),
                                "entry_root": str( entry_root.relative_to( root ) ) } )
     return runs
 

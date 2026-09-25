@@ -1,7 +1,15 @@
 """The output tree: where a run writes, and the summaries above it.
 
-    runs/{file}__{name}/[params]/{place}/{date}/
-    runs/{file}__{name}/[params]/{place}/latest -> {date}
+    runs/{file}/{name}/{when}-{place}[-{params}]/
+    runs/{file}/{name}/latest -> the newest of them
+
+**Two directories to find a case, then one flat list of its runs.** The file
+and the name are how you look for work -- they are what you typed to run it --
+so they are directories. Everything that tells two RUNS of that case apart is
+one directory name, in the order you would say it out loud: when, where, and
+with what. A tree with a level per dimension reads beautifully when it is
+drawn in a README and badly when it is a `cd` away, and the level whose name
+was a hash of the parameters could not be read at all.
 
 Every component is computed from the run rather than declared by it, which is
 what lets the same path be worked out on another machine -- before the run
@@ -30,8 +38,25 @@ OUTPUT   = "output.txt"
 LATEST   = "latest"
 
 
-def today( ) -> str:
-    return datetime.datetime.now( datetime.timezone.utc ).date().isoformat()
+_STAMP = None
+STAMP_ENV = "ERRAND_STAMP"
+
+
+def stamp( ) -> str:
+    """When this invocation started, to the second: `2026-09-25_18h04m11`.
+
+    **One stamp for the whole command**, however many processes it turns into.
+    It is worked out once and put in the environment, so the `-j 8` children,
+    the batch job the scheduler starts tomorrow and the run over ssh all land
+    in the directory that was PREDICTED for them -- which is the whole reason
+    a path can be known before the run exists.
+    """
+    global _STAMP
+    if _STAMP is None:
+        _STAMP = os.environ.get( STAMP_ENV ) or \
+                 datetime.datetime.now().strftime( "%Y-%m-%d_%Hh%Mm%S" )
+        os.environ[ STAMP_ENV ] = _STAMP
+    return _STAMP
 
 
 def now( ) -> str:
@@ -73,22 +98,42 @@ def place( env: str | None = None ) -> str:
 
 
 def label( entry ) -> str:
-    return f"{slug( entry.file.stem )}__{slug( entry.name )}"
+    """The two directories that find a case: its file, then its name."""
+    return f"{slug( entry.file.stem )}/{slug( entry.name )}"
+
+
+ROOM = 48           # of parameter text in a directory name, before it is cut
+
+
+def params_tag( resolved: dict ) -> str:
+    """`n=5000,method=newton` -- what was asked for, readable, in one name.
+
+    Cut at a width a terminal can show, with a hash of the whole on the end so
+    that two long parameter sets sharing a prefix are still two directories.
+    Unreadable is what the hash used to be ALL of; here it is the last resort
+    of a name that is already saying most of what it has to say.
+    """
+    if not resolved:
+        return ""
+    text = ",".join( f"{slug( k )}={slug( v )}" for k, v in sorted( resolved.items() ) )
+    return text if len( text ) <= ROOM else text[ : ROOM ] + "~" + param_hash( resolved )[ : 6 ]
+
+
+def run_name( resolved: dict, where: str ) -> str:
+    """When, where, and with what -- in the order you would say it out loud."""
+    tag = params_tag( resolved )
+    return f"{stamp()}-{where}" + ( f"-{tag}" if tag else "" )
 
 
 def dirs_for( out_root: Path, entry, resolved, where ):
     """-> ( leaf, entry_root ). The leaf is this run's directory; the entry root
     is the top of what the summaries cover.
 
-    Every run is dated, without exception -- a stable path costs nothing, since
-    `latest` is a symlink beside the dated directories.
+    Every run is stamped, without exception -- a stable path costs nothing,
+    since `latest` is a symlink beside the stamped directories.
     """
     entry_root = out_root / label( entry )
-    base = entry_root
-    h = param_hash( resolved )
-    if h:
-        base = base / h
-    return base / where / today(), entry_root
+    return entry_root / run_name( resolved, where ), entry_root
 
 
 def clear( path: Path ):
@@ -100,7 +145,7 @@ def clear( path: Path ):
 
 
 def point_latest_at( leaf: Path ):
-    """`latest` beside the dated directories, so a stable path costs no history."""
+    """`latest` beside the stamped directories, so a stable path costs no history."""
     link = leaf.parent / LATEST
     try:
         if link.is_symlink() or link.exists():

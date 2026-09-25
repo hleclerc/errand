@@ -393,20 +393,33 @@ cause. `errand` checks for that before submitting and tells you plainly.
 
 ## Where the output goes
 
-Every (entry, parameter set, place, date) gets its own leaf directory, cleared and recreated on each
-run. Only the leaf is cleared; its ancestors accumulate.
+**Two directories to find a case, then one flat list of its runs**, each cleared and recreated as it
+starts. Only the run directory is cleared; everything above it accumulates.
 
 ```
-runs/{file}__{name}/[params]/{place}/{date}/
-runs/{file}__{name}/[params]/{place}/latest -> {date}
+runs/{file}/{name}/{when}-{place}[-{params}]/
+runs/{file}/{name}/latest -> the newest of them
+
+runs/solvers/cost/2026-09-25_18h04m11-gpu@gpu-box-method=newton,n=5000/
+runs/solvers/cost/2026-09-25_18h11m02-local@laptop-method=cg,n=5000/
 ```
 
-*This is the default layout; it is configurable.* `{place}` is the environment and the machine —
-`default@gpu-box`, `cuda@gpu-box`. Both matter and neither is enough: the same environment on two
-machines is two different sets of numbers, and the same machine with two environments likewise, which
-is the whole reason you declared two. The environment stands for its container rather than the other
-way round: an image is one of the things an environment *is*, and the name is the one you chose.
-`latest/` is a symlink, so every run can be dated without costing you a stable path — leave a tab
+The file and the name are how you *look* for work — they are what you typed to run it — so they are
+directories. Everything that tells two **runs** of that case apart is one directory name, in the
+order you would say it out loud: when, where, and with what. A tree with a level per dimension reads
+beautifully drawn in a README and badly when it is a `cd` away, and the level whose name was a hash
+of the parameters could not be read at all. A matrix is more *names*, never more levels.
+
+`{when}` is the moment the **command** started, to the second — one stamp for the whole invocation,
+however many processes it turns into, which is what lets the `-j 8` children, the batch job the
+scheduler starts tomorrow and the run over ssh all land in the directory that was predicted for them.
+`{place}` is the environment and the machine — `default@gpu-box`, `cuda@gpu-box`. Both matter and
+neither is enough: the same environment on two machines is two different sets of numbers, and the
+same machine with two environments likewise, which is the whole reason you declared two. The
+environment stands for its container rather than the other way round: an image is one of the things
+an environment *is*, and the name is the one you chose. `{params}` is what was asked for, in words —
+cut at a readable width with a short hash on the end when there is more of it than anyone would read.
+`latest/` is a symlink, so every run can be stamped without costing you a stable path — leave a tab
 open on `latest/shape.png` and reload it.
 
 The leaf always holds `result.yaml`, plus `output.txt` if the body printed anything. `output.txt` is
@@ -440,10 +453,10 @@ day land in the same directory, and `date` is what tells them apart.
 
 Write anything else you like into the same directory — an `.svg`, a `.vtu`, a folder of frames.
 
-Above the leaf there is a summary at each level: per date within a place, per place within a
-parameter set, and per parameter set at the entry's root, which is what you read after a matrix.
-They are recomputed on every run by re-reading the neighbouring `result.yaml` files rather than kept
-in a ledger, so they are always right and repair themselves.
+Above the runs there is a `summary.yaml` at the case's root, one row per run and the extents across
+them all, which is what you read after a matrix. It is recomputed on every run by re-reading the
+neighbouring `result.yaml` files rather than kept in a ledger, so it is always right and repairs
+itself.
 
 ## Running elsewhere
 
@@ -454,7 +467,7 @@ it to a shell string and runs it over ssh — rsync push before, targeted rsync 
   → gpu-box:/home/me/proj  env=cluster  tags=driver:jax,cuda
   rsync push → gpu-box:/home/me/proj
   ...
-  rsync pull ← gpu-box:/home/me/proj [runs/solvers__cost/a1b2c3d4e5]
+  rsync pull ← gpu-box:/home/me/proj [runs/solvers/cost]
 ```
 
 The paths to pull are computed **before the remote run happens**: the same rules applied to the same

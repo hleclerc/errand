@@ -287,17 +287,19 @@ class Session:
     def _live_output( self, run ):
         """The file a case is writing INTO, before it has finished writing it.
 
-        There is no result file yet to point the way, so the parameter
+        There is no result file yet to point the way, so the case's own
         directory -- which is predictable -- is searched for an output file
-        touched since this command started. When the place is knowable the
-        search is exact; when it is not ( another machine, a compute node the
-        scheduler picked ) the newest is the best this side can honestly say.
+        touched since this command started. When the place is knowable it has
+        to be the one named in the directory; when it is not ( another machine,
+        a compute node the scheduler picked ) the newest is the best this side
+        can honestly say.
         """
         under = self.root / run[ "under" ]
-        pattern = ( f"{run[ 'place' ]}/*/{R.OUTPUT}" if run[ "place" ] != "?"
-                    else f"*/*/{R.OUTPUT}" )
+        where = run[ "place" ]
         best, when = None, self.started - 5
-        for path in under.glob( pattern ):
+        for path in under.glob( f"*/{R.OUTPUT}" ):
+            if where != "?" and f"-{where}" not in path.parent.name:
+                continue
             try:
                 mtime = path.stat().st_mtime
             except OSError:

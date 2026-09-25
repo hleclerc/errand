@@ -59,14 +59,17 @@ errand bench_solver -t 'cuda=True'                       # every cuda environmen
 Each combination gets its own directory, so the results end up side by side:
 
 ```
-runs/bench_solver__solve/
-  4b81e0/                             <- n=10000 method=cg
-    local@thishost/2026-09-24/result.yaml
-    gpu@thishost/2026-09-24/result.yaml
-    gpu@gpu-box/2026-09-24/result.yaml
-    summary.yaml                      <- one row per place: this is the comparison
-  summary.yaml                        <- one row per parameter set
+runs/bench_solver/solve/
+  2026-09-24_18h04m11-local@thishost-method=cg,n=10000/result.yaml
+  2026-09-24_18h04m11-gpu@thishost-method=cg,n=10000/result.yaml
+  2026-09-24_18h04m11-gpu@gpu-box-method=cg,n=10000/result.yaml
+  2026-09-24_18h09m30-local@thishost-method=cg,n=100000/result.yaml
+  latest -> the newest of them
+  summary.yaml                        <- one row per run: this is the comparison
 ```
+
+The four of one command share a stamp, because they are one command; the name says the rest. A
+matrix is more names, never more levels.
 
 `{place}` is the environment and the machine. Both matter: the same environment on two machines is
 two different sets of numbers, and the same machine with two environments likewise -- which is the

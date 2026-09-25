@@ -17,8 +17,10 @@ if test( "the path is a function of the run, not of an invocation" ):
     b, root_b = R.dirs_for( Path( "/out" ), e, { "n": 1000 }, "host" )
     assert a == b and root_a == root_b
     # ...which is what lets the local side work out where a remote run will write
-    assert str( a ).startswith( "/out/solvers__cost/" )
-    assert a.name == R.today()
+    assert str( root_a ) == "/out/solvers/cost", root_a
+    # The run's own directory says when, where, and with what -- in that order,
+    # and in words rather than in a hash.
+    assert a.name == f"{R.stamp()}-host-n=1000", a.name
 
 
 if test( "different parameters, different directory" ):
@@ -28,10 +30,38 @@ if test( "different parameters, different directory" ):
     assert a != b
 
 
-if test( "no parameters, no hash level" ):
+if test( "one flat list of runs under the case, however many dimensions" ):
     e = an_entry()
     leaf, root = R.dirs_for( Path( "/out" ), e, { }, "host" )
-    assert leaf.parent.parent == root          # {place}/{date} straight under the entry
+    assert leaf.parent == root            # the run is straight under the case
+    assert leaf.name == f"{R.stamp()}-host", leaf.name
+    # A matrix is more NAMES, never more levels: `cd` to a run, not through one.
+    deep, _ = R.dirs_for( Path( "/out" ), e, { "n": 5000, "method": "newton" }, "gpu@box" )
+    assert deep.parent == root
+    assert deep.name.endswith( "-gpu@box-method=newton,n=5000" ), deep.name
+
+
+if test( "a parameter set too long to read is cut, and stays distinct" ):
+    e = an_entry()
+    long_a = { "label": "x" * 80, "n": 1 }
+    long_b = { "label": "x" * 80, "n": 2 }
+    a, b = R.params_tag( long_a ), R.params_tag( long_b )
+    assert len( a ) <= R.ROOM + 7 and a != b, ( a, b )
+    assert a.startswith( "label=xxxx" ), a
+
+
+if test( "one stamp for a whole command, however many processes it becomes" ):
+    import os
+    import subprocess
+    import sys
+
+    # The child works out the same directory as the parent predicted for it --
+    # which is the entire reason a path can be known before the run exists.
+    child = subprocess.run( [ sys.executable, "-c",
+                              "from errand import results; print( results.stamp() )" ],
+                            capture_output = True, text = True,
+                            env = { **os.environ, R.STAMP_ENV: R.stamp() } )
+    assert child.stdout.strip() == R.stamp(), child
 
 
 if test( "the order of parameters does not change the hash" ):

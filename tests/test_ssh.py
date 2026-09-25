@@ -116,7 +116,7 @@ if test( "only what this invocation asked for comes back", tags = [ "ssh", "slow
         # Something older, unrelated, sitting in the remote output tree. The
         # push does not clear it (the output tree is excluded), so the pull is
         # the only thing standing between it and this machine.
-        stale = f"{remote_root}/runs/someone_elses__run/place/2000-01-01"
+        stale = f"{remote_root}/runs/someone_elses/run/2000-01-01_00h00m00-place"
         subprocess.run( [ "ssh", *options, host,
                           f"mkdir -p {stale} && echo 'name: old' > {stale}/result.yaml" ],
                         check = True )
