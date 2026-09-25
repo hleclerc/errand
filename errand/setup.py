@@ -50,13 +50,28 @@ def status( root: Path, env, ctx ) -> str:
     for layer in env.stack:
         if hasattr( layer, "probe" ) and not layer.probe( ctx ):
             return MISSING
-    return OK if recorded( root, env ) == want else STALE
+    have = recorded( root, env )
+    # Nothing recorded and everything present: it is somebody else's doing, and
+    # it will be adopted rather than rebuilt -- so calling it `stale` would be
+    # announcing work that is not going to happen.
+    return OK if not have or have == want else STALE
 
 
 def ensure( root: Path, env, ctx, *, force = False, echo = print, dry_run = False ) -> int:
-    """Build or update whatever `env` declares and does not have."""
+    """Build or update whatever `env` declares and does not have.
+
+    **What is already there was built by somebody, and is adopted rather than
+    rebuilt.** The first time errand meets an environment there is no record of
+    what it was built from, so every layer looks out of date -- and acting on
+    that reading would mean recreating, on somebody's first command, an
+    environment that has been working for months. So: present and never seen
+    before is recorded as-is, and only a declaration that has CHANGED since a
+    record errand itself wrote is a reason to touch it. `--setup force` is how
+    you say the other thing.
+    """
     want = wanted( env, ctx )
     have = recorded( root, env )
+    first = not have
 
     steps = [ ]
     for i, layer in enumerate( env.stack ):
@@ -64,6 +79,8 @@ def ensure( root: Path, env, ctx, *, force = False, echo = print, dry_run = Fals
             continue
         key = f"{i}:{layer.describe()}"
         present = layer.probe( ctx ) if hasattr( layer, "probe" ) else True
+        if present and first and not force:
+            continue                        # adopted: see above
         if force or not present or have.get( key ) != want.get( key ):
             steps += [ ( layer, s ) for s in layer.build( ctx ) ]
 

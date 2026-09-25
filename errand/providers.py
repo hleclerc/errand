@@ -101,8 +101,16 @@ class Provider:
 
     # -- helpers ------------------------------------------------------------
 
-    def entry( self, *, name, file, key = None, tags = ( ), traits = None, line = 0 ):
-        made = Entry( name, list( tags ), { }, dict( TRAITS, **( traits or { } ) ), { },
+    def entry( self, *, name, file, key = None, tags = ( ), traits = None, line = 0,
+               params = None ):
+        """One entry of this provider's.
+
+        `params` are ordinary errand parameters, so a suite that can be asked
+        to run two ways -- a device, a precision -- is a MATRIX like any other:
+        `--device cpu,cuda` is two runs, two directories, two rows.
+        """
+        made = Entry( name, list( tags ), dict( params or { } ),
+                      dict( TRAITS, **( traits or { } ) ), { },
                       file, line, f"{self.name}:{file}" )
         made.provider = self
         made.key = key if key is not None else name

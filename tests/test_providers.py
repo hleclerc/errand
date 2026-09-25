@@ -320,3 +320,26 @@ if test( "mentioning errand is not declaring work" ):
 
         found = sorted( p.name for p in discovery.candidates( root ) )
         assert found == [ "also_real.py", "real.py" ], found
+
+
+if test( "a provider's entry can have parameters, like anything else" ):
+    from errand import Param
+
+    class Two( P.Provider ):
+        name = "two"
+
+        def collect( self, specs ):
+            return [ self.entry( name = "suite", file = Path( "suite.cpp" ),
+                                 params = { "device": Param( "cpu",
+                                                             choices = [ "cpu", "cuda" ] ) } ) ]
+
+        def run( self, entry, ctx ):
+            return P.Outcome( status = "PASS", results = { "on": ctx.params[ "device" ] } )
+
+    made = Two().collect( [ ] )[ 0 ]
+    assert list( made.params ) == [ "device" ]
+    # What the core resolves is what the provider is handed -- so a matrix over
+    # a provider's parameter is the same matrix as over anyone else's.
+    got = made.provider.run( made, P.RunContext( root = Path( "." ), out_dir = Path( "." ),
+                                                 params = { "device": "cuda" } ) )
+    assert got.results == { "on": "cuda" }

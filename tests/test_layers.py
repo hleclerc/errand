@@ -154,3 +154,75 @@ if test( "a batch job on a node-local root is a warning, not a mystery" ):
     assert L.warnings_for( stack, Path( "/home/me/proj" ) ) == [ ]
     # ...and without a batch system, /tmp is nobody's business
     assert L.warnings_for( [ L.Ssh( host = "h" ) ], Path( "/tmp/proj" ) ) == [ ]
+
+
+if test( "an environment that is already there is adopted, never recreated" ):
+    # The costly mistake this stands against: `micromamba create -y -n vfs
+    # python=3.13` run over a vfs that EXISTS, on somebody's first errand
+    # command, because nothing had ever been recorded about it. It resolved
+    # python 3.13 into a 3.14 environment and took numpy, jax and every
+    # editable install out with it.
+    class Fake:
+        def __init__( self, present ):
+            self.present, self.built = present, 0
+
+        def describe( self ): return "fake"
+        def spec( self, ctx ): return [ "3.13" ]
+        def probe( self, ctx ): return self.present
+
+        def build( self, ctx ):
+            self.built += 1
+            return [ "true" ]
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path( tmp )
+        c = L.Context( root = root )
+
+        there = Fake( present = True )
+        assert setup.ensure( root, Env( "x", [ there ] ), c, echo = lambda s: None ) == 0
+        assert there.built == 0, "present and never seen before is not a reason to build"
+        # ...and it is recorded, so it does not stay `stale` forever.
+        assert setup.recorded( root, Env( "x", [ there ] ) ) == setup.wanted( Env( "x", [ there ] ), c )
+        # Saying it out loud still does it.
+        assert setup.ensure( root, Env( "x", [ there ] ), c, force = True,
+                             echo = lambda s: None ) == 0
+        assert there.built == 1
+
+        missing = Fake( present = False )
+        assert setup.ensure( root, Env( "y", [ missing ] ), c, echo = lambda s: None ) == 0
+        assert missing.built == 1, "what is not there IS built, first sight or not"
+
+
+if test( "micromamba installs into what exists and creates only what does not" ):
+    class Probed( L.Micromamba ):
+        present = False
+
+        def probe( self, ctx ):
+            return self.present
+
+    with tempfile.TemporaryDirectory() as tmp:
+        c = L.Context( root = Path( tmp ) )
+        made = Probed( "demo", python = "3.13" )
+        made.present = False
+        assert any( "create" in s for s in made.build( c ) )
+        made.present = True
+        steps = made.build( c )
+        assert steps and all( "create" not in s for s in steps ), steps
+        assert any( "install" in s for s in steps ), steps
+
+
+if test( "what errand has never recorded is not announced as stale" ):
+    class There:
+        def describe( self ): return "there"
+        def spec( self, ctx ): return [ "3.13" ]
+        def probe( self, ctx ): return True
+        def build( self, ctx ): return [ "true" ]
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root, c = Path( tmp ), L.Context( root = Path( tmp ) )
+        e = Env( "x", [ There() ] )
+        # It is going to be adopted, not rebuilt: saying `stale` would announce
+        # work that is not about to happen.
+        assert setup.status( root, e, c ) == setup.OK
+        setup._record( root, e, { "0:there": "something else" } )
+        assert setup.status( root, e, c ) == setup.STALE

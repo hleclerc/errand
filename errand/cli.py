@@ -889,7 +889,7 @@ def main( argv = None ):
 
     report = Report()
     report.broken = list( discovery.broken )
-    rc = 0
+    rc, dispatched = 0, 0
     for env, tags in targets:
         if inside is None and env.wraps_anything():
             if not args.no_setup:
@@ -901,6 +901,7 @@ def main( argv = None ):
             print( dim( f"\n  -> {env.name}  {env.describe()}" ), flush = True )
             rc |= dispatch( env, tags, argv, root = root, out_root = out_root,
                             entries = selected, overrides_list = [ v for _, v in combos ] )
+            dispatched += 1
             continue
 
         # Running here rather than in a child, either because nothing needed
@@ -939,6 +940,11 @@ def main( argv = None ):
                          version = __version__, report = report,
                          queued = not args.no_queue, selectors = selectors )
 
+    # The child of a dispatch has already said how it went, in full. Saying it
+    # again here -- out of a report that ran nothing and knows nothing -- is an
+    # "all good" under somebody else's failures, which is worse than silence.
+    if dispatched and dispatched == len( targets ):
+        return rc
     return _epilogue( report, rc )
 
 

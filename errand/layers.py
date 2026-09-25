@@ -175,9 +175,23 @@ class Micromamba:
         return _quiet( [ *self._exe( ctx ), "-n", self.name, "run", "true" ] )
 
     def build( self, ctx ):
-        spec = [ f"python={self.python}" if self.python else "python", "pip", *self.packages ]
+        """Create it when it is not there, install into it when it is.
+
+        `micromamba create -y -n x` on an environment that EXISTS is not a
+        no-op and not an update: it resolves the named specs into it, and
+        `python=3.13` over a 3.14 environment takes every package installed for
+        3.14 out with it. An environment somebody is working in must never be
+        the collateral of a declaration being read for the first time.
+        """
         channels = [ f for c in self.channels for f in ( "-c", c ) ]
-        steps = [ sh( [ *self._exe( ctx ), "create", "-y", "-n", self.name, *channels, *spec ] ) ]
+        spec = [ *( [ f"python={self.python}" ] if self.python else [ ] ), "pip",
+                 *self.packages ]
+        if self.probe( ctx ):
+            steps = ( [ sh( [ *self._exe( ctx ), "install", "-y", "-n", self.name,
+                              *channels, *spec ] ) ] if self.packages or self.python else [ ] )
+        else:
+            steps = [ sh( [ *self._exe( ctx ), "create", "-y", "-n", self.name,
+                            *channels, *( spec or [ "python" ] ) ] ) ]
         steps += _install_steps( [ *self._exe( ctx ), "-n", self.name, "run",
                                    "python", "-m", "pip", "install" ], self, ctx )
         return steps
