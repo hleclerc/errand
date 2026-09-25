@@ -226,3 +226,40 @@ if test( "what errand has never recorded is not announced as stale" ):
         assert setup.status( root, e, c ) == setup.OK
         setup._record( root, e, { "0:there": "something else" } )
         assert setup.status( root, e, c ) == setup.STALE
+
+
+if test( "the interpreter is substituted; anything else is a command of its own" ):
+    # `errand --env gpu -- python -m loom.toolchain` has to run the venv's
+    # python; `errand --env gpu -- nvidia-smi` must NOT become `python
+    # nvidia-smi`, which is what replacing the first word blindly did.
+    assert L.under( [ "python", "-c", "1" ], "/opt/py" ) == [ "/opt/py", "-c", "1" ]
+    assert L.under( [ "/usr/bin/python3", "-m", "x" ], "/opt/py" ) == [ "/opt/py", "-m", "x" ]
+    assert L.under( [ "nvidia-smi", "-L" ], "/opt/py" ) == [ "nvidia-smi", "-L" ]
+
+    made = L.Micromamba( "demo" ).wrap( L.Command( [ "nvidia-smi" ] ), L.Context( root = Path( "." ) ) )
+    assert made.argv[ -1 ] == "nvidia-smi" and "python" not in made.argv, made.argv
+
+
+if test( "an image says how it is built, not only how it is entered" ):
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path( tmp )
+        c = L.Context( root = root )
+
+        plain = L.Apptainer( image = "c/i.sif", recipe = "c/i.def" ).build( c )
+        assert plain and "--fakeroot" not in plain[ 0 ], plain
+
+        # Without root on a host that allows it, and unpacking somewhere with
+        # room -- /tmp is where a build dies halfway on a shared machine.
+        fancy = L.Apptainer( image = "c/i.sif", recipe = "c/i.def", fakeroot = True,
+                             scratch = "/data/scratch",
+                             build_flags = [ "--nv" ] ).build( c )
+        step = fancy[ 0 ]
+        assert "--fakeroot" in step and "--nv" in step, step
+        assert step.startswith( "APPTAINER_TMPDIR=/data/scratch "
+                                "APPTAINER_CACHEDIR=/data/scratch apptainer build" ), step
+
+        # And it is part of what makes the image stale: changing the scratch
+        # directory is not a reason to rebuild, changing the recipe is.
+        a = L.Apptainer( image = "c/i.sif", recipe = "c/i.def" )
+        b = L.Apptainer( image = "c/i.sif", recipe = "c/i.def", fakeroot = True )
+        assert L.fingerprint( *a.spec( c ) ) != L.fingerprint( *b.spec( c ) )

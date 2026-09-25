@@ -94,6 +94,13 @@ def ensure( root: Path, env, ctx, *, force = False, echo = print, dry_run = Fals
 
     why = "rebuilding" if force else "bringing up to date"
     echo( f"  {why} {env.name}" )
+    if not dry_run and env.ssh is not None:
+        # A recipe, a requirements file, a project to install in editable mode:
+        # all of them are files HERE, and the build happens THERE. Pushing
+        # first is what makes `--setup` over ssh mean the same thing as
+        # `--setup` at home.
+        echo( f"    rsync push -> {env.ssh.host}:{env.ssh.remote_root( ctx )}" )
+        L.push( ctx.root, env.ssh.host, env.ssh.remote_root( ctx ), env.ssh.options )
     if dry_run:
         for layer, step in steps:
             echo( f"    would run: {step}" )
@@ -119,4 +126,8 @@ def _run( step: str, ssh, ctx ) -> int:
     if ssh is None:
         return subprocess.run( [ "sh", "-c", step ] ).returncode
     line = f"cd {shlex.quote( str( ssh.remote_root( ctx ) ) )} && {step}"
-    return subprocess.run( [ "ssh", ssh.host, f"$SHELL -ic {shlex.quote( line )}" ] ).returncode
+    # `-t`: building an image can ask for a password, and prints a progress bar
+    # nobody sees without a terminal. An interactive shell, for the same reason
+    # as everywhere else -- micromamba and the rest live in an rc file.
+    return subprocess.run( [ "ssh", "-t", *ssh.options, ssh.host,
+                             f"$SHELL -ic {shlex.quote( line )}" ] ).returncode

@@ -84,6 +84,18 @@ def have( key: str ) -> bool:
     return key in _cache
 
 
+def value( key: str, default = None ):
+    """The local value of `key`, or `default` -- WITHOUT skipping.
+
+    `need` is for an entry, which has the option of not running. A project file
+    has no such option: it is read once, before anything, and what it does not
+    find it must simply do without. That is what lets a host name, a remote
+    root or a scratch directory stay out of git while the declaration that uses
+    them is committed, with a default that works here.
+    """
+    return _cache.get( key, default )
+
+
 def need( key: str, what: str = "", *, example = None ):
     """The value of `key` from the local file, or skip saying what is missing."""
     if key in _cache:

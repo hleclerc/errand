@@ -6,6 +6,7 @@ import contextlib
 import io
 import itertools
 import os
+import subprocess
 import sys
 import time
 import traceback
@@ -319,8 +320,6 @@ def run_in_processes( entries, combos, *, root, out_root, env, tags, how_many, r
     the child's chatter: the path was worked out before the child started, and
     the file is the record either way.
     """
-    import subprocess
-
     from . import yamlish
 
     pending = [ ( e, values ) for _, values in combos for e in entries ]
@@ -405,13 +404,52 @@ def dispatch( env, tags, argv, *, root, out_root, entries, overrides_list ):
         wrapped = L.compose( env.stack, cmd, ctx )
         merged = { **os.environ, **wrapped.env }
         print( dim( f"  $ {' '.join( str( a ) for a in wrapped.argv )}" ), flush = True )
-        import subprocess
         return subprocess.run( wrapped.argv, env = merged, cwd = root ).returncode
 
     pull = sorted( { str( R.dirs_for( out_root, e, o, "x" )[ 1 ].relative_to( root ) )
                      for e in entries for o in overrides_list } )
     return ssh.run( env.stack[ 1 : ], cmd, ctx, pull = pull,
                     echo = lambda s: print( dim( s ), flush = True ) )
+
+
+def run_there( known, command, *, root ):
+    """`errand --env X -- <command>`: that command, in that environment.
+
+    Not a feature of the runner so much as of the environments. They are
+    already declared here, once, with the layers that lead to them -- a venv, a
+    container, another machine -- so being let into one, to look at a toolchain
+    or to ask a card what it is, is a smaller thing than a second tool that
+    would have to describe them all over again.
+
+    The first word is replaced by the interpreter of the place when it names an
+    interpreter, and kept when it does not ( see `layers.under` ).
+    """
+    try:
+        targets = _targets( known, config.tag_names() )
+    except ValueError as err:
+        print( bad( str( err ) ) )
+        return 1
+
+    rc = 0
+    for env, tags in targets:
+        ctx = L.Context( root = root, tags = tags )
+        # The same sources the work itself would see. Being let into the
+        # environment to look at something is pointless if what you look at is
+        # somebody else's checkout of the same package.
+        path = os.pathsep.join( _src_paths( root ) + [ os.environ.get( "PYTHONPATH", "" ) ] )
+        cmd = L.Command( list( command ),
+                         { TAGS: ",".join( f"{k}={v}" for k, v in sorted( tags.items() ) ),
+                           "PYTHONPATH": path.rstrip( os.pathsep ) } )
+        print( dim( f"\n  -> {env.name}  {env.describe()}" ), flush = True )
+        if env.ssh is None:
+            wrapped = L.compose( env.stack, cmd, ctx )
+            print( dim( f"  $ {' '.join( str( a ) for a in wrapped.argv )}" ), flush = True )
+            rc |= subprocess.run( wrapped.argv, env = { **os.environ, **wrapped.env },
+                                  cwd = root ).returncode
+        else:
+            rc |= env.ssh.run( env.stack[ 1 : ], cmd, ctx,
+                               echo = lambda s: print( dim( s ), flush = True ) )
+    return rc
 
 
 # ── letting go, and looking back ─────────────────────────────────────────────
@@ -590,11 +628,15 @@ def print_envs( root ):
     return 0
 
 
+def _src_paths( root ):
+    """Where this project's own code lives, nearest first."""
+    return [ str( root / extra ) for extra in ( config.settings.src or [ "src" ] )
+             if ( root / extra ).is_dir() ] + [ str( root ) ]
+
+
 def _put_src_on_path( root ):
-    sys.path.insert( 0, str( root ) )
-    for extra in ( config.settings.src or [ "src" ] ):
-        if ( root / extra ).is_dir():
-            sys.path.insert( 0, str( root / extra ) )
+    for path in reversed( _src_paths( root ) ):
+        sys.path.insert( 0, path )
 
 
 def ssh_root( env, root ):
@@ -745,12 +787,24 @@ def main( argv = None ):
     from . import __version__
 
     argv = list( sys.argv[ 1 : ] if argv is None else argv )
+    # Everything after a bare `--` is a command to run IN the environment
+    # rather than arguments to errand: `errand --env gpu -- python -m
+    # loom.toolchain`, `errand --env lmo -- nvidia-smi`. The environments are
+    # described here, once, with the layers that lead to them; being let into
+    # one is a smaller thing than a second tool that describes them again.
+    handed = None
+    if "--" in argv:
+        at = argv.index( "--" )
+        argv, handed = argv[ : at ], argv[ at + 1 : ]
 
     pre, _ = build_parser().parse_known_args( argv )
     root = Path( pre.root ).resolve() if pre.root else find_root()
 
-    config.load( root, warn = lambda m: print( warn( f"  warning: {m}" ), file = sys.stderr ) )
+    # The local file FIRST: the project file is allowed to read it ( a host
+    # name, a scratch directory -- what differs from machine to machine and
+    # has no business in git, while the declaration around it is committed ).
     local.load( root )
+    config.load( root, warn = lambda m: print( warn( f"  warning: {m}" ), file = sys.stderr ) )
 
     out_root = Path( pre.out or config.settings.out )
     if not out_root.is_absolute():
@@ -776,6 +830,9 @@ def main( argv = None ):
 
     if known.envs:
         return print_envs( root )
+
+    if handed:
+        return run_there( known, handed, root = root )
 
     if known.forget:
         batch.forget( root, known.forget )

@@ -208,7 +208,7 @@ env( "cluster", [ Ssh( host = "gpu-box", root = "/home/me/proj" ),
 | `Conda( … )`, `Venv( python =, requirements =, pip = )`, `Uv( … )` | the same idea, other tools |
 | `Nix( flake =, shell = )`, `Guix( manifest = )` | `nix develop -c …`, `guix shell -- …` |
 | `Module( "gcc/13", "cuda/12" )` | Lmod / environment modules, the way a cluster picks a toolchain |
-| `Apptainer( image, recipe =, flags =, mounts =, pip = )` | wraps with `apptainer exec`, using the container's own interpreter |
+| `Apptainer( image, recipe =, flags =, mounts =, pip =, fakeroot =, scratch =, build_flags = )` | wraps with `apptainer exec`, using the container's own interpreter. The last three are about *building* it rather than entering it |
 | `Docker( … )`, `Podman( … )` | likewise |
 | `Ssh( host, root =, python =, options = )` | must be first; everything after it runs on that machine. `options` go to ssh *and* rsync — a port, an identity, a jump host |
 | `Slurm( partition =, nodes =, gpus =, time =, … )` | goes through `srun`, or `sbatch` in [batch mode](#detached-runs) |
@@ -240,10 +240,39 @@ rebuilding an image are one operation seen at three moments, and it happens on i
 errand --envs           # what is declared, what state it is in, which is the default
 errand --setup          # do it now, and nothing else
 errand --setup=force    # from scratch
+errand --setup --dry-run  # say what that would run, and run nothing
 errand --no-setup       # skip the check for this run
 ```
 
+**What is already there is adopted, not rebuilt.** The first time errand meets an environment there
+is no record of what it was built from, so every layer looks out of date — and acting on that
+reading would mean recreating, on somebody's first command, an environment that has been working
+for months. So: present and never seen before is recorded as-is; only a declaration that has
+*changed* since a record errand itself wrote is a reason to touch it, and `--setup=force` is how you
+say the other thing. (`micromamba create -n x` on an existing `x` is not a no-op and not an update:
+it resolves the named specs into it, and `python=3.13` over a 3.14 environment takes every package
+installed for 3.14 out with it. An environment somebody is working in must never be the collateral
+of a declaration being read for the first time.)
+
+Building an image happens where the image is used: an `Ssh` layer in front means the sources are
+rsynced over first — the recipe is a file *here*, the build happens *there* — and `apptainer build`
+then runs on that host, with `fakeroot` and `scratch` as declared.
+
 This is why the core has no third-party dependencies: it has to work before any environment exists.
+
+### Being let into one
+
+```bash
+errand --env gpu -- python -m mypkg.toolchain   # that command, in that environment
+errand --env cluster -- nvidia-smi              # on the other machine, through ssh
+errand --driver torch -- python -c "import torch; print( torch.__version__ )"
+```
+
+Everything after a bare `--` is a command to run *in* the environment rather than arguments to
+errand. The environments are already declared here, once, with the layers that lead to them — a
+venv, a container, another machine — so being let into one is a smaller thing than a second tool
+that would have to describe them all over again. A first word that names an interpreter is replaced
+by the interpreter of the place; any other is a command in its own right and is kept.
 
 ## Tags
 
@@ -776,6 +805,18 @@ anyone's machine is worth more than one that waits for a cluster.
 A skip is its own status, in the output and in `result.yaml`. `skip( "reason" )` says it directly
 for anything else that makes an entry inapplicable today. A suite that quietly tested nothing must
 not be able to look like a suite that passed.
+
+**The errandfile may read it too**, with `value` rather than `need`: an entry has the option of not
+running, a project file has not — it is read once, before anything, and what it does not find it
+must do without. That is what lets a host name, a remote root or a scratch directory stay out of
+git while the declaration that uses them is committed, with a default that works here:
+
+```python
+from errand.local import value
+
+env( "cluster", [ Ssh( host = value( "ssh_host", "gpu-box" ),
+                       root = value( "ssh_root", "/home/me/proj" ) ) ], cuda = True )
+```
 
 ## Other languages
 

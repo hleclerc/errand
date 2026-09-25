@@ -21,6 +21,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -77,6 +78,25 @@ def sh( argv ) -> str:
 
 # ── layers that only record something ────────────────────────────────────────
 
+INTERPRETERS = ( "python", "python3", "python2" )
+
+
+def under( argv, python ):
+    """`argv` with its interpreter replaced by `python`, when it HAS one.
+
+    Every layer's job is to run the work with the interpreter of the place it
+    describes -- a venv's python, the one inside the container. But a command
+    is not always an interpreter call ( `errand --env gpu -- nvidia-smi` ), and
+    substituting the first word blindly turns that one into `python
+    nvidia-smi`. So: a first word that names an interpreter is replaced; any
+    other is a command in its own right and is kept.
+    """
+    first = str( argv[ 0 ] ) if argv else ""
+    if Path( first ).name in INTERPRETERS or first == sys.executable:
+        return [ python, *argv[ 1 : ] ]
+    return list( argv )
+
+
 @dataclass
 class Vars:
     """Environment variables for the child.
@@ -106,7 +126,7 @@ class Venv:
     create      : bool = False          # make the venv if `python` is inside a missing one
 
     def wrap( self, cmd: Command, ctx: Context ) -> Command:
-        return Command( [ self.python, *cmd.argv[ 1 : ] ], cmd.env )
+        return Command( under( cmd.argv, self.python ), cmd.env )
 
     def describe( self ):
         return f"venv:{self.python}"
@@ -161,8 +181,8 @@ class Micromamba:
                 return cmd                       # already active: nothing to wrap
             if shutil.which( "micromamba" ) is None:
                 return cmd
-        return Command( [ *self._exe( ctx ), "-n", self.name, "run", "python",
-                          *cmd.argv[ 1 : ] ], cmd.env )
+        return Command( [ *self._exe( ctx ), "-n", self.name, "run",
+                          *under( cmd.argv, "python" ) ], cmd.env )
 
     def describe( self ):
         return f"micromamba:{self.name}"
@@ -220,7 +240,7 @@ class Uv:
         return str( ctx.root / self.path / "bin" / "python" )
 
     def wrap( self, cmd: Command, ctx: Context ) -> Command:
-        return Command( [ self._python( ctx ), *cmd.argv[ 1 : ] ], cmd.env )
+        return Command( under( cmd.argv, self._python( ctx ) ), cmd.env )
 
     def describe( self ):
         return f"uv:{self.path}"
@@ -250,6 +270,13 @@ class Apptainer:
     flags : list = field( default_factory = list )
     mounts: dict = field( default_factory = dict )
     pip   : list = field( default_factory = list )
+    # How the IMAGE is built, as opposed to how it is entered. `fakeroot`
+    # builds without root on a host that allows it; `scratch` is a directory
+    # with room -- apptainer unpacks whole layers, and the default /tmp is
+    # where a build dies halfway, out of space, on a shared machine.
+    fakeroot: bool = False
+    scratch : str | None = None
+    build_flags: list = field( default_factory = list )
 
     @property
     def container( self ):
@@ -261,13 +288,15 @@ class Apptainer:
         # The container brings its own interpreter; a host path would not
         # generally resolve inside it.
         return Command( [ "apptainer", "exec", *self.flags, *binds,
-                          str( ctx.root / self.image ), "python", *cmd.argv[ 1 : ] ], cmd.env )
+                          str( ctx.root / self.image ),
+                          *under( cmd.argv, "python" ) ], cmd.env )
 
     def describe( self ):
         return f"apptainer:{self.container}"
 
     def spec( self, ctx ):
-        return [ self.recipe and ( ctx.root / self.recipe ), self.flags, self.pip ]
+        return [ self.recipe and ( ctx.root / self.recipe ), self.flags, self.pip,
+                 self.fakeroot, self.scratch, self.build_flags ]
 
     def probe( self, ctx ):
         return ( ctx.root / self.image ).exists()
@@ -282,8 +311,15 @@ class Apptainer:
         # decided that the image must be built, and apptainer's refusal to
         # overwrite would otherwise make a STALE image unfixable -- the one case
         # where rebuilding is the whole point.
-        steps = [ sh( [ "apptainer", "build", "--force", str( ctx.root / self.image ),
-                        str( ctx.root / self.recipe ) ] ) ]
+        argv = [ "apptainer", "build", "--force",
+                 *( [ "--fakeroot" ] if self.fakeroot else [ ] ), *self.build_flags,
+                 str( ctx.root / self.image ), str( ctx.root / self.recipe ) ]
+        # Both, and to the same place: apptainer writes its unpacked layers to
+        # one and its downloads to the other, and a build that runs out of room
+        # in either dies the same way.
+        room = [ f"{k}={self.scratch}" for k in ( "APPTAINER_TMPDIR", "APPTAINER_CACHEDIR" ) ] \
+               if self.scratch else [ ]
+        steps = [ " ".join( [ *room, sh( argv ) ] ) ]
         if self.pip:
             steps.append( sh( [ "apptainer", "exec", str( ctx.root / self.image ),
                                 "python", "-m", "pip", "install", *self.pip ] ) )
@@ -329,7 +365,7 @@ class Docker:
         return Command( [ self.engine, "run", "--rm", *self._user_flags(), *self.flags,
                           *binds, *envs,
                           "-v", f"{ctx.root}:{ctx.root}", "-w", str( ctx.root ),
-                          self.image, "python", *cmd.argv[ 1 : ] ], { } )
+                          self.image, *under( cmd.argv, "python" ) ], { } )
 
     def describe( self ):
         return f"{self.engine}:{self.image}"
@@ -496,7 +532,8 @@ class Ssh:
 
     def run( self, inner, cmd: Command, ctx: Context, pull = None, echo = print ):
         remote_ctx = Context( root = self.remote_root( ctx ), tags = ctx.tags, remote = True )
-        wrapped = compose( inner, Command( [ self.python, *cmd.argv[ 1 : ] ], cmd.env ), remote_ctx )
+        wrapped = compose( inner, Command( under( cmd.argv, self.python ), cmd.env ),
+                           remote_ctx )
 
         echo( f"  rsync push -> {self.host}:{remote_ctx.root}" )
         push( ctx.root, self.host, remote_ctx.root, self.options )

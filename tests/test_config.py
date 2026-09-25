@@ -135,3 +135,56 @@ if test( "a config file is loaded by path, never as a module named errand" ):
         assert C.load( root )
         assert list( C.envs ) == [ "one" ]
         assert "errand" not in [ m for m in sys.modules if m == "_errand_config" ]
+
+
+if test( "`errand --env x -- cmd` runs that command in that environment", tags = [ "slow" ] ):
+    import sys
+    import tempfile
+
+    from _demo import a_project
+    from _infra import run_errand
+
+    with tempfile.TemporaryDirectory() as tmp:
+        project = a_project( tmp )
+        # The environments are declared here, once, with the layers that lead
+        # to them -- so being let into one is errand's business too, and not a
+        # second tool's. `plain` sets DEMO=1; the command is the proof.
+        code, output = run_errand( project, "--env", "plain", "--",
+                                   sys.executable, "-c",
+                                   "import os; print( 'DEMO is', os.environ[ 'DEMO' ] )" )
+        assert code == 0, output
+        assert "DEMO is 1" in output, output
+        # And the environment's tags cross with it, as they do for the work.
+        code, output = run_errand( project, "--env", "plain", "--",
+                                   sys.executable, "-c",
+                                   "import os; print( os.environ[ 'ERRAND_TAGS' ] )" )
+        assert code == 0 and "fp=" in output, output
+
+
+if test( "a project file can read what this machine, and only this one, knows" ):
+    import tempfile
+
+    from errand import local as LOC
+
+    # `load` replaces process-wide state -- the same state the suite itself is
+    # running under, and the ssh entries read it. Put it back.
+    kept = ( dict( LOC._cache ), LOC._loaded_from, LOC._missing_root )
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path( tmp )
+        ( root / LOC.LOCAL_FILE ).write_text( "ssh_host = 'over-there'\n" )
+        LOC.load( root )
+        # A host name has no business in git; the declaration that uses it has
+        # every business being committed. `value` is how both are true.
+        assert LOC.value( "ssh_host" ) == "over-there"
+        assert LOC.value( "absent", "a default that works here" ) == "a default that works here"
+
+        ( root / C.CONFIG_FILE ).write_text(
+            "from errand import Ssh, env\n"
+            "from errand.local import value\n"
+            "env( 'far', [ Ssh( host = value( 'ssh_host', 'localhost' ) ) ] )\n" )
+        assert C.load( root )
+        assert C.envs[ "far" ].ssh.host == "over-there"
+
+    LOC._cache.clear()
+    LOC._cache.update( kept[ 0 ] )
+    LOC._loaded_from, LOC._missing_root = kept[ 1 ], kept[ 2 ]
