@@ -35,7 +35,7 @@ import os
 import time
 from pathlib import Path
 
-from . import session as S
+from . import fuzzy, session as S
 from .session import Session
 
 LOOK  = 0.5          # seconds between askings of the output tree
@@ -94,15 +94,19 @@ def _id( entry ):
 # ── rows and panes ───────────────────────────────────────────────────────────
 
 class Row:
-    __slots__ = ( "label", "detail", "kind", "data", "depth", "checked", "mark", "open" )
+    __slots__ = ( "label", "detail", "kind", "data", "depth", "checked", "mark", "open",
+                  "hits" )
 
     def __init__( self, label, detail = "", *, kind = "plain", data = None, depth = 0,
-                  checked = None, mark = None, open = None ):
+                  checked = None, mark = None, open = None, hits = ( ) ):
         self.label, self.detail, self.kind, self.data = label, detail, kind, data
         self.depth   = depth
         self.checked = checked      # None: not something that can be ticked
         self.mark    = mark         # what stands where the box would be
         self.open    = open         # None: not something that can be folded
+        # Which letters of the label answered the search. Shown in bold: a list
+        # that says WHY a row is in it is one you can trust after a glance.
+        self.hits    = tuple( hits )
 
 
 class Pane:
@@ -221,6 +225,11 @@ def draw_rows( win, rows, cursor, box_inner, active, plain = False ):
             lead += "  "
         text = lead + row.label
         put( win, y, left, text.ljust( width )[ : width ], width, base | _colour( row ) )
+        for i in row.hits:
+            at = len( lead ) + i
+            if at < width:
+                put( win, y, left + at, row.label[ i ], 1,
+                     base | curses.color_pair( C_ACTIVE ) | curses.A_BOLD )
         if row.detail:
             room = width - len( text ) - 2
             if room > 4:
@@ -393,16 +402,23 @@ class Screen:
     def __init__( self, session: Session ):
         self.session = session
         self.cases   = Pane( "cases", "cases" )
+        self.about   = Pane( "about", "about" )
+        self.about.plain = True
         self.runs    = Pane( "runs", "runs" )
         self.files   = Pane( "files", "files" )
         self.look    = Pane( "look", "preview" )
         self.look.plain = True
-        self.panes   = [ self.cases, self.runs, self.files, self.look ]
+        # Two pages, because they answer two questions: WHAT DO I RUN, and
+        # WHAT CAME OF IT. Putting both on one screen made each of them half a
+        # screen wide, and there are more cases than a half screen holds.
+        self.pages   = { "cases": [ self.cases, self.about ],
+                         "runs" : [ self.runs, self.files, self.look ] }
+        self.page    = "cases"
         self.active  = 0
         self.ticked  : set = set()     # cases, by ( file, line, name )
         self.folded  : set = set()     # files whose cases are hidden
         self.opened  : set = set()     # commands whose runs are shown
-        self.filter  = ""
+        self.query   = ""
         self.typing  = False
         self.dialog  : Dialog | None = None
         self.message = ""
@@ -413,17 +429,30 @@ class Screen:
     # ── the lists ────────────────────────────────────────────────────────────
 
     def build_cases( self ):
-        """A file, and its cases under it: a tree, because that is the shape the
-        work has -- the file is where you go looking for it."""
-        rows, needle = [ ], self.filter.lower()
+        rows = self._found() if self.query.strip() else self._tree()
+        for path, why, trace in self.session.broken:
+            # Loudly, at the end: a file that declares work and would not
+            # import is not a detail, and a short list must give the reason it
+            # is short.
+            rows.append( Row( short( path, self.session.root ), why[ : 44 ], kind = "broken",
+                              data = ( "broken", path, why, trace ), mark = "!" ) )
+        if not rows:
+            rows.append( Row( "nothing answers that" if self.query.strip()
+                              else "nothing declares work here" ) )
+        self.cases.keep( rows, key = lambda r: ( r.kind, str( r.data ) ) )
+        count = sum( 1 for r in rows if r.kind == "case" )
+        self.cases.title = ( f"cases  {count} found" if self.query.strip() else
+                             f"cases  {len( self.ticked )} ticked" if self.ticked else "cases" )
+
+    def _tree( self ):
+        """A file, and its cases under it: a tree, because that is the shape
+        the work has -- the file is where you go looking for it."""
+        rows: list = [ ]
         by_file: dict = { }
         for e in self.session.entries:
             by_file.setdefault( e.file, [ ] ).append( e )
         for path in sorted( by_file, key = str ):
-            mine = [ e for e in sorted( by_file[ path ], key = lambda e: e.line )
-                     if not needle or needle in f"{e.name} {path} {' '.join( e.tags )}".lower() ]
-            if not mine:
-                continue
+            mine = sorted( by_file[ path ], key = lambda e: e.line )
             folded = path in self.folded
             rows.append( Row( short( path, self.session.root ), f"{len( mine )}",
                               kind = "group", data = ( "file", path ), open = not folded ) )
@@ -431,17 +460,71 @@ class Screen:
                 for e in mine:
                     rows.append( Row( e.name, f"{e.kind}:{e.line}", kind = "case", data = e,
                                       depth = 1, checked = _id( e ) in self.ticked ) )
-        # Loudly, at the end: a file that declares work and would not import is
-        # not a detail, and a short list must give the reason it is short.
-        for path, why, trace in self.session.broken:
-            rows.append( Row( short( path, self.session.root ), why[ : 44 ], kind = "broken",
-                              data = ( "broken", path, why, trace ), mark = "!" ) )
-        if not rows:
-            rows.append( Row( f"nothing matches /{self.filter}" if self.filter
-                              else "nothing declares work here" ) )
-        self.cases.keep( rows, key = lambda r: ( r.kind, str( r.data ) ) )
-        self.cases.title = ( f"cases  /{self.filter}" if self.filter else
-                             f"cases  {len( self.ticked )} ticked" if self.ticked else "cases" )
+        return rows
+
+    def _found( self ):
+        """What the search found, best first -- and flat, because a ranking has
+        an order of its own and a tree would fight it."""
+        ranked = fuzzy.rank( self.query, self.session.entries, self._fields )
+        rows = [ ]
+        for e, _, marks in ranked:
+            where = short( e.file, self.session.root )
+            rows.append( Row( e.name, f"{where}:{e.line}", kind = "case", data = e,
+                              checked = _id( e ) in self.ticked,
+                              hits = marks.get( "name", ( ) ) ) )
+        return rows
+
+    def _fields( self, e ):
+        """What a search looks in, and what each is worth. The name is what
+        somebody types; the file is how they remember where it lives; the tags
+        are how they say which KIND they mean."""
+        return { "name": ( e.name, 1.0 ),
+                 "file": ( short( e.file, self.session.root ), 0.75 ),
+                 "tags": ( " ".join( e.tags ) + " " + e.kind, 0.9 ) }
+
+    def build_about( self ):
+        """Facing the list: everything about the case under the cursor, and how
+        it went the last time it ran."""
+        row = self.cases.current()
+        if row is None:
+            self.about.rows, self.about.title = [ Row( "" ) ], "about"
+            return
+        if row.kind == "broken":
+            _, path, why, trace = row.data
+            self.about.title = path.name
+            self.about.rows = [ Row( why ), Row( "" ) ] + [
+                Row( line.replace( "\t", "    " ) ) for line in trace.splitlines() ]
+            return
+        if row.kind != "case":
+            self.about.title, self.about.rows = "about", [ Row( "" ) ]
+            return
+        e = row.data
+        lines = [ f"{short( e.file, self.session.root )}:{e.line}", f"kind: {e.kind}" ]
+        if e.tags:
+            lines.append( "tags: " + ", ".join( e.tags ) )
+        if e.resources:
+            lines.append( "needs: " + ", ".join( f"{k}={v}" for k, v in e.resources.items() ) )
+        traits = [ k for k, v in e.traits.items() if v ]
+        if traits:
+            lines.append( "traits: " + " ".join( traits ) )
+        for name, param in e.params.items():
+            lines += [ "", f"--{name.replace( '_', '-' )}   default {param.default!r}"
+                           + ( f"   choices {param.choices}" if param.choices else "" ) ]
+            if param.help:
+                lines.append( f"  {param.help}" )
+        got = self.session.last_result( e )
+        if got:
+            lines += [ "", "last run", f"  {got.get( 'status' )}   {got.get( 'env' )}"
+                                       f"   {got.get( 'place' )}" ]
+            if got.get( "duration_s" ) is not None:
+                lines.append( f"  {got[ 'duration_s' ]:g}s" )
+            for key, value in ( got.get( "results" ) or { } ).items():
+                lines.append( f"  {key} = {value}" )
+            if got.get( "error" ):
+                lines.append( f"  {got[ 'error' ]}" )
+        lines += [ "", "enter asks where to run it" ]
+        self.about.title = e.name
+        self.about.rows = [ Row( line ) for line in lines ]
 
     def command_lines( self ):
         """Every command run from here, the one going on now first."""
@@ -505,22 +588,7 @@ class Screen:
             return self.states_for( row.data[ 1 ] ) or [ ] if row.open else [ ]
         return [ ]
 
-    def broken_row( self ):
-        """The cases pane, when it is sitting on a file that would not import.
-
-        The right column follows whatever the left one is about, and what a
-        file that would not import is about is the reason it would not.
-        """
-        row = self.cases.current()
-        if self.panes[ self.active ] is self.cases and row is not None and row.kind == "broken":
-            return row
-        return None
-
     def build_files( self ):
-        if self.broken_row() is not None:
-            self.files.keep( [ Row( "nothing to show: this file would not import" ) ],
-                             key = lambda r: r.label )
-            return
         rows = [ ]
         for state in self.chosen_states():
             for path in self.session.files_of( state.get( "dir" ) ):
@@ -530,13 +598,6 @@ class Screen:
         self.files.keep( rows, key = lambda r: str( r.data ) )
 
     def build_preview( self ):
-        gone = self.broken_row()
-        if gone is not None:
-            _, path, why, trace = gone.data
-            self.look.title = path.name
-            self.look.rows = [ Row( why ), Row( "" ) ] + [
-                Row( line.replace( "\t", "    " ) ) for line in trace.splitlines() ]
-            return
         row = self.files.current()
         path = row.data if row is not None and row.kind == "file" else None
         if path is None:
@@ -553,14 +614,22 @@ class Screen:
         self.look.rows = rows
         # What is being written right now is worth seeing from the end, but
         # only while nobody has scrolled it: following is a default, not a rule.
-        if path.name == "output.txt" and moved and self.panes[ self.active ] is not self.look:
+        if path.name == "output.txt" and moved and self.pane() is not self.look:
             self.look.top = max( 0, len( rows ) - self.look.inner[ 2 ] )
             self.look.cursor = max( 0, len( rows ) - 1 )
 
     # ── what a key does ──────────────────────────────────────────────────────
 
+    @property
+    def panes( self ):
+        return self.pages[ self.page ]
+
     def pane( self ):
+        self.active = min( self.active, len( self.panes ) - 1 )
         return self.panes[ self.active ]
+
+    def show( self, page ):
+        self.page, self.active = page, 0
 
     def fold( self, row ):
         if row.data[ 0 ] == "file":
@@ -598,7 +667,7 @@ class Screen:
             if row.kind == "group":
                 self.fold( row )
             else:
-                self.active = 2                    # its files are the next question
+                self.active = self.panes.index( self.files )   # its files are next
         elif pane in ( self.files, self.look ):
             target = self.files.current()
             if target is not None and target.kind == "file":
@@ -611,6 +680,13 @@ class Screen:
             return
         self.launch( self.session.args_of( row.data[ 1 ] ) )
 
+    def reread( self ):
+        self.session.discover()
+        self.past.clear()
+        self.message = ( f"{len( self.session.entries )} case(s)"
+                         + ( f", {len( self.session.broken )} unreadable file(s)"
+                             if self.session.broken else "" ) )
+
     def launch( self, argv ):
         why = self.session.launch( argv )
         self.message = why or self.session.command_line
@@ -618,7 +694,7 @@ class Screen:
             return
         self.past.clear()
         self.opened.add( self.session.command_line[ len( "errand " ) : ] )
-        self.active = 1
+        self.show( "runs" )
         self.runs.cursor = 0
 
     def mouse( self, y, x, state ):
@@ -672,32 +748,45 @@ def _summary( states ):
 
 # ── the loop ─────────────────────────────────────────────────────────────────
 
+HINTS = {
+    "cases": "type to search   enter run   space tick   tab runs   esc quit",
+    "runs" : "enter files   r again   o open   x stop   tab cases   q quit",
+}
+
 KEYS = [
-    ( "arrows", "move in the active pane; tab goes to the next" ),
+    ( "tab",    "the other page: cases ⇄ runs" ),
+    ( "typing", "on `cases`, goes straight into the search" ),
+    ( "arrows", "move in the active pane; shift-tab walks the panes" ),
     ( "click",  "choose, and make that pane the active one" ),
     ( "wheel",  "scroll whatever is under the pointer" ),
-    ( "space",  "tick a case, or fold a file / a command" ),
-    ( "enter",  "cases: run them · runs: its files · files: open it" ),
+    ( "space",  "tick a case ( once esc has let go of the search ), or fold" ),
+    ( "enter",  "cases: ask where to run · runs: its files · files: open it" ),
+    ( "esc",    "cases: let go of the search, clear it, leave · runs: back to cases" ),
     ( "r",      "run the command under the cursor again" ),
     ( "o",      "open the file under the cursor" ),
-    ( "/",      "filter the cases; esc clears it" ),
     ( "x",      "interrupt what is running" ),
-    ( "d",      "read the project again" ),
-    ( "q",      "leave" ),
+    ( "ctrl-r", "read the project again" ),
+    ( "q",      "leave, from the runs page" ),
 ]
 
 
 def layout( screen: Screen, height, width ):
-    """A line for the title, a line for the hint, and four boxes between."""
-    left = max( 30, min( 70, width * 45 // 100 ) )
+    """A line for the title, a line for the hint, and the page between.
+
+    On `cases` the search takes a line of its own as well: it is what you type
+    into, so it is never somewhere you have to go and find.
+    """
+    if screen.page == "cases":
+        left = max( 30, min( 80, width * 55 // 100 ) )
+        screen.cases.box = ( 2, 0, height - 3, left )
+        screen.about.box = ( 2, left, height - 3, width - left )
+        return
+    left = max( 30, min( 76, width * 50 // 100 ) )
     body = height - 2
-    top  = max( 5, body * 55 // 100 )
-    screen.cases.box = ( 1, 0, top, left )
-    screen.runs.box  = ( 1 + top, 0, body - top, left )
-    right = width - left
-    files = max( 4, body * 30 // 100 )
-    screen.files.box = ( 1, left, files, right )
-    screen.look.box  = ( 1 + files, left, body - files, right )
+    files = max( 4, body * 35 // 100 )
+    screen.runs.box  = ( 1, 0, body, left )
+    screen.files.box = ( 1, left, files, width - left )
+    screen.look.box  = ( 1 + files, left, body - files, width - left )
 
 
 def draw( win, screen: Screen ):
@@ -708,15 +797,26 @@ def draw( win, screen: Screen ):
     layout( screen, height, width )
     for index, pane in enumerate( screen.panes ):
         draw_pane( win, pane, index == screen.active and screen.dialog is None )
+
     state = ( "running" if screen.session.running else
               "following" if screen.session.record else "idle" )
-    put( win, 0, 1, f"errand · {screen.session.root.name} · {state}", max( 0, width - 2 ),
-         curses.color_pair( C_ACTIVE ) | curses.A_BOLD )
-    hint = ( f"/{screen.filter}_" if screen.typing else screen.message or
-             "space tick   enter run   r again   o open   / filter   ? keys   q quit" )
+    tabs = "  ".join( f"[{name}]" if name == screen.page else f" {name} "
+                      for name in ( "cases", "runs" ) )
+    put( win, 0, 1, tabs, max( 0, width - 2 ), curses.color_pair( C_ACTIVE ) | curses.A_BOLD )
+    right = f"errand · {screen.session.root.name} · {state}"
+    put( win, 0, max( 0, width - len( right ) - 1 ), right, width - 1,
+         curses.color_pair( C_DIM ) )
+
+    if screen.page == "cases":
+        typed = screen.query + ( "_" if screen.typing else "" )
+        put( win, 1, 1, "find: ", 6, curses.color_pair( C_TITLE ) | curses.A_BOLD )
+        put( win, 1, 7, typed.ljust( width - 9 )[ : width - 9 ], width - 9,
+             curses.A_BOLD if screen.typing else 0 )
+
+    hint = screen.message or ( HINTS[ screen.page ] if not screen.typing else
+                               "enter runs the first one · esc keeps what you typed and lets go" )
     put( win, height - 1, 0, hint.ljust( width - 1 )[ : width - 1 ], width - 1,
-         curses.color_pair( C_WARN ) if screen.message and not screen.typing
-         else curses.color_pair( C_DIM ) )
+         curses.color_pair( C_WARN ) if screen.message else curses.color_pair( C_DIM ) )
     if screen.dialog is not None:
         screen.dialog.draw( win )
     elif screen.help:
@@ -738,8 +838,7 @@ def _help( win, height, width ):
 
 def loop( win, screen: Screen ):
     curses.curs_set( 0 )
-    with_colour = curses.has_colors()
-    if with_colour:
+    if curses.has_colors():
         curses.use_default_colors()
         for pair, colour in ( ( C_TITLE, curses.COLOR_CYAN ), ( C_ACTIVE, curses.COLOR_CYAN ),
                               ( C_DIM, -1 ), ( C_OK, curses.COLOR_GREEN ),
@@ -760,6 +859,7 @@ def loop( win, screen: Screen ):
                 screen.session.look()
             screen.build_cases()
             screen.build_runs()
+        screen.build_about()
         screen.build_files()
         screen.build_preview()
         draw( win, screen )
@@ -775,72 +875,14 @@ def loop( win, screen: Screen ):
         if screen.help:
             screen.help = False
             continue
-        if screen.typing:
-            _filter_key( screen, key )
-            continue
 
         screen.message = ""
-        pane = screen.pane()
-        if key == curses.KEY_MOUSE:
-            try:
-                _, x, y, _, state = curses.getmouse()
-            except curses.error:
-                continue
-            screen.mouse( y, x, state )
-        elif key in ( curses.KEY_DOWN, ord( "n" ) ):
-            pane.move( 1 )
-        elif key in ( curses.KEY_UP, ord( "p" ) ):
-            pane.move( -1 )
-        elif key == curses.KEY_NPAGE:
-            pane.move( max( 1, pane.inner[ 2 ] - 1 ) )
-        elif key == curses.KEY_PPAGE:
-            pane.move( -max( 1, pane.inner[ 2 ] - 1 ) )
-        elif key == curses.KEY_HOME:
-            pane.cursor = 0
-            pane.reveal()
-        elif key == curses.KEY_END:
-            pane.cursor = max( 0, len( pane.rows ) - 1 )
-            pane.reveal()
-        elif key in ( 9, ord( "\t" ) ):
-            screen.active = ( screen.active + 1 ) % len( screen.panes )
-        elif key == curses.KEY_BTAB:
-            screen.active = ( screen.active - 1 ) % len( screen.panes )
-        elif key == curses.KEY_RIGHT:
-            row = pane.current()
-            if row is not None and row.open is False:
-                screen.fold( row )
-        elif key == curses.KEY_LEFT:
-            row = pane.current()
-            if row is not None and row.open:
-                screen.fold( row )
-        elif key == ord( " " ):
-            screen.toggle_row()
-        elif key in ( 10, 13, curses.KEY_ENTER ):
-            screen.enter()
-        elif key == ord( "r" ):
-            screen.run_again()
-        elif key == ord( "o" ):
-            row = screen.files.current()
-            if row is not None and row.kind == "file":
-                screen.message = S.open_file( row.data ) or f"opening {row.data.name}"
-        elif key == ord( "/" ):
-            screen.typing, screen.active = True, 0
-        elif key == 27:
-            screen.filter = ""
-            screen.build_cases()
-        elif key == ord( "x" ):
-            screen.message = screen.session.stop() or "interrupted"
-        elif key == ord( "d" ):
-            screen.session.discover()
-            screen.past.clear()
-            screen.message = ( f"{len( screen.session.entries )} case(s)"
-                               + ( f", {len( screen.session.broken )} unreadable file(s)"
-                                   if screen.session.broken else "" ) )
-        elif key == ord( "?" ):
-            screen.help = True
-        elif key == ord( "q" ):
+        answer = _common( screen, key )
+        if answer is None:
+            answer = ( _cases_key if screen.page == "cases" else _runs_key )( screen, key )
+        if answer == "quit":
             # A run started here belongs here: leaving would break the pipe
-            # under it. Detaching is how work is meant to outlive a window.
+            # under it. Detaching is how work outlives a window.
             if screen.session.running:
                 screen.message = ( "something is running: x interrupts it, "
                                    "or tick `detach` next time" )
@@ -848,16 +890,99 @@ def loop( win, screen: Screen ):
                 return 0
 
 
-def _filter_key( screen: Screen, key ):
-    if key in ( 10, 13, curses.KEY_ENTER ):
-        screen.typing = False
-    elif key == 27:
-        screen.typing, screen.filter = False, ""
+def _common( screen: Screen, key ):
+    """What every page does the same way. -> "quit", "" when it acted, or None."""
+    pane = screen.pane()
+    if key == curses.KEY_MOUSE:
+        try:
+            _, x, y, _, state = curses.getmouse()
+        except curses.error:
+            return ""
+        screen.mouse( y, x, state )
+    elif key in ( curses.KEY_DOWN, 14 ):                 # ctrl-n, for while typing
+        pane.move( 1 )
+    elif key in ( curses.KEY_UP, 16 ):                   # ctrl-p
+        pane.move( -1 )
+    elif key == curses.KEY_NPAGE:
+        pane.move( max( 1, pane.inner[ 2 ] - 1 ) )
+    elif key == curses.KEY_PPAGE:
+        pane.move( -max( 1, pane.inner[ 2 ] - 1 ) )
+    elif key == curses.KEY_HOME:
+        pane.cursor = 0
+        pane.reveal()
+    elif key == curses.KEY_END:
+        pane.cursor = max( 0, len( pane.rows ) - 1 )
+        pane.reveal()
+    elif key in ( 9, ord( "\t" ) ):
+        screen.show( "runs" if screen.page == "cases" else "cases" )
+    elif key == curses.KEY_BTAB:
+        screen.active = ( screen.active + 1 ) % len( screen.panes )
+    elif key in ( 10, 13, curses.KEY_ENTER ):
+        screen.enter()
+    elif key == curses.KEY_RIGHT:
+        row = pane.current()
+        if row is not None and row.open is False:
+            screen.fold( row )
+    elif key == curses.KEY_LEFT:
+        row = pane.current()
+        if row is not None and row.open:
+            screen.fold( row )
+    elif key in ( curses.KEY_F5, 18 ):                   # ctrl-r
+        screen.reread()
+    elif key == curses.KEY_F1:
+        screen.help = True
+    else:
+        return None
+    return ""
+
+
+def _cases_key( screen: Screen, key ):
+    """On `cases`, what you type is a search. It is the fastest thing you can
+    do with a keyboard, and finding one case among three hundred is what this
+    page is for."""
+    if key == 27:                                        # esc
+        if screen.typing:
+            # Keep what was typed and let go of it: the list stays narrowed
+            # while you walk it and tick several.
+            screen.typing = False
+        elif screen.query:
+            screen.query = ""
+            screen.build_cases()
+        else:
+            return "quit"
     elif key in ( curses.KEY_BACKSPACE, 127, 8 ):
-        screen.filter = screen.filter[ : -1 ]
+        screen.query = screen.query[ : -1 ]
+        screen.typing = bool( screen.query )
+        screen.build_cases()
+    elif key == ord( " " ) and not screen.typing:
+        screen.toggle_row()
     elif 32 <= key < 127:
-        screen.filter += chr( key )
-    screen.build_cases()
+        screen.query += chr( key )
+        screen.typing = True
+        screen.build_cases()
+    return ""
+
+
+def _runs_key( screen: Screen, key ):
+    if key == ord( "q" ):
+        return "quit"
+    if key == 27:
+        screen.show( "cases" )
+    elif key == ord( " " ):
+        screen.toggle_row()
+    elif key == ord( "r" ):
+        screen.run_again()
+    elif key == ord( "o" ):
+        row = screen.files.current()
+        if row is not None and row.kind == "file":
+            screen.message = S.open_file( row.data ) or f"opening {row.data.name}"
+    elif key == ord( "x" ):
+        screen.message = screen.session.stop() or "interrupted"
+    elif key == ord( "d" ):
+        screen.reread()
+    elif key == ord( "?" ):
+        screen.help = True
+    return ""
 
 
 def _dialog_key( screen: Screen, key ):

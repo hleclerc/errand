@@ -51,6 +51,7 @@ class Session:
         self.states  : list = [ ]
         self.seen_batches : set = set()
         self._cache  : dict = { }
+        self._last   : dict = { }      # the newest result of a case, by label
 
     # ── reading the project ──────────────────────────────────────────────────
 
@@ -74,6 +75,7 @@ class Session:
         # screen is a poor way of saying so.
         self.broken = list( discovery.broken )
         self.noise  = buf.getvalue().strip()
+        self._last.clear()
         return self
 
     @property
@@ -185,6 +187,7 @@ class Session:
         self.started = time.time()
         self.log.clear()
         self.command_line = self.as_line( argv )
+        self._last.clear()
         self.seen_batches = { r[ "id" ] for r in batch.load_all( self.root ) }
         try:
             self.child = subprocess.Popen(
@@ -327,6 +330,24 @@ class Session:
             if not any( batch.alive( p ) for p in record.get( "places", [ ] ) ):
                 return
             time.sleep( PULL )
+
+    def last_result( self, entry ):
+        """The most recent result for that case, whatever its parameters and
+        wherever it ran. Read from the tree, like everything else -- so it is
+        there after a restart, and after somebody else ran it."""
+        label = R.label( entry )
+        if label in self._last:
+            return self._last[ label ]
+        best, when = None, -1.0
+        for path in ( self.out_root / label ).rglob( R.RESULT ):
+            try:
+                seen = path.stat().st_mtime
+            except OSError:
+                continue
+            if seen > when:
+                best, when = path, seen
+        self._last[ label ] = yamlish.read( best ) if best else None
+        return self._last[ label ]
 
     def preview( self, path, limit = 2000 ):
         """The beginning of a file, if it is one that can be read.

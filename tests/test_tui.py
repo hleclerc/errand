@@ -85,10 +85,10 @@ if test( "a click chooses a row, and makes its pane the active one" ):
         term = start_tui( project )
         try:
             until( term, "test_demo.py" )
-            # The title takes line 0 and the box its border, so the file is on
-            # line 2, `quick` on 3 and `slow` on 4. The cursor starts on the
-            # file; clicking `slow` chooses it without walking there.
-            click( term, 4, 8 )
+            # Line 0 is the two pages, line 1 the search, line 2 the border:
+            # so the file is on 3, `quick` on 4 and `slow` on 5. The cursor
+            # starts on the file; clicking `slow` chooses it without walking.
+            click( term, 5, 8 )
             term.send( "\n" )
             asked = term.text()
             assert "run: slow" in asked, asked
@@ -96,7 +96,7 @@ if test( "a click chooses a row, and makes its pane the active one" ):
             assert "run: slow" not in term.frame(), "the window is still there"
 
             # A click on the box itself ticks, rather than only selecting.
-            click( term, 3, 4 )
+            click( term, 4, 4 )
             assert "[x] quick" in term.text(), term.text()
         finally:
             term.close()
@@ -111,14 +111,45 @@ if test( "the wheel scrolls what is under the pointer, and chooses nothing" ):
             term.send( DOWN )              # the cursor sits on case_00
             wheel( term, 5, 10, down = True, times = 5 )
             after = term.frame()
-            assert "case_00" not in after, after
-            assert "case_1" in after or "case_2" in after, after
+            # The ROW is gone from the list. The name itself is still on the
+            # screen, in the pane facing it, because that is where the cursor
+            # still is -- which is the very thing being tested.
+            assert "[ ] case_00" not in after, after
+            assert "[ ] case_1" in after or "[ ] case_2" in after, after
 
             # The cursor stayed on case_00 while the view moved away from it:
             # looking is not choosing.
             term.send( "\n" )
             asked = term.text()
             assert "run: case_00" in asked, asked
+        finally:
+            term.close()
+
+
+if test( "typing is a search, and the best answer comes first" ):
+    with tempfile.TemporaryDirectory() as tmp:
+        project = a_project( tmp, { "test_demo.py": WORK, "test_many.py": MANY } )
+        term = start_tui( project )
+        try:
+            until( term, "test_demo.py" )
+            # Not a filter over the letters in order: `sl` has to reach `slow`
+            # past sixty other cases, and land on it.
+            term.send( "sl" )
+            found = term.frame()
+            assert "find: sl" in found, found
+            assert "slow" in found and "case_00" not in found, found
+
+            term.send( "\n" )
+            assert "run: slow" in term.text(), term.text()
+            term.send( "\x1b", settle = 1.0 )
+
+            # esc lets go of the search without throwing it away: the list
+            # stays narrowed while you walk it and tick.
+            term.send( "\x1b" )
+            term.send( " " )
+            ticked = term.frame()
+            assert "[x] slow" in ticked, ticked
+            assert "find: sl" in ticked, "what was typed is still there"
         finally:
             term.close()
 
@@ -132,7 +163,7 @@ if test( "runs and history are one list, and a command runs again", tags = [ "sl
         term = start_tui( project )
         try:
             until( term, "test_demo.py" )
-            term.send( "\t" )              # to the runs pane
+            term.send( "\t" )              # to the runs page
             shown = term.text()
             # A command typed in a shell is in the same list as one run here.
             assert "test_demo::quick --env other" in shown, shown
