@@ -33,8 +33,8 @@ TOOLSPY := $(TOOLS)/bin/python
 help:
 	@echo "errand $(VERSION)   ( distribution: $(DIST) )"
 	@echo
-	@echo "  make venv        a virtual environment with errand installed in it, editable"
-	@echo "  make dev         pip install -e .  into the interpreter you are using now"
+	@echo "  make venv        a virtual environment with errand installed in it, editable, screen included"
+	@echo "  make dev         pip install -e '.[tui]'  into the interpreter you are using now"
 	@echo "  make test        run the suite         ( make test ARGS='test_queue' )"
 	@echo
 	@echo "  make build       sdist + wheel into dist/"
@@ -50,12 +50,12 @@ help:
 # the package: `errand` on the PATH, and an edit to errand/cli.py takes effect
 # on the next command without reinstalling anything.
 dev:
-	$(PY) -m pip install -e .
+	$(PY) -m pip install -e ".[tui]"
 
 venv:
 	$(PY) -m venv $(VENV)
 	$(VENV)/bin/python -m pip install --quiet --upgrade pip
-	$(VENV)/bin/python -m pip install -e .
+	$(VENV)/bin/python -m pip install -e ".[tui]"
 	@echo
 	@echo "  . $(VENV)/bin/activate    then: errand --tui"
 

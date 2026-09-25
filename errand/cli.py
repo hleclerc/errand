@@ -160,6 +160,7 @@ class Report:
     def __init__( self ):
         self.failed  = [ ]
         self.skipped = [ ]
+        self.broken  = [ ]      # files that declare work and would not import
 
 
 def aggregate_needs( entries ):
@@ -226,6 +227,17 @@ def run_entries( entries, modules, *, root, out_root, overrides, env_name, tags,
                 with capture( leaf / R.OUTPUT ) as buf:
                     try:
                         if e.provider is None:
+                            if e.module not in modules:
+                                # It was registered while ANOTHER file imported
+                                # this one: there are now two of every entry it
+                                # declares, and this copy belongs to an import
+                                # errand did not make and cannot repeat.
+                                raise RuntimeError(
+                                    f"{e.file.name} was imported by another file rather than "
+                                    f"read on its own, so everything it declares is declared "
+                                    f"twice.\n  a file that declares work is not a module to "
+                                    f"import from -- move what is shared into one that declares "
+                                    f"none ( a name starting with `_` is the usual sign )" )
                             discovery.import_file( modules[ e.module ], root )
                         else:
                             # Somebody else's suite: it runs itself, and only
@@ -621,6 +633,16 @@ def print_queue( ):
     return 0
 
 
+def say_broken( ):
+    """What declares work and would not import. Said wherever entries are
+    listed, because a list that is short for a reason must give the reason."""
+    if not discovery.broken:
+        return
+    print( bad( f"\n  {len( discovery.broken )} file(s) could not be read:" ) )
+    for path, why, _ in discovery.broken:
+        print( f"    {path}  {dim( why )}" )
+
+
 def print_entries( entries ):
     if not entries:
         print( dim( "  nothing matched" ) )
@@ -745,9 +767,17 @@ def main( argv = None ):
         return 0
 
     if known.tui:
-        # Imported here and nowhere else: it needs `curses`, which not every
-        # interpreter carries, and a missing screen must not cost the command
-        # line.
+        # The one part of errand with a dependency, and it is asked for here
+        # rather than declared: the core builds the environments the work runs
+        # in, so it has to run before any environment exists -- while a screen
+        # is nobody's bootstrap and can be installed like anything else.
+        import importlib.util
+        if importlib.util.find_spec( "textual" ) is None:
+            print( bad( "the screen needs textual, which is not installed" ) )
+            print( dim( "  pip install 'errand-run[tui]'" ) )
+            print( dim( "  everything the screen does, the command line does: "
+                        "errand --help lists what matched" ) )
+            return 2
         from . import tui
         return tui.main( root = root, out_root = out_root )
 
@@ -814,6 +844,7 @@ def main( argv = None ):
 
     if args.help:
         print_entries( selected )
+        say_broken()
         return 0
 
     try:
@@ -846,6 +877,11 @@ def main( argv = None ):
 
     if not selected:
         print( bad( f"nothing matched {args.pattern!r}" if args.pattern else "nothing to run" ) )
+        if discovery.broken:
+            # "nothing to run" when in fact nothing could be READ is the kind of
+            # answer that sends somebody looking in the wrong place.
+            say_broken()
+            return 1
         _suggest( root )
         return 1
 
@@ -859,6 +895,7 @@ def main( argv = None ):
         return submit( targets, selected, combos, argv, root = root, out_root = out_root )
 
     report = Report()
+    report.broken = list( discovery.broken )
     rc = 0
     for env, tags in targets:
         if inside is None and env.wraps_anything():
@@ -943,6 +980,13 @@ def _targets( args, tag_names ):
 
 def _epilogue( report, rc ):
     print( "\n" + "=" * 46 )
+    if report.broken:
+        # Everything else still ran -- that is the point of being tolerant --
+        # but a file that declares work and cannot be read is a failure, not a
+        # detail, and it takes the return code with it.
+        print( bad( f"  {len( report.broken )} file(s) could not be read:" ) )
+        for path, why, _ in report.broken:
+            print( f"    {path}  {dim( why )}" )
     if report.skipped:
         # A skip is not a pass. It gets its own block, with what was missing and
         # what to write where -- a suite that tested nothing must not look like
@@ -956,6 +1000,8 @@ def _epilogue( report, rc ):
     if report.failed:
         for e, why in report.failed:
             print( f"  {bad( 'FAILED' )} {e.name}  ({e.file}:{e.line})  {why}" )
+        return 1
+    if report.broken:
         return 1
     if rc:
         return rc

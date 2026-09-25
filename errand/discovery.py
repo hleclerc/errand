@@ -6,12 +6,19 @@ anywhere under the root, with no directory or project distinction; with no
 `*` it must resolve to exactly one file.
 
 Candidate files are found by a text check rather than by importing everything:
-a file is a candidate if it mentions `errand`. Without that, a source file
+a file is a candidate if it IMPORTS `errand`. Without that, a source file
 sharing its entry's name (`Cell.py` next to `test_Cell.py`) would be a false
-ambiguity for what should be an unambiguous lookup.
+ambiguity for what should be an unambiguous lookup -- and a file that merely
+mentions errand in a comment would be imported and executed on the strength of
+a word.
+
+Reading one is tolerant: a file that will not import costs its own row in
+`broken` and nothing else. Everything else still runs, and the runner reports
+what it could not read and fails over it.
 """
 from __future__ import annotations
 
+import contextlib
 import fnmatch
 import importlib.util
 import re
@@ -47,10 +54,18 @@ SCAN_PKG = "_errand_scan"
 
 def iter_py_files( root: Path, exclude = ( ) ):
     import os
+
+    from .config import config_in
+
     skip = SKIP_DIRS | { e.strip( "/" ) for e in exclude }
     for dirpath, dirnames, filenames in os.walk( root ):
         dirnames[ : ] = [ d for d in dirnames
-                          if d not in skip and not d.endswith( ".egg-info" ) ]
+                          if d not in skip and not d.endswith( ".egg-info" )
+                          # A directory holding a config file of its own is
+                          # ANOTHER PROJECT, and its entries are not ours to
+                          # run: they would run with our `src`, our providers
+                          # and our environments -- which is to say wrongly.
+                          and config_in( Path( dirpath ) / d ) is None ]
         for f in filenames:
             if f.endswith( ".py" ):
                 yield Path( dirpath ) / f
@@ -134,6 +149,16 @@ def import_file( path: Path, root: Path ):
     spec = importlib.util.spec_from_file_location( name, path )
     module = importlib.util.module_from_spec( spec )
     sys.modules[ name ] = module
+    # A file that declares work can import its neighbours. Work is declared
+    # NEXT TO the code it exercises, so `test_primes.py` importing `primes`
+    # from the same directory is the ordinary case -- and it must not depend on
+    # which directory errand happened to be started from. Put back straight
+    # afterwards: what the import needed is in `sys.modules` by then, and a
+    # path left behind would decide somebody else's import later on.
+    here = str( path.resolve().parent )
+    borrowed = here not in sys.path
+    if borrowed:
+        sys.path.insert( 0, here )
     try:
         spec.loader.exec_module( module )
     except SystemExit:
@@ -142,15 +167,38 @@ def import_file( path: Path, root: Path ):
         # an empty discovery rather than a skipped file.
         sys.modules.pop( name, None )
         return None, name
+    finally:
+        if borrowed:
+            with contextlib.suppress( ValueError ):
+                sys.path.remove( here )
     return module, name
+
+
+# Files that declare work and could not be read, from the last `collect`:
+# [ ( path, the short of it, the whole traceback ) ].
+#
+# A list and not an exception, because ONE FILE THAT WILL NOT IMPORT MUST NOT
+# COST EVERY OTHER ENTRY. A missing dependency in one corner of a tree is an
+# ordinary state of affairs -- half a project installed, an example nobody set
+# up -- and refusing to run anything at all over it is the worse answer.
+#
+# Not silence either: what could not be read is reported, and it fails the run.
+broken: list = [ ]
 
 
 def collect( files: list[ Path ], root: Path ):
     """Import every file and return ( entries, { module_name: path } )."""
+    import traceback
+
     E.reset_collection()
+    broken.clear()
     modules = { }
     for f in files:
-        module, name = import_file( f, root )
+        try:
+            module, name = import_file( f, root )
+        except BaseException as err:          # SystemExit is handled inside
+            broken.append( ( f, f"{type( err ).__name__}: {err}", traceback.format_exc() ) )
+            continue
         if module is not None:
             modules[ name ] = f
     return list( E.collected ), modules

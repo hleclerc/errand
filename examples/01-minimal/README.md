@@ -51,13 +51,14 @@ example.
 ## The same thing, on a screen
 
 ```bash
+pip install "errand-run[tui]"
 errand --tui
 ```
 
-The entries are a list of boxes; ticking two of them, or two values of `--n`, is the same matrix a
-comma would ask for. `r` runs what the bottom line says, and each case's output arrives in the pane
-facing it. Nothing is hidden behind the screen: the bottom line is the command, and it works just as
-well typed.
+Enter on a case opens one window with every dimension in it: the cases, the parameters, how many at
+once. Ticking two cases, or two values of `--n`, is the same matrix a comma would ask for — and the
+window builds exactly that comma. Enter runs it, and each case's output arrives in the pane facing
+it, read from the file that case is writing. `o` opens what a run produced.
 
 ## Notice
 

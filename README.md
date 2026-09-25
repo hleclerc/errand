@@ -32,7 +32,8 @@ lines](examples/03-existing-suite/).
 ## Installing
 
 ```bash
-pip install errand-run
+pip install errand-run           # the tool
+pip install "errand-run[tui]"    # …and the screen, which wants textual
 ```
 
 The *distribution* is called `errand-run` — `errand` on PyPI is somebody else's project — but what
@@ -40,8 +41,8 @@ you type, and what you import, is `errand`.
 
 It has **no dependencies, and it is not going to get any.** errand's job is to build the environment
 the work runs in, so it has to be able to run before any environment exists: it writes YAML without
-pyyaml and draws its screen with the standard library's curses for that reason alone. Python 3.10 or
-later, on a unix.
+pyyaml for that reason alone. The one exception is [the screen](#the-screen), which is nobody's
+bootstrap and is therefore an extra you install if you want it. Python 3.10 or later, on a unix.
 
 Working on errand itself:
 
@@ -130,6 +131,22 @@ Finding candidate files is a text check, not an import: a file is a candidate if
 `errand`. So a source file that happens to share its entry's name (`Cell.py` next to `test_Cell.py`)
 is never mistaken for one — and neither is a file that merely mentions errand in a comment, which
 would otherwise be imported and executed on the strength of a word.
+
+While a file is being read, **its own directory is on the import path**, so `test_primes.py` can
+`import primes` from beside it. Work is declared next to the code it exercises; which directory you
+happened to start `errand` from is not supposed to change what a file can import. The path is
+borrowed for the import and put back afterwards.
+
+A file that declares work is **not a module to import from**. Importing one from another declares
+everything in it twice, and errand says so rather than running the copies; put what is shared in a
+file that declares nothing.
+
+A directory holding a config file of its own is **another project**, and is not walked into: its
+entries would run with this project's `src`, providers and environments, which is to say wrongly.
+
+A candidate that will not import — a missing dependency, an example nobody set up — **costs its own
+row and nothing else.** Everything readable still runs; what could not be read is listed at the end,
+and takes the return code with it. Tolerant, not silent.
 
 Entries carry free-form tags, and `--entry-tags` filters on them:
 
@@ -512,63 +529,80 @@ is already happening.
 ## The screen
 
 ```bash
+pip install "errand-run[tui]"
 errand --tui
 ```
 
-One screen: a list on the left, and facing it whatever the cursor is on — an entry's parameters, an
-environment's layers, or, once something is running, the output of that one case.
+Three lists — **cases**, **runs**, **history** — each with a pane facing it. Nothing is configured
+from the screen and nothing is typed into it: you walk a list, press enter, and a window asks the
+only question there is, which is *what exactly do you want run*.
 
 ```
- errand  myproject  -j 4  [running]
- 1 entries  2 envs  3 tags  4 params  5 runs  6 history
- runs                                  | solve  n=5000  [gpu]
- $   the command                       |   gpu   gpu@gpu-box
- ok  solve  n=1000  [local]  PASS 11s  |   running
- ok  solve  n=1000  [gpu]    PASS 12s  |
- ..  solve  n=5000  [local]  running   | iteration 41   residual 3.1e-07
- ..  solve  n=5000  [gpu]    running   | iteration 42   residual 1.9e-07
- ---------------------------------------------------------------------
- $ errand bench_solver --env local,gpu --n 1000,5000 -j 4
- space tick   r run   b detach   j jobs   / filter   ? keys   q quit
+ ── errand ─ ~/myproject ─ running ──────────────────────────────────────────────
+  cases │ runs │ history
+  ┌──────────────────────────────┬───────────────────────────────────────────────┐
+  │ ok   solve  n=1000  local    │ iteration 39   residual 8.8e-07               │
+  │ ok   solve  n=1000  gpu      │ iteration 40   residual 4.2e-07               │
+  │ ..   solve  n=5000  local    │ iteration 41   residual 3.1e-07               │
+  │ ..   solve  n=5000  gpu      │ iteration 42   residual 1.9e-07               │
+  └──────────────────────────────┴───────────────────────────────────────────────┘
+  / filter   o files   x stop   d reread   q quit
 ```
 
-Three things hold it up.
+**Enter on a case opens the one window there is**, and every dimension is in it: the cases, the
+environments, one box list per tag, one per parameter that has `choices`, a field for the ones that
+do not, and how many at once. Enter runs it, `ctrl+b` detaches it, escape gives up.
 
-**It runs nothing itself.** Every launch goes through the errand command line written at the bottom
-of the screen, started as an ordinary child: `r` runs it, `b` runs it detached, `!` lets you edit it
-by hand first. There is nothing the screen can do that the shell cannot, nothing it knows that the
-command line does not, and what you learn here you can type tomorrow. The history (`6`) is the same
-file either way — a command typed in a shell appears in it, and a line of it runs again with enter.
+```
+ ╭─ run ──────────────────────────────────────────────────────────────────╮
+ │ cases            environments        parameters                        │
+ │ ▣ solve          ▣ local             --n   [ 1000,5000 ]               │
+ │ ▢ gradient       ▣ gpu               --method                          │
+ │                  --fp                  ▣ cg                            │
+ │                  ▣ 32  ▣ 64            ▢ direct                        │
+ │ errand bench_solver --env local,gpu --fp 32,64 --n 1000,5000 --method cg│
+ │                                        [ run ] [ detach ] [ cancel ]   │
+ ╰────────────────────────────────────────────────────────────────────────╯
+```
 
-**A box you can tick is a matrix.** Ticking two entries, two environments, two values of a tag and
-two values of a parameter asks for eight runs, for exactly the reason a comma does — and it produces
-exactly that comma. Values with `choices` come as boxes; anything else is typed, commas and all. A
-filter (`/`) hides rows; it never unticks them.
+**Ticking two of anything is a matrix.** Two environments, two values of a tag and two of a
+parameter are eight runs — for exactly the reason a comma is, and the window builds exactly that
+comma. The line at the bottom of it is not a prompt: it is what is about to happen, said once, so
+that the day you want it in a script you already know what to write.
 
-**The pane facing a case is the file that case is writing.** Not a share of one pipe: the paths were
-worked out before the run started, so each case's output is a file whose name this side already
+**The pane facing a case is the file that case is writing.** Not a share of one pipe: the paths are
+worked out before the run starts, so each case's output is a file whose name this side already
 knows. Which is why it reads the same under `-j 8`, for a run on another machine, and for a batch
 job submitted yesterday — three situations in which a single stream of interleaved lines says
-nothing about any particular case. `b` detaches, the screen goes on following it, and a screen
-opened tomorrow follows it too, because the state was never in the screen.
+nothing about any particular case. Detach, close the window, open it tomorrow: the state was never
+in the screen.
+
+**`o` opens what a run wrote** — every file in its directory, `result.yaml` and `output.txt`
+included, handed to the desktop (`xdg-open`, `open`). An experiment's `.svg` is two keys away from
+the case that produced it.
+
+**History is a list of commands**, and the same file whether they were typed here or in a shell.
+The pane facing one shows what it produced *the last time it ran* — read out of the tree, not
+remembered — and enter runs it again.
+
+A file that declares work and will not import costs its own row, with the traceback in the pane
+facing it. Half a project installed is an ordinary state of affairs; an empty screen is a poor way
+of saying so.
 
 | key | |
 |---|---|
-| `1`…`6`, tab | the list: entries, envs, tags, params, runs, history |
-| space | tick — several ticks is a matrix |
-| `a` `A` `v` | tick all, none, invert — only what the filter shows |
-| enter | type a value, or run a line of history |
-| `/` | filter the list |
-| `r` `b` | run, run detached |
-| `j` | how many at once (`-j`) |
+| enter | on a case: the run window · on a history line: run it again · on a run: its files |
+| space | tick, in the window — several ticks is a matrix |
+| `/`, escape | filter the cases, clear the filter |
+| `o` | open a file the run wrote |
 | `x` | interrupt what is running |
-| `!` | edit the command by hand, then run it |
-| `<` `>` `=` | scroll the pane; `=` sticks it back to the bottom |
 | `d` | read the project again |
-| `q` `Q` | leave; leave and stop what is running |
+| `q` | leave |
 
-A run started from the screen belongs to the screen, so `q` refuses while one is going — `--batch`
-is how work is meant to outlive the window.
+The screen is the only part of errand that has a dependency, and the only one that may: it is built
+on [textual](https://textual.textualize.io/), which is why it is an *extra*. `errand` itself
+installs with nothing, because it builds the environments the work runs in and therefore has to run
+before any environment exists. `errand --tui` without it says so, and says what to install.
 
 ## Configuration
 

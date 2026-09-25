@@ -1,194 +1,172 @@
-"""The screen: what is ticked becomes a command, and what ran is read back."""
+"""The screen itself, driven by textual's own pilot.
+
+No terminal is involved: `App.run_test()` runs the app headless and lets the
+test press keys at it and read the widgets back. So these check the things only
+the view can get wrong -- what the lists hold, what the dialog builds, what the
+pane facing a case shows -- while everything underneath is `test_session.py`.
+"""
+import asyncio
+import importlib.util
 import tempfile
 import time
 from pathlib import Path
 
-from errand import test, config, tui
-from errand import results as R
+from errand import test, skip
 
-from _infra import run_errand, write_project
-from _tty import DOWN, plain, start_tui
-
-
-CONFIG = '''
-from errand import env, Vars
-
-env( "plain", [ Vars( { "DEMO": "1" } ) ], fp = "32|64" )
-env( "other", [ Vars( { "DEMO": "2" } ) ], fp = "64" )
-'''
-
-WORK = '''
-from errand import test, bench, Param
-
-if test( "quick" ):
-    print( "hello from quick" )
-
-if p := bench( "slow", exclusive = False, n = Param( 1 ),
-               method = Param( "cg", choices = [ "cg", "direct" ] ) ):
-    print( f"{p.n} turns of {p.method}" )
-    p.results[ "seconds" ] = 0.1 * p.n
-'''
+from _demo import UNREADABLE, WORK, a_project, a_session, named, put_back
+from _infra import run_errand
 
 
-def a_project( tmp ):
-    return write_project( Path( tmp ) / "proj", CONFIG, { "test_demo.py": WORK } )
+def the_screen( ):
+    """The app -- or a skip saying what to install.
 
-
-def a_screen( project ):
-    """A screen on a project, without the config of the suite running this one.
-
-    `discover` loads a project's config into module-level state, which is the
-    state THIS suite is running under; it is put back afterwards.
+    Asked for INSIDE an entry and never at module level: a skip raised while a
+    file is being read is not a skip, it is a file that would not import, and
+    the whole of it would be reported as unreadable.
     """
-    kept = ( config.settings, dict( config.envs ), list( config.providers ) )
-    screen = tui.Screen( project, project / "runs" )
-    screen.discover()
-    return screen, kept
+    if importlib.util.find_spec( "textual" ) is None:
+        skip( "textual is not installed, so there is no screen to drive",
+              "the screen is the one part of errand with a dependency:\n"
+              "    pip install 'errand-run[tui]'\n"
+              "  everything it does, the command line does -- the rest of the suite covers that" )
+    from errand.tui import Errand, Launch
+    return Errand, Launch
 
 
-def put_back( kept ):
-    config.settings = kept[ 0 ]
-    config.envs.clear(); config.envs.update( kept[ 1 ] )
-    config.providers[ : ] = kept[ 2 ]
+def drive( project, body, timeout = 120 ):
+    """Run `body( pilot, app )` against the app, and put the config back."""
+    Errand, _ = the_screen()
+    session, kept = a_session( project )
+
+    async def go():
+        app = Errand( session )
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await body( pilot, app )
+
+    try:
+        asyncio.run( asyncio.wait_for( go(), timeout ) )
+    finally:
+        put_back( kept )
+    return session
 
 
-def tick( panel, label ):
-    for row in panel.rows:
-        if row.label.strip() == label:
-            row.checked = True
-            return row
-    raise AssertionError( f"no row called {label!r} among "
-                          f"{[ r.label for r in panel.rows ]}" )
+async def settle( pilot, until, timeout = 90 ):
+    """Wait for something to become true, letting the app breathe."""
+    end = time.time() + timeout
+    while time.time() < end:
+        await pilot.pause( 0.2 )
+        if until():
+            return True
+    return False
 
 
-# ── the lists ────────────────────────────────────────────────────────────────
-
-if test( "a filter hides rows; it does not untick them" ):
-    panel = tui.Panel( "1", "entries" )
-    panel.rows = [ tui.Row( "alpha" ), tui.Row( "beta" ), tui.Row( "gamma" ) ]
-    panel.rows[ 0 ].checked = panel.rows[ 2 ].checked = True
-    panel.filter = "bet"
-    assert [ r.label for r in panel.shown() ] == [ "beta" ]
-    # Narrowing the list to find one more case must not drop the two already
-    # chosen -- which is why `ticked` reads every row and not the shown ones.
-    assert [ r.label for r in panel.ticked() ] == [ "alpha", "gamma" ]
+def column( app, table_id, index = 1 ):
+    table = app.query_one( f"#{table_id}" )
+    return [ str( table.get_row_at( r )[ index ] ) for r in range( table.row_count ) ]
 
 
-if test( "a heading is passed over, never landed on" ):
-    panel = tui.Panel( "1", "entries" )
-    panel.rows = [ tui.Row( "a file", kind = "head" ), tui.Row( "one" ), tui.Row( "two" ) ]
-    panel.first()
-    assert panel.current().label == "one"
-    panel.move( -1 )
-    assert panel.current().label == "one", "moving up off the top must not land on the heading"
-
-
-# ── the command it writes ────────────────────────────────────────────────────
-
-if test( "what is ticked becomes a command line" ):
+if test( "the cases are listed, and what would not import is listed too" ):
+    the_screen()
     with tempfile.TemporaryDirectory() as tmp:
-        screen, kept = a_screen( a_project( tmp ) )
-        try:
-            assert screen.line() == "errand", "nothing ticked asks for everything"
+        project = a_project( tmp, { "test_demo.py": WORK, "test_absent.py": UNREADABLE } )
 
-            tick( screen._panel( "entries" ), "slow" )
-            tui._remember( screen, screen._panel( "entries" ) )
-            assert screen.line() == "errand test_demo::slow"
+        async def body( pilot, app ):
+            from textual.widgets import DataTable
+            names = column( app, "cases" )
+            assert "quick" in names and "slow" in names, names
+            assert any( "test_absent.py" in n for n in names ), names
+            # And the pane facing it says what went wrong, rather than the
+            # screen being empty and the reason being nowhere.
+            table = app.query_one( "#cases", DataTable )
+            table.move_cursor( row = names.index( next( n for n in names if "absent" in n ) ) )
+            await pilot.pause()
+            shown = str( app.query_one( "#about" ).render() )
+            assert "a_module_that_is_not_installed" in shown, shown
 
-            # A comma is a matrix, and a second tick is a comma: two
-            # environments, two values of a tag and two of a parameter are
-            # eight runs, said the same way they would be said by hand.
-            for name in ( "plain", "other" ):
-                tick( screen._panel( "envs" ), name )
-            for value in ( "32", "64" ):
-                tick( screen._panel( "tags" ), value )
-            for value in ( "cg", "direct" ):
-                tick( screen._panel( "params" ), value )
-            tui._remember( screen, screen._panel( "params" ) )
-            assert screen.line() == ( "errand test_demo::slow --env plain,other "
-                                      "--method cg,direct --fp 32,64" ), screen.line()
-        finally:
-            put_back( kept )
+        drive( project, body )
 
 
-if test( "every case of a file is the file" ):
-    with tempfile.TemporaryDirectory() as tmp:
-        screen, kept = a_screen( a_project( tmp ) )
-        try:
-            screen._panel( "entries" ).set_all( True )
-            tui._remember( screen, screen._panel( "entries" ) )
-            # Shorter, and it stays true when a case is added tomorrow.
-            assert screen.line() == "errand test_demo"
-        finally:
-            put_back( kept )
-
-
-if test( "the screen knows where every run will write, before it runs" ):
+if test( "enter on a case opens the dialog, and the dialog runs it", tags = [ "slow" ] ):
+    _, Launch = the_screen()
     with tempfile.TemporaryDirectory() as tmp:
         project = a_project( tmp )
-        screen, kept = a_screen( project )
-        try:
-            plan = screen.predict( [ "test_demo::slow", "--env", "plain,other", "--n", "1,2" ] )
-            assert len( plan ) == 4, plan
-            assert { row[ "env" ] for row in plan } == { "plain", "other" }
-            # The environment is part of the place: two environments on one
-            # machine are two sets of numbers, and before this the second
-            # cleared the first.
-            assert { row[ "place" ] for row in plan } == { R.place( "plain" ), R.place( "other" ) }
-        finally:
-            put_back( kept )
 
-        code, output = run_errand( project, "test_demo::slow", "--env", "plain,other",
-                                   "--n", "1,2" )
-        assert code == 0, output
-        for row in plan:
-            # Predicted before, found after: the same claim `--batch` and `-j`
-            # rest on, and the reason a pane can face a case at all.
-            assert ( project / row[ "under" ] ).is_dir(), row
-            assert list( ( project / row[ "under" ] ).glob( "*/*/result.yaml" ) ), row
+        async def body( pilot, app ):
+            from textual.widgets import DataTable, Log, SelectionList
+            app.query_one( "#cases", DataTable ).focus()
+            await pilot.press( "enter" )
+            await pilot.pause()
+            assert isinstance( app.screen, Launch ), app.screen
+
+            # The dimensions are all in the window: the case is ticked because
+            # it is the one that opened it, and everything else is a box.
+            cases = app.screen.query_one( "#cases", SelectionList )
+            assert len( cases.selected ) == 1
+            assert app.screen.argv() == [ "test_demo::quick" ], app.screen.argv()
+
+            await pilot.press( "enter" )                  # run it
+            assert await settle( pilot, lambda: app.session.states
+                                 and all( s[ "state" ] == "done" for s in app.session.states ) ), \
+                   list( app.session.log )
+            assert column( app, "runs", 0 ) == [ "$", "ok" ], column( app, "runs", 0 )
+
+            # The pane facing the case is the file that case wrote.
+            app.query_one( "#runs", DataTable ).focus()
+            await pilot.pause( 0.6 )
+            written = app.query_one( "#out", Log )
+            assert any( "hello from quick" in line for line in written.lines ), written.lines
+
+        session = drive( project, body )
+        assert session.history()[ 0 ] == "test_demo::quick", session.history()
 
 
-# ── the screen itself ────────────────────────────────────────────────────────
-
-if test( "the screen runs what it shows, and each case's output faces it",
-         tags = [ "slow" ] ):
+if test( "ticking two of anything is the comma that says so" ):
+    _, Launch = the_screen()
+    from textual.widgets import SelectionList
     with tempfile.TemporaryDirectory() as tmp:
         project = a_project( tmp )
-        term = start_tui( project )
-        try:
-            assert term.wait_for( "quick", 30 ), plain( term.buf )[ -2000 : ]
-            term.send( " " )                     # tick the first case
-            term.send( "r" )                     # and run it
-            assert term.wait_for( "all good", 90 ), plain( term.buf )[ -3000 : ]
 
-            shown = term.text()
-            # The command at the bottom of the screen is the command that ran:
-            # a tick is a way of writing one, not a private way of launching.
-            assert "$ errand test_demo::quick" in shown, shown
-            assert "ok " in shown and "quick" in shown, shown
+        async def body( pilot, app ):
+            slow = named( app.session, "slow" )
+            app.push_screen( Launch( app.session, [ slow ] ) )
+            await pilot.pause()
+            dialog = app.screen
+            dialog.query_one( "#envs", SelectionList ).select_all()
+            dialog.query_one( "#tag-fp", SelectionList ).select_all()
+            dialog.query_one( "#choice-method", SelectionList ).select_all()
+            await pilot.pause()
+            assert dialog.argv() == [ "test_demo::slow", "--env", "plain,other",
+                                      "--fp", "32,64", "--method", "cg,direct" ], dialog.argv()
+            # And the window says what it is about to do, once, quietly.
+            assert "--env plain,other" in str( dialog.query_one( "#preview" ).render() )
 
-            # The pane facing the case holds what the case printed -- read out
-            # of the file the run wrote, not out of the pipe.
-            term.send( DOWN )
-            assert "hello from quick" in term.text(), term.text()
-        finally:
-            term.close()
+        drive( project, body )
 
 
 if test( "a line of history runs again", tags = [ "slow" ] ):
+    the_screen()
     with tempfile.TemporaryDirectory() as tmp:
         project = a_project( tmp )
         code, output = run_errand( project, "test_demo::quick", "--env", "other" )
         assert code == 0, output
 
-        term = start_tui( project )
-        try:
-            assert term.wait_for( "quick", 30 )
-            term.send( "6" )                     # the history
-            assert "test_demo::quick --env other" in term.text(), term.text()
-            # What was typed in a shell is what comes back: the history holds
-            # commands, not some replayable record only errand could read.
-            term.send( "\n" )
-            assert term.wait_for( "all good", 90 ), plain( term.buf )[ -3000 : ]
-        finally:
-            term.close()
+        async def body( pilot, app ):
+            from textual.widgets import DataTable
+            app.query_one( "#tabs" ).active = "tab-history"
+            await pilot.pause()
+            assert column( app, "history", 0 ) == [ "test_demo::quick --env other" ]
+
+            # The pane facing it holds what that command produced last time,
+            # read out of the tree -- this session never ran it.
+            app.query_one( "#history", DataTable ).focus()
+            await pilot.pause()
+            shown = str( app.query_one( "#past" ).render() )
+            assert "hello from quick" in shown, shown
+
+            await pilot.press( "enter" )
+            assert await settle( pilot, lambda: app.session.states
+                                 and all( s[ "state" ] == "done" for s in app.session.states ) ), \
+                   list( app.session.log )
+
+        drive( project, body )
