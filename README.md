@@ -32,8 +32,7 @@ lines](examples/03-existing-suite/).
 ## Installing
 
 ```bash
-pip install errand-run           # the tool
-pip install "errand-run[tui]"    # …and the screen, which wants textual
+pip install errand-run
 ```
 
 The *distribution* is called `errand-run` — `errand` on PyPI is somebody else's project — but what
@@ -41,8 +40,8 @@ you type, and what you import, is `errand`.
 
 It has **no dependencies, and it is not going to get any.** errand's job is to build the environment
 the work runs in, so it has to be able to run before any environment exists: it writes YAML without
-pyyaml for that reason alone. The one exception is [the screen](#the-screen), which is nobody's
-bootstrap and is therefore an extra you install if you want it. Python 3.10 or later, on a unix.
+pyyaml, and draws [its screen](#the-screen) with the curses of the standard library, for that reason
+alone. Python 3.10 or later, on a unix.
 
 Working on errand itself:
 
@@ -529,80 +528,90 @@ is already happening.
 ## The screen
 
 ```bash
-pip install "errand-run[tui]"
 errand --tui
 ```
 
-Three lists — **cases**, **runs**, **history** — each with a pane facing it. Nothing is configured
-from the screen and nothing is typed into it: you walk a list, press enter, and a window asks the
-only question there is, which is *what exactly do you want run*.
+Four panes, and no focus to keep track of: one is active, the arrows drive it, tab goes to the next,
+and **clicking a pane makes it the active one**. The wheel scrolls whatever is under the pointer and
+changes nothing else.
 
 ```
- ── errand ─ ~/myproject ─ running ──────────────────────────────────────────────
-  cases │ runs │ history
-  ┌──────────────────────────────┬───────────────────────────────────────────────┐
-  │ ok   solve  n=1000  local    │ iteration 39   residual 8.8e-07               │
-  │ ok   solve  n=1000  gpu      │ iteration 40   residual 4.2e-07               │
-  │ ..   solve  n=5000  local    │ iteration 41   residual 3.1e-07               │
-  │ ..   solve  n=5000  gpu      │ iteration 42   residual 1.9e-07               │
-  └──────────────────────────────┴───────────────────────────────────────────────┘
-  / filter   o files   x stop   d reread   q quit
+ ╭─ cases ─────────────────────────╮╭─ files ──────────────────────────────╮
+ │ ▾ bench/solvers.py            2 ││   shape.svg                  12.1 kB │
+ │   [x] solve            bench:42 ││   result.yaml                  512 B │
+ │   [ ] gradient         bench:61 ││   output.txt                  1.2 kB │
+ │ ▸ tests/test_shapes.py        7 ││                                      │
+ ╰─────────────────────────────────╯╰──────────────────────────────────────╯
+ ╭─ runs ──────────────────────────╮╭─ output.txt ─────────────────────────╮
+ │ ▾ errand solvers --n 1e3,5e3 4/8││ iteration 39   residual 8.8e-07      │
+ │   ok    solve  n=1000  [local]  ││ iteration 40   residual 4.2e-07      │
+ │   ok    solve  n=1000  [gpu]    ││ iteration 41   residual 3.1e-07      │
+ │   ..    solve  n=5000  [local]  ││ iteration 42   residual 1.9e-07      │
+ │ ▸ errand -k bench --fp 32  6 ok ││                                      │
+ ╰─────────────────────────────────╯╰──────────────────────────────────────╯
 ```
 
-**Enter on a case opens the one window there is**, and every dimension is in it: the cases, the
-environments, one box list per tag, one per parameter that has `choices`, a field for the ones that
-do not, and how many at once. Enter runs it, `ctrl+b` detaches it, escape gives up.
+**Cases are a tree, by file**, because that is the shape the work has: the file is where you go
+looking for it. Space ticks one, `/` filters, escape clears the filter.
+
+**Runs and history are one list**, because they are one thing: a command, and what it produced.
+Today's is at the top and still moving, yesterday's is three rows down, and both read the same way —
+both are read out of [the output tree](#where-the-output-goes) rather than remembered. Fold one open
+to see its cases; `r` runs it again.
+
+**Facing them, what a run wrote**: the files it left, and below, the one under the cursor. Text is
+shown as text — `output.txt` follows the run as it is written — and anything else says what it is
+and how big. Enter or `o` hands it to the desktop (`xdg-open`, `open`), so an experiment's `.svg` is
+two keys from the case that produced it.
+
+**Enter on a case asks the only question left**: where, with which tags, with which parameters — not
+*which case*, which was the list you pressed enter in.
 
 ```
- ╭─ run ──────────────────────────────────────────────────────────────────╮
- │ cases            environments        parameters                        │
- │ ▣ solve          ▣ local             --n   [ 1000,5000 ]               │
- │ ▢ gradient       ▣ gpu               --method                          │
- │                  --fp                  ▣ cg                            │
- │                  ▣ 32  ▣ 64            ▢ direct                        │
- │ errand bench_solver --env local,gpu --fp 32,64 --n 1000,5000 --method cg│
- │                                        [ run ] [ detach ] [ cancel ]   │
+ ╭─ run: solve ───────────────────────────────────────────────────────────╮
+ │ environments                                                           │
+ │   [x] local                                                  driver=cpu│
+ │   [x] gpu                                       cuda  driver=cuda      │
+ │ --fp                                                                   │
+ │   [x] 32                                                               │
+ │   [x] 64                                                               │
+ │ --n                                                     default 1000   │
+ │   1000,5000_                                                           │
+ │ [ ] detach, and give the shell back                             --batch│
+ │ errand solvers::solve --env local,gpu --fp 32,64 --n 1000,5000         │
+ │ space ticks   enter runs   esc gives up                                │
  ╰────────────────────────────────────────────────────────────────────────╯
 ```
 
 **Ticking two of anything is a matrix.** Two environments, two values of a tag and two of a
 parameter are eight runs — for exactly the reason a comma is, and the window builds exactly that
-comma. The line at the bottom of it is not a prompt: it is what is about to happen, said once, so
-that the day you want it in a script you already know what to write.
+comma. The line above the keys is not a prompt: it is what is about to happen, said once, so that
+the day you want it in a script you already know what to write.
 
-**The pane facing a case is the file that case is writing.** Not a share of one pipe: the paths are
-worked out before the run starts, so each case's output is a file whose name this side already
-knows. Which is why it reads the same under `-j 8`, for a run on another machine, and for a batch
-job submitted yesterday — three situations in which a single stream of interleaved lines says
-nothing about any particular case. Detach, close the window, open it tomorrow: the state was never
-in the screen.
+**Each case's output is read from the file that case is writing**, never from a share of one pipe.
+The paths are worked out before the run starts, so the name is known in advance — which is why it
+reads the same under `-j 8`, for a run on another machine, and for a job submitted yesterday. Tick
+`detach`, close the window, open it tomorrow: the state was never in the screen.
 
-**`o` opens what a run wrote** — every file in its directory, `result.yaml` and `output.txt`
-included, handed to the desktop (`xdg-open`, `open`). An experiment's `.svg` is two keys away from
-the case that produced it.
-
-**History is a list of commands**, and the same file whether they were typed here or in a shell.
-The pane facing one shows what it produced *the last time it ran* — read out of the tree, not
-remembered — and enter runs it again.
-
-A file that declares work and will not import costs its own row, with the traceback in the pane
-facing it. Half a project installed is an ordinary state of affairs; an empty screen is a poor way
+A file that declares work and will not import costs its own row, marked `!`, with what went wrong
+beside it. Half a project installed is an ordinary state of affairs; an empty screen is a poor way
 of saying so.
 
-| key | |
+| | |
 |---|---|
-| enter | on a case: the run window · on a history line: run it again · on a run: its files |
-| space | tick, in the window — several ticks is a matrix |
+| arrows, tab | move in the active pane; tab goes to the next |
+| click, wheel | choose and activate · scroll what is under the pointer |
+| space | tick a case, or fold a file / a command |
+| enter | cases: run them · runs: its files · files: open it |
+| `r` | run the command under the cursor again |
+| `o` | open the file under the cursor |
 | `/`, escape | filter the cases, clear the filter |
-| `o` | open a file the run wrote |
 | `x` | interrupt what is running |
 | `d` | read the project again |
 | `q` | leave |
 
-The screen is the only part of errand that has a dependency, and the only one that may: it is built
-on [textual](https://textual.textualize.io/), which is why it is an *extra*. `errand` itself
-installs with nothing, because it builds the environments the work runs in and therefore has to run
-before any environment exists. `errand --tui` without it says so, and says what to install.
+A run started from the screen belongs to the screen, so `q` refuses while one is going — `detach` is
+how work is meant to outlive a window.
 
 ## Configuration
 

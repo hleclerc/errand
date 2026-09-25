@@ -328,6 +328,29 @@ class Session:
                 return
             time.sleep( PULL )
 
+    def preview( self, path, limit = 2000 ):
+        """The beginning of a file, if it is one that can be read.
+        -> ( lines, "text" | "binary" | "gone" ).
+
+        The test for "text" is the only one that means anything: decoding the
+        first few kilobytes as utf-8, and refusing a NUL. Extensions lie, and
+        an experiment's output is called whatever its author called it.
+        """
+        if path is None:
+            return [ ], "gone"
+        try:
+            with open( path, "rb" ) as handle:
+                head = handle.read( 128 * 1024 )
+        except OSError:
+            return [ ], "gone"
+        if b"\0" in head:
+            return [ ], "binary"
+        try:
+            text = head.decode( "utf-8" )
+        except UnicodeDecodeError:
+            return [ ], "binary"
+        return text.splitlines()[ : limit ], "text"
+
     def tail( self, path ):
         """The last of a file, re-read only when it has moved."""
         if path is None:

@@ -29,15 +29,9 @@ classifiers = [
 # NOTHING, on purpose, and it is a property worth keeping. errand's job is to
 # BUILD the environment the work runs in, so it has to be able to run before
 # any environment exists -- including before its own dependencies could have
-# been installed. It writes YAML without pyyaml for exactly that reason.
+# been installed. It writes YAML without pyyaml and draws its screen with the
+# curses of the standard library for exactly that reason.
 dependencies = [ ]
-
-# The screen, and only the screen. `errand --tui` says so itself when it is not
-# there. Everything the screen does, the command line does -- so this is an
-# extra and not a dependency, and errand still installs on a compute node that
-# is allowed fifteen transitive packages less.
-[project.optional-dependencies]
-tui = [ "textual>=1.0" ]
 
 [project.scripts]
 errand = "errand.cli:main"

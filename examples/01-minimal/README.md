@@ -51,7 +51,6 @@ example.
 ## The same thing, on a screen
 
 ```bash
-pip install "errand-run[tui]"
 errand --tui
 ```
 

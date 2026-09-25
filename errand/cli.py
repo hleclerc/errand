@@ -767,17 +767,9 @@ def main( argv = None ):
         return 0
 
     if known.tui:
-        # The one part of errand with a dependency, and it is asked for here
-        # rather than declared: the core builds the environments the work runs
-        # in, so it has to run before any environment exists -- while a screen
-        # is nobody's bootstrap and can be installed like anything else.
-        import importlib.util
-        if importlib.util.find_spec( "textual" ) is None:
-            print( bad( "the screen needs textual, which is not installed" ) )
-            print( dim( "  pip install 'errand-run[tui]'" ) )
-            print( dim( "  everything the screen does, the command line does: "
-                        "errand --help lists what matched" ) )
-            return 2
+        # Imported here and nowhere else: it needs `curses`, which not every
+        # interpreter carries, and a missing screen must not cost the command
+        # line.
         from . import tui
         return tui.main( root = root, out_root = out_root )
 
