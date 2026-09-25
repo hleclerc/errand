@@ -84,22 +84,16 @@ if test( "the directories are the tree, and a lonely one costs no row" ):
             term.close()
 
 
-if test( "one function key per rectangle, written in its own title" ):
+if test( "F2 and F3 turn the page, and tab walks the rectangles" ):
     with tempfile.TemporaryDirectory() as tmp:
         project = a_project( tmp )
         term = start_tui( project )
         try:
             until( term, "test_demo.py" )
-            # The key is written where it takes you, so nothing has to be
-            # remembered and nothing has to be cycled through.
-            first = term.frame()
-            assert "F1 cases" in first and "F2 about" in first, first
-
-            term.send( fkey( 4 ) )              # straight to `files`, another page
-            files = term.frame()
-            assert "[runs]" in files and "F4 files" in files, files
-
-            term.send( fkey( 1 ) )              # and straight back
+            assert "[cases]" in term.frame(), term.frame()
+            term.send( fkey( 3 ) )             # the page after
+            assert "[runs]" in term.frame(), term.frame()
+            term.send( fkey( 2 ) )             # and the one before
             assert "[cases]" in term.frame(), term.frame()
             # tab stays on the page it is on: it is a neighbour, not a journey.
             term.send( "\t" ); term.send( "\t" )
@@ -199,13 +193,19 @@ if test( "typing is a search, and the best answer comes first" ):
             assert "run: slow" in term.text(), term.text()
             term.send( "\x1b", settle = 1.0 )
 
-            # esc lets go of the search without throwing it away: the list
-            # stays narrowed while you walk it and tick.
-            term.send( "\x1b" )
-            term.send( " " )
+            # While a search is on, space is a word separator -- so the tick is
+            # ctrl-space, and it works on the narrowed list.
+            term.send( "\x00" )
             ticked = term.frame()
             assert "[x] slow" in ticked, ticked
             assert "find: sl" in ticked, "what was typed is still there"
+
+            # And esc starts by clearing what was typed: a filter is the thing
+            # you most want gone, and it was the hardest to get rid of.
+            term.send( "\x1b" )
+            cleared = term.frame()
+            assert "find: sl" not in cleared, cleared
+            assert "case_00" in cleared, cleared
         finally:
             term.close()
 
@@ -228,7 +228,35 @@ if test( "runs and history are one list, and a command runs again", tags = [ "sl
             opened = term.text()
             assert "ok" in opened and "quick" in opened, opened
 
-            term.send( "r" )               # and again
+            term.send( fkey( 5 ) )         # the last command, again
             until( term, "1 ok", 90 )
+        finally:
+            term.close()
+
+
+if test( "the runs are searched too, by their command", tags = [ "slow" ] ):
+    with tempfile.TemporaryDirectory() as tmp:
+        project = a_project( tmp )
+        for case in ( "quick", "slow" ):
+            code, output = run_errand( project, f"test_demo::{case}" )
+            assert code == 0, output
+
+        term = start_tui( project )
+        try:
+            until( term, "test_demo.py" )
+            term.send( fkey( 3 ) )
+            both = term.frame()
+            assert "test_demo::quick" in both and "test_demo::slow" in both, both
+
+            # A history is only useful once one line of it can be found.
+            term.send( "slo" )
+            found = term.frame()
+            assert "find: slo" in found, found
+            assert "test_demo::slow" in found, found
+            assert "test_demo::quick" not in found, found
+
+            # And the search of one page is not the search of the other.
+            term.send( fkey( 2 ) )
+            assert "find: slo" not in term.frame(), term.frame()
         finally:
             term.close()

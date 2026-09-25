@@ -418,6 +418,8 @@ screen, which is the same thing.
 name: cost
 file: bench/solvers.py
 line: 42
+kind: bench
+date: 2026-09-25T18:04:11+02:00     # the directory carries the day; this says when
 env: gpu
 place: gpu@gpu-box
 host: gpu-box
@@ -431,6 +433,10 @@ tags: { driver: jax, fp: "64" }
 results: { seconds: 12.406, iterations: 31 }
 output_file: output.txt
 ```
+
+The directory is dated to the **day** — that is what a path can carry and stay readable — so the
+record carries the hour, with the offset it was written under. Two runs of the same case on the same
+day land in the same directory, and `date` is what tells them apart.
 
 Write anything else you like into the same directory — an `.svg`, a `.vtu`, a folder of frames.
 
@@ -535,25 +541,24 @@ errand --tui
 keep track of: one rectangle is active, the arrows drive it, and clicking one selects it; the wheel
 scrolls whatever is under the pointer and changes nothing else.
 
-**One function key per rectangle, written in the rectangle's own title** — `F1 cases`, `F2 about`,
-`F3 runs`, `F4 files`, `F5 preview`. Going somewhere is one press from anywhere, the page following
-along; nothing has to be remembered, since the key is written where it takes you, and nothing has to
-be cycled through, since pressing one key until you arrive is not going anywhere. `tab` is the next
-rectangle *of this page*, for when the one you want is next door.
+**`tab` walks the rectangles of the page; the function keys are the verbs.** What you type is the
+search, on either page — so the letters are spoken for, and a verb belongs on a key nothing else can
+claim. `F2` and `F3` are the page before and the page after: two pages, two keys side by side,
+nothing to aim at, only a direction.
 
 | | | | |
 |---|---|---|---|
-| `F1` `F2` | cases · about | `F6` | read the project again |
-| `F3` `F4` `F5` | runs · files · preview | `F7` `F8` | run that command again · interrupt |
-| `F10` | these keys | `F9` | open the file under the cursor |
-| `F12` | leave | `r` `o` `x` `q` | the same four, on the runs page |
+| `F1` | these keys | `F5` `F6` | run the last command again · the one under the cursor |
+| `F2` `F3` | the page before · after | `F7` `F8` | interrupt what is running · open the file |
+| `tab` | the next rectangle | `F9` | read the project again |
+| `esc` | clear the search, then leave | `F12` | leave |
 
 ### cases — what do I run
 
 ```
  [cases]   runs                                      errand · myproject · idle
  find: shp gpu_
- ╭─ F1 cases  3 found ───────────────────╮╭─ F2 solve ──────────────────────────╮
+ ╭─ cases  3 found ──────────────────────╮╭─ solve ─────────────────────────────╮
  │   solve            bench/shapes.py:42 ││ bench/shapes.py:42                  │
  │   solve_coarse     bench/shapes.py:61 ││ kind: bench                         │
  │   shape_gradient   tests/geometry.py:9││ tags: gpu, slow                     │
@@ -567,7 +572,7 @@ rectangle *of this page*, for when the one you want is next door.
                                           │   12.4s                             │
                                           │   seconds = 12.406                  │
                                           ╰─────────────────────────────────────╯
- type to search · enter runs · space ticks · F3 runs · F10 keys · F12 quit
+ type to search · enter runs it · space ticks · tab next box · F3 runs · F1 keys
 ```
 
 **Typing is the search** — there is no key to press first, because finding one case among three
@@ -581,8 +586,13 @@ Several words all have to be found, each possibly in a different place: `shp gpu
 name looks like shp **and** whose tags or file say gpu". Adding a word narrows; you never have to
 rewrite what you typed.
 
-`esc` lets go of the search *without throwing it away* — the list stays narrowed while you walk it
-with the arrows and tick several with space. A second `esc` clears it; a third leaves.
+**`esc` clears what you typed**, and only then leaves: a filter is the thing you most want gone, and
+it should not be the hardest to get rid of. While a search is on, space is a word separator, so the
+tick is `ctrl-space` — or a click straight on the box.
+
+**The runs page is searched the same way**, over the commands: a history is only useful once one
+line of it can be found. The two searches are separate, so the one you keep on `cases` is still
+there when you come back from looking at `runs`.
 
 With nothing typed, the cases are **a tree of directories and files**, because that is the shape
 the work has: a project is a layout before it is a list, and the directory is how you remember where
@@ -597,12 +607,13 @@ somebody else ran it.
 
 ```
  cases   [runs]                                   errand · myproject · running
- ╭─ F3 runs ─────────────────────────────╮╭─ F4 files ──────────────────────────╮
+ find: a command
+ ╭─ runs ────────────────────────────────╮╭─ files ─────────────────────────────╮
  │ ▾ errand shapes --n 1e3,5e3       4/8 ││   shape.svg                 12.1 kB │
  │   ok    solve  n=1000  [local]        ││   result.yaml                 512 B │
  │   ok    solve  n=1000  [gpu]          ││   output.txt                 1.2 kB │
  │   ..    solve  n=5000  [local]        │╰─────────────────────────────────────╯
- │ ▸ errand -k bench --fp 32       6 ok  │╭─ F5 output.txt ─────────────────────╮
+ │ ▸ errand -k bench --fp 32       6 ok  │╭─ output.txt ────────────────────────╮
  │ ▸ errand tests --n 10           1 ok  ││ iteration 41   residual 3.1e-07     │
  ╰───────────────────────────────────────╯│ iteration 42   residual 1.9e-07     │
                                           ╰─────────────────────────────────────╯
@@ -610,12 +621,12 @@ somebody else ran it.
 
 **Runs and history are one list**, because they are one thing: a command, and what it produced.
 Today's is at the top and still moving, yesterday's is three rows down, and both read the same way —
-both are read out of the output tree rather than remembered. Fold one open to see its cases; `F7`
-runs it again.
+both are read out of the output tree rather than remembered. Fold one open to see its cases; `F6`
+runs it again, and `F5` runs the last one again from either page.
 
 Facing them: the files a run wrote, and below, the one under the cursor. Text is shown as text —
 `output.txt` follows the run as it is written — and anything else says what it is and how big.
-Enter or `F9` hands it to the desktop (`xdg-open`, `open`), so an experiment's `.svg` is two keys
+Enter or `F8` hands it to the desktop (`xdg-open`, `open`), so an experiment's `.svg` is two keys
 from the case that produced it.
 
 ### asking where
@@ -659,14 +670,14 @@ of saying so.
 
 | | |
 |---|---|
-| `F1`…`F12` | one per rectangle, and one per thing to do — see above |
+| `F1`…`F12` | one per thing to do — see the table above |
 | `tab` | the next rectangle of this page |
-| typing | on `cases`, the search |
+| typing | the search, on either page |
 | arrows, click, wheel | move · choose and activate · scroll what is under the pointer |
-| space | tick a case (once `esc` has let go of the search), or fold |
+| space | tick a case, or fold — `ctrl-space` while a search is on |
 | enter | cases: ask where · runs: its files · files: open it |
-| `esc` | cases: let go of the search, then clear it, then leave · runs: back to cases |
-| `F6`, `F10`, `F12` | read the project again · the keys · leave |
+| `esc` | clear the search, then leave |
+| `F9`, `F1`, `F12` | read the project again · the keys · leave |
 
 A run started from the screen belongs to the screen, so leaving is refused while one is going —
 `detach` is how work is meant to outlive a window.

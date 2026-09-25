@@ -109,3 +109,23 @@ if test( "a value that never meant to be written degrades instead of crashing" )
         def __repr__( self ): return "<opaque>"
 
     assert R._plain( { "x": Opaque() } ) == { "x": "<opaque>" }
+
+
+if test( "the record says when, and not only which day" ):
+    import datetime
+
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path( tmp )
+        e = an_entry()
+        leaf, _ = R.dirs_for( out, e, { }, "host" )
+        leaf.mkdir( parents = True )
+        data = R.write_result( leaf, entry = e, root = out, env_name = "default",
+                               where = "host", tags = { }, status = "PASS", error = None,
+                               duration_s = 1.0, ram = 1.0, params = { }, results = { },
+                               output_text = "", version = "t" )
+        # The directory carries the day -- that is all a path can carry and stay
+        # readable -- so the record has to carry the hour, with its offset.
+        when = datetime.datetime.fromisoformat( data[ "date" ] )
+        assert when.tzinfo is not None, data[ "date" ]
+        assert abs( ( datetime.datetime.now().astimezone() - when ).total_seconds() ) < 120
+        assert R.yamlish.read( leaf / R.RESULT )[ "date" ] == data[ "date" ]

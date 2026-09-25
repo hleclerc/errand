@@ -34,6 +34,17 @@ def today( ) -> str:
     return datetime.datetime.now( datetime.timezone.utc ).date().isoformat()
 
 
+def now( ) -> str:
+    """When it ran, to the second, with the offset it was written under.
+
+    The directory is dated to the DAY, which is what a path can carry without
+    becoming unreadable; the record says the rest. Two runs of the same case on
+    the same day are two lines in the same directory, and the only way to tell
+    which came first is this field.
+    """
+    return datetime.datetime.now().astimezone().isoformat( timespec = "seconds" )
+
+
 def slug( s ) -> str:
     return "".join( c if c.isalnum() or c in "-_." else "_" for c in str( s ) ).strip( "_" ) or "_"
 
@@ -145,6 +156,7 @@ def write_result( leaf: Path, *, entry, root, env_name, where, tags, status, err
         "file"       : _under( entry.file, root ),
         "line"       : entry.line,
         "kind"       : entry.kind,
+        "date"       : now(),
         "env"        : env_name,
         "place"      : where,
         "host"       : socket.gethostname().split( "." )[ 0 ],
