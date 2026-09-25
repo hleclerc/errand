@@ -16,7 +16,7 @@ from errand import test
 
 from _demo import UNREADABLE, WORK, a_project
 from _infra import run_errand
-from _tty import DOWN, HOME, click, plain, start_tui, wheel
+from _tty import DOWN, HOME, click, fkey, plain, start_tui, wheel
 
 MANY = "from errand import test\n\n" + "\n".join(
     f"if test( 'case_{i:02}' ):\n    pass\n" for i in range( 60 ) )
@@ -84,20 +84,26 @@ if test( "the directories are the tree, and a lonely one costs no row" ):
             term.close()
 
 
-if test( "tab goes to the next rectangle, and the page follows it" ):
+if test( "one function key per rectangle, written in its own title" ):
     with tempfile.TemporaryDirectory() as tmp:
         project = a_project( tmp )
         term = start_tui( project )
         try:
             until( term, "test_demo.py" )
-            # Two rectangles here, three over there, in one ring: tab is never
-            # a page switch you have to think about, only the next box.
-            term.send( "\t" )                  # `about`, still the cases page
+            # The key is written where it takes you, so nothing has to be
+            # remembered and nothing has to be cycled through.
+            first = term.frame()
+            assert "F1 cases" in first and "F2 about" in first, first
+
+            term.send( fkey( 4 ) )              # straight to `files`, another page
+            files = term.frame()
+            assert "[runs]" in files and "F4 files" in files, files
+
+            term.send( fkey( 1 ) )              # and straight back
             assert "[cases]" in term.frame(), term.frame()
-            term.send( "\t" )                  # off the end: `runs`
-            assert "[runs]" in term.frame(), term.frame()
-            term.send( "\t" ); term.send( "\t" ); term.send( "\t" )
-            assert "[cases]" in term.frame(), "the ring comes back round"
+            # tab stays on the page it is on: it is a neighbour, not a journey.
+            term.send( "\t" ); term.send( "\t" )
+            assert "[cases]" in term.frame(), term.frame()
         finally:
             term.close()
 
@@ -114,7 +120,9 @@ if test( "enter on a case asks where, and runs it", tags = [ "slow" ] ):
             assert "run: quick" in asked, asked
             # Where, with which tags, with which parameters -- and not WHICH
             # CASE, which was the list enter was pressed in.
-            assert "environments" in asked and "plain" in asked and "--fp" in asked, asked
+            assert "env" in asked and "[ ] plain" in asked and "--fp" in asked, asked
+            # One line each: the flag, the boxes to tick, what it means.
+            assert "[ ] 32" in asked and "[ ] 64" in asked, asked
             assert "errand test_demo::quick" in asked, asked
 
             term.send( "\n" )              # and run it
@@ -211,7 +219,7 @@ if test( "runs and history are one list, and a command runs again", tags = [ "sl
         term = start_tui( project )
         try:
             until( term, "test_demo.py" )
-            term.send( "\t" ); term.send( "\t" )   # past `about`, into the runs page
+            term.send( fkey( 3 ) )         # to the runs page
             shown = term.text()
             # A command typed in a shell is in the same list as one run here.
             assert "test_demo::quick --env other" in shown, shown

@@ -4,17 +4,21 @@ Drawn with the curses of the standard library, so errand still installs with
 nothing at all. Everything that is not drawing is in `session.py`, which has no
 screen in it and is tested without a terminal.
 
-**There is no focus to manage.** One pane is active, the arrows drive it, tab
-goes to the next, and clicking a pane makes it the active one. The wheel
-scrolls whatever is under the pointer and changes nothing else -- which is what
-a wheel is for.
+**There is no focus to manage.** One pane is active, the arrows drive it, and
+clicking a pane selects it. The wheel scrolls whatever is under the pointer and
+changes nothing else -- which is what a wheel is for.
 
-    ╭─ cases ──────────────────╮╭─ files ──────────────────────╮
+**One function key per rectangle, written in its own title**: F1 cases, F2
+about, F3 runs, F4 files, F5 preview. One press from anywhere, and the page
+follows -- a key written where it takes you has to be neither remembered nor
+cycled through.
+
+    ╭─ F1 cases ───────────────╮╭─ F4 files ───────────────────╮
     │ ▾ bench_solver.py        ││   shape.svg         12.1 kB  │
     │   [x] solve              ││   result.yaml          512 B │
     │   [ ] gradient           ││   output.txt         1.2 kB  │
     ╰──────────────────────────╯╰──────────────────────────────╯
-    ╭─ runs ───────────────────╮╭─ output.txt ─────────────────╮
+    ╭─ F3 runs ────────────────╮╭─ F5 output.txt ──────────────╮
     │ ▾ errand bench_solver    ││ iteration 41  residual 3e-07 │
     │   ok   solve  n=1000     ││ iteration 42  residual 2e-07 │
     │   ..   solve  n=5000     ││                              │
@@ -30,6 +34,7 @@ which parameters. Not *which case*: that was the list enter was pressed in.
 """
 from __future__ import annotations
 
+import contextlib
 import curses
 import os
 import time
@@ -55,6 +60,16 @@ PRESSED = ( curses.BUTTON1_PRESSED | curses.BUTTON1_CLICKED
 C_TITLE, C_ACTIVE, C_DIM, C_OK, C_BAD, C_WARN = 1, 2, 3, 4, 5, 6
 
 PAGES = ( "cases", "runs" )
+
+# **One key per rectangle, and it says so in the rectangle's own title.** There
+# are twelve function keys and five rectangles: going somewhere is one press,
+# from anywhere, and nothing has to be cycled through to be reached.
+def _f( n ):
+    return curses.KEY_F0 + n
+
+
+JUMP = { 1: ( "cases", 0 ), 2: ( "cases", 1 ),
+         3: ( "runs", 0 ), 4: ( "runs", 1 ), 5: ( "runs", 2 ) }
 
 # Set when something is READING the screen rather than looking at it: every
 # frame is then painted in full, instead of ncurses sending only the cells that
@@ -152,8 +167,9 @@ class Row:
 class Pane:
     """A titled box of rows, with its own cursor and its own scroll."""
 
-    def __init__( self, name, title ):
+    def __init__( self, name, title, hotkey = "" ):
         self.name, self.title = name, title
+        self.hotkey = hotkey              # written in the title: one press, from anywhere
         self.rows   : list = [ ]
         self.cursor = 0
         self.top    = 0
@@ -293,147 +309,218 @@ def _colour( row ):
 
 
 def draw_pane( win, pane, active ):
-    draw_box( win, pane.box, pane.title, active )
+    draw_box( win, pane.box, f"{pane.hotkey} {pane.title}" if pane.hotkey else pane.title,
+              active )
     draw_rows( win, pane.rows, ( pane.top, pane.cursor ), pane.inner, active, pane.plain )
 
 
 # ── the dialog ───────────────────────────────────────────────────────────────
+
+class Chip:
+    """A thing to tick, sitting on the line of the flag it belongs to."""
+
+    __slots__ = ( "label", "data", "checked", "span" )
+
+    def __init__( self, label, data ):
+        self.label, self.data, self.checked = label, data, False
+        self.span = None                 # where it was drawn, so it can be clicked
+
+
+class Option:
+    """One line, always the same shape: **the flag on the left, the field in
+    the middle, what it means on the right, faded.** An eye that has read one
+    line has read them all, and a thing spread over two lines is a thing you
+    have to assemble before you can read it.
+    """
+
+    __slots__ = ( "kind", "flag", "help", "chips", "text", "ghost", "spot", "name", "y" )
+
+    def __init__( self, kind, flag, help = "", chips = ( ), ghost = "", name = None ):
+        self.kind  = kind                # "chips" | "text"
+        self.flag, self.help = flag, help
+        self.chips = list( chips )
+        self.text  = ""                  # what was TYPED, as opposed to the ghost
+        self.ghost = ghost               # what happens if nothing is
+        self.spot  = 0                   # which chip the cursor is on
+        self.name  = name                # what it is, when the command is built
+        self.y     = None                # where it was drawn
+
 
 class Dialog:
     """Where, with which tags, with which parameters -- and nothing else.
 
     Not *which case*: that was the list enter was pressed in, and a window
     asking it again would be asking a question already answered.
+
+    Everything here is one line: `--fp  [x] 32  [ ] 64      which precision`.
+    Ticking two environments and two values is four runs -- **a tick is a
+    comma**, and the window is the matrix said out loud.
     """
 
     def __init__( self, session: Session, cases ):
         self.session = session
         self.cases   = list( cases )
-        self.rows    = self._rows()
+        self.options = self._options()
         self.cursor  = 0
         self.top     = 0
-        self.first()
 
-    def _rows( self ):
+    def _options( self ):
         s = self.session
-        rows = [ ]
+        out = [ ]
         if s.envs:
-            rows.append( Row( "environments", kind = "group" ) )
-            for e in s.envs:
-                tags = " ".join( k if v is True else f"{k}={v}"
-                                 for k, v in sorted( e.tags.items() ) )
-                rows.append( Row( e.name, tags, kind = "env", data = e.name,
-                                  checked = False, depth = 1 ) )
+            out.append( Option( "chips", "--env", "two ticks is two runs",
+                                [ Chip( e.name, e.name ) for e in s.envs ], name = "env" ) )
         for name, values in sorted( s.tag_values().items() ):
-            rows.append( Row( f"--{name}", kind = "group" ) )
-            for v in values:
-                rows.append( Row( v, kind = "tag", data = ( name, v ),
-                                  checked = False, depth = 1 ) )
+            out.append( Option( "chips", f"--{name}", "only the ones that say so",
+                                [ Chip( v, ( name, v ) ) for v in values ], name = "tag" ) )
         for name, param in s.params_of( self.cases ).items():
-            rows.append( Row( f"--{name.replace( '_', '-' )}", param.help, kind = "group" ) )
+            flag = f"--{name.replace( '_', '-' )}"
             if param.choices:
-                for v in param.choices:
-                    rows.append( Row( str( v ), kind = "choice", data = ( name, str( v ) ),
-                                      checked = False, depth = 1 ) )
+                out.append( Option( "chips", flag, param.help,
+                                    [ Chip( str( v ), ( name, str( v ) ) )
+                                      for v in param.choices ], name = "choice" ) )
             else:
-                rows.append( Row( "", f"default {param.default!r}", kind = "field",
-                                  data = name, depth = 1 ) )
-        rows.append( Row( "how many at once", kind = "group" ) )
-        rows.append( Row( "1", "-j", kind = "jobs", data = "jobs", depth = 1 ) )
-        rows.append( Row( "detach, and give the shell back", "--batch",
-                          kind = "batch", data = "batch", checked = False ) )
-        return rows
+                out.append( Option( "text", flag, param.help, ghost = str( param.default ),
+                                    name = ( "param", name ) ) )
+        out.append( Option( "text", "-j", "how many at once", ghost = "1", name = "jobs" ) )
+        out.append( Option( "chips", "--batch", "outlives this window",
+                            [ Chip( "detach", "batch" ) ], name = "batch" ) )
+        return out
 
-    def first( self ):
-        for i, row in enumerate( self.rows ):
-            if row.kind != "group":
-                self.cursor = i
-                return
+    # ── what it is ───────────────────────────────────────────────────────────
+
+    def current( self ):
+        return self.options[ self.cursor ]
 
     def move( self, delta ):
-        step = 1 if delta >= 0 else -1
-        target = max( 0, min( len( self.rows ) - 1, self.cursor + delta ) )
-        while 0 <= target < len( self.rows ) and self.rows[ target ].kind == "group":
-            target += step
-        if 0 <= target < len( self.rows ):
-            self.cursor = target
+        self.cursor = max( 0, min( len( self.options ) - 1, self.cursor + delta ) )
+
+    def sideways( self, delta ):
+        option = self.current()
+        if option.kind == "chips":
+            option.spot = max( 0, min( len( option.chips ) - 1, option.spot + delta ) )
 
     def toggle( self ):
-        row = self.rows[ self.cursor ]
-        if row.checked is not None:
-            row.checked = not row.checked
+        option = self.current()
+        if option.kind == "chips" and option.chips:
+            chip = option.chips[ option.spot ]
+            chip.checked = not chip.checked
+            return True
+        return False
 
     def type( self, key ):
-        """A field is edited where it stands; there is no mode to be in."""
-        row = self.rows[ self.cursor ]
-        if row.kind not in ( "field", "jobs" ):
+        """A field is typed into where it stands; there is no mode to be in."""
+        option = self.current()
+        if option.kind != "text":
             return False
         if key in ( curses.KEY_BACKSPACE, 127, 8 ):
-            row.label = row.label[ : -1 ]
+            option.text = option.text[ : -1 ]
         elif 32 <= key < 127:
-            row.label += chr( key )
+            option.text += chr( key )
         return True
+
+    def click( self, y, x ):
+        for index, option in enumerate( self.options ):
+            if option.y != y:
+                continue
+            self.cursor = index
+            for spot, chip in enumerate( option.chips ):
+                if chip.span and chip.span[ 0 ] <= x < chip.span[ 1 ]:
+                    option.spot = spot
+                    chip.checked = not chip.checked
+            return
 
     def argv( self ):
         envs, tags, params, jobs, detach = [ ], { }, { }, 1, False
-        for row in self.rows:
-            if row.kind == "env" and row.checked:
-                envs.append( row.data )
-            elif row.kind == "tag" and row.checked:
-                tags.setdefault( row.data[ 0 ], [ ] ).append( row.data[ 1 ] )
-            elif row.kind == "choice" and row.checked:
-                params.setdefault( row.data[ 0 ], [ ] ).append( row.data[ 1 ] )
-            elif row.kind == "field" and row.label.strip():
-                params[ row.data ] = [ row.label.strip() ]
-            elif row.kind == "jobs" and row.label.strip().isdigit():
-                jobs = int( row.label.strip() )
-            elif row.kind == "batch":
-                detach = bool( row.checked )
+        for option in self.options:
+            ticked = [ c for c in option.chips if c.checked ]
+            typed  = option.text.strip()
+            if option.name == "env":
+                envs = [ c.data for c in ticked ]
+            elif option.name == "tag":
+                for c in ticked:
+                    tags.setdefault( c.data[ 0 ], [ ] ).append( c.data[ 1 ] )
+            elif option.name == "choice":
+                for c in ticked:
+                    params.setdefault( c.data[ 0 ], [ ] ).append( c.data[ 1 ] )
+            elif option.name == "batch":
+                detach = bool( ticked )
+            elif option.name == "jobs":
+                jobs = int( typed ) if typed.isdigit() else 1
+            elif typed:
+                params[ option.name[ 1 ] ] = [ typed ]
         return self.session.command( entries = self.cases, envs = envs, tags = tags,
                                      params = params, jobs = jobs, batch = detach )
 
+    # ── what it looks like ───────────────────────────────────────────────────
+
     def draw( self, win ):
         height, width = win.getmaxyx()
-        w = max( 24, min( width - 4, 78 ) )
-        h = max( 8, min( height - 2, len( self.rows ) + 5 ) )
+        w = max( 40, min( width - 4, 100 ) )
+        shown = max( 1, min( len( self.options ), height - 7 ) )
+        h = shown + 5
         y0, x0 = max( 0, ( height - h ) // 2 ), max( 0, ( width - w ) // 2 )
         for i in range( h ):
             put( win, y0 + i, x0, " " * w, w )
         title = "run: " + ", ".join( e.name for e in self.cases )
         draw_box( win, ( y0, x0, h, w ), title[ : w - 6 ], True )
 
-        page = h - 4
-        self.top = max( self.cursor - page + 1, min( self.top, self.cursor ) )
-        self.top = max( 0, min( self.top, max( 0, len( self.rows ) - page ) ) )
-        inner = ( y0 + 1, x0 + 2, page, w - 4 )
-        for i in range( page ):
+        self.top = max( self.cursor - shown + 1, min( self.top, self.cursor ) )
+        self.top = max( 0, min( self.top, len( self.options ) - shown ) )
+
+        # Three columns, the same three on every line.
+        flagw = max( len( o.flag ) for o in self.options )
+        helpw = min( max( ( len( o.help ) for o in self.options ), default = 0 ), w // 3 )
+        left  = x0 + 2
+        field = left + flagw + 2
+        helpx = x0 + w - 2 - helpw
+        room  = max( 8, helpx - field - 2 )
+
+        spot = None
+        for option in self.options:
+            option.y = None
+        for i in range( shown ):
             index = self.top + i
-            if index >= len( self.rows ):
+            if index >= len( self.options ):
                 break
-            row = self.rows[ index ]
-            attr = curses.A_REVERSE if index == self.cursor else 0
-            lead = "  " * row.depth
-            if row.checked is not None:
-                lead += "[x] " if row.checked else "[ ] "
-            elif row.kind in ( "field", "jobs" ):
-                lead += "  "
-            text = lead + ( row.label or "" )
-            if row.kind in ( "field", "jobs" ) and index == self.cursor:
-                text += "_"
-            put( win, inner[ 0 ] + i, inner[ 1 ], text.ljust( inner[ 3 ] )[ : inner[ 3 ] ],
-                 inner[ 3 ], attr | _colour( row ) )
-            if row.detail:
-                room = inner[ 3 ] - len( text ) - 2
-                if room > 4:
-                    shown = row.detail[ : room ]
-                    put( win, inner[ 0 ] + i, inner[ 1 ] + inner[ 3 ] - len( shown ), shown,
-                         len( shown ), attr | curses.color_pair( C_DIM ) )
-        # Said once, small, out of the way: what this window is about to do --
-        # not a prompt, and nobody is being asked to type it.
-        put( win, y0 + h - 3, x0 + 2, self.session.as_line( self.argv() )[ : w - 4 ], w - 4,
-             curses.color_pair( C_DIM ) )
-        put( win, y0 + h - 2, x0 + 2, "space ticks   enter runs   esc gives up", w - 4,
-             curses.color_pair( C_DIM ) )
+            option, y = self.options[ index ], y0 + 1 + i
+            option.y  = y
+            here = index == self.cursor
+            put( win, y, x0 + 1, "›" if here else " ", 1,
+                 curses.color_pair( C_ACTIVE ) | curses.A_BOLD )
+            put( win, y, left, option.flag, flagw,
+                 curses.color_pair( C_TITLE ) | ( curses.A_BOLD if here else 0 ) )
+            if option.kind == "chips":
+                at = field
+                for index_chip, chip in enumerate( option.chips ):
+                    text = f"[{'x' if chip.checked else ' '}] {chip.label}"
+                    attr = curses.color_pair( C_OK ) if chip.checked else 0
+                    if here and index_chip == option.spot:
+                        attr |= curses.A_REVERSE
+                    put( win, y, at, text, max( 0, helpx - at - 1 ), attr )
+                    chip.span = ( at, at + len( text ) )
+                    at += len( text ) + 2
+            elif option.text:
+                # What was typed stands out from what would happen anyway.
+                put( win, y, field, option.text[ : room ], room, curses.A_BOLD )
+                spot = ( y, field + min( len( option.text ), room ) ) if here else spot
+            else:
+                put( win, y, field, option.ghost[ : room ], room, curses.color_pair( C_DIM ) )
+                spot = ( y, field ) if here else spot
+            if option.help:
+                put( win, y, helpx, option.help[ : helpw ], helpw, curses.color_pair( C_DIM ) )
+
+        # Said once, at the bottom, in its own colour: not a prompt, nobody is
+        # being asked to type it -- it is what this window is about to do.
+        put( win, y0 + h - 3, x0 + 2, "─" * ( w - 4 ), w - 4, curses.color_pair( C_DIM ) )
+        put( win, y0 + h - 2, x0 + 2, self.session.as_line( self.argv() )[ : w - 4 ], w - 4,
+             curses.color_pair( C_OK ) | curses.A_BOLD )
+        # A cursor that blinks where a field is is the only way of saying "type
+        # here" that nobody has to be taught.
+        curses.curs_set( 1 if spot else 0 )
+        if spot:
+            with contextlib.suppress( curses.error ):
+                win.move( *spot )
 
 
 # ── the screen ───────────────────────────────────────────────────────────────
@@ -441,12 +528,12 @@ class Dialog:
 class Screen:
     def __init__( self, session: Session ):
         self.session = session
-        self.cases   = Pane( "cases", "cases" )
-        self.about   = Pane( "about", "about" )
+        self.cases   = Pane( "cases", "cases", "F1" )
+        self.about   = Pane( "about", "about", "F2" )
         self.about.plain = True
-        self.runs    = Pane( "runs", "runs" )
-        self.files   = Pane( "files", "files" )
-        self.look    = Pane( "look", "preview" )
+        self.runs    = Pane( "runs", "runs", "F3" )
+        self.files   = Pane( "files", "files", "F4" )
+        self.look    = Pane( "look", "preview", "F5" )
         self.look.plain = True
         # Two pages, because they answer two questions: WHAT DO I RUN, and
         # WHAT CAME OF IT. Putting both on one screen made each of them half a
@@ -465,6 +552,7 @@ class Screen:
         self.message = ""
         self.past    : dict = { }      # command -> ( plan, states )
         self.looked  = 0.0
+        self.dirty   = False           # a key changed what the lists hold
         self.help    = False
 
     # ── the lists ────────────────────────────────────────────────────────────
@@ -694,17 +782,21 @@ class Screen:
         self.page, self.active = page, 0
 
     def step( self, delta ):
-        """tab goes to the NEXT RECTANGLE, which is what a tab does everywhere.
+        """tab goes to the next rectangle OF THIS PAGE, and stays there.
 
-        A page is not a mode to be switched: it is wherever the rectangle you
-        are in happens to live. So tabbing off the last rectangle of `cases`
-        lands in `runs` and the screen follows, and nobody has to hold two
-        ideas -- which pane, and which page -- to move one step.
+        It used to run off the end into the other page; going somewhere by
+        pressing the same key until you arrive is not going somewhere. The
+        function keys are how you leave: one per rectangle, written in its
+        title, one press from wherever you are.
         """
-        ring = [ ( page, i ) for page in PAGES for i in range( len( self.pages[ page ] ) ) ]
-        here = ( self.page, min( self.active, len( self.panes ) - 1 ) )
-        at = ring.index( here ) if here in ring else 0
-        self.page, self.active = ring[ ( at + delta ) % len( ring ) ]
+        self.active = ( self.active + delta ) % len( self.panes )
+
+    def open_file( self ):
+        row = self.files.current()
+        if row is not None and row.kind == "file":
+            self.message = S.open_file( row.data ) or f"opening {row.data.name}"
+        else:
+            self.message = "no file under the cursor"
 
     def fold( self, row ):
         if row.data[ 0 ] == "node":
@@ -744,9 +836,7 @@ class Screen:
             else:
                 self.active = self.panes.index( self.files )   # its files are next
         elif pane in ( self.files, self.look ):
-            target = self.files.current()
-            if target is not None and target.kind == "file":
-                self.message = S.open_file( target.data ) or f"opening {target.data.name}"
+            self.open_file()
 
     def run_again( self ):
         row = self.runs.current()
@@ -829,25 +919,25 @@ def _summary( states ):
 # ── the loop ─────────────────────────────────────────────────────────────────
 
 HINTS = {
-    "cases": "type to search   enter run   space tick   tab next pane   esc quit",
-    "runs" : "enter files   r again   o open   x stop   tab next pane   q quit",
+    "cases": "type to search · enter runs · space ticks · F3 runs · F10 keys · F12 quit",
+    "runs" : "enter files · F7 again · F9 open · F8 stop · F1 cases · F10 keys · F12 quit",
 }
 
 KEYS = [
-    ( "tab",    "the next rectangle -- and the page follows it" ),
+    ( "F1 F2",  "cases · about: what the case under the cursor is" ),
+    ( "F3 F4 F5", "runs · its files · the file under the cursor" ),
+    ( "F6",     "read the project again" ),
+    ( "F7 F8",  "run that command again · interrupt what is running" ),
+    ( "F9",     "open the file under the cursor, as the desktop would" ),
+    ( "F10 F12", "these keys · leave" ),
     ( "typing", "on `cases`, goes straight into the search" ),
-    ( "arrows", "move in the active rectangle; shift-tab is the way back" ),
-    ( "click",  "choose, and make that pane the active one" ),
+    ( "arrows", "move in the active rectangle; tab is the next one of this page" ),
+    ( "click",  "choose a row, and that rectangle becomes the active one" ),
     ( "wheel",  "scroll whatever is under the pointer" ),
     ( "space",  "tick a case ( once esc has let go of the search ), or fold" ),
     ( "enter",  "cases: ask where to run · runs: its files · files: open it" ),
-    ( "esc",    "cases: let go of the search, clear it, leave · runs: back to cases" ),
-    ( "click",  "a page name at the top goes straight to that page" ),
-    ( "r",      "run the command under the cursor again" ),
-    ( "o",      "open the file under the cursor" ),
-    ( "x",      "interrupt what is running" ),
-    ( "ctrl-r", "read the project again" ),
-    ( "q",      "leave, from the runs page" ),
+    ( "esc",    "cases: let go of the search, then clear it, then leave" ),
+    ( "r o x q", "the same as F7 F9 F8 F12, on the runs page" ),
 ]
 
 
@@ -899,26 +989,31 @@ def draw( win, screen: Screen ):
         put( win, 1, 7, typed.ljust( width - 9 )[ : width - 9 ], width - 9,
              curses.A_BOLD if screen.typing else 0 )
 
-    hint = screen.message or ( HINTS[ screen.page ] if not screen.typing else
-                               "enter runs the first one · esc keeps what you typed and lets go" )
+    hint = screen.message or (
+        "space ticks · ←→ picks · type into a field · enter runs · esc gives up"
+        if screen.dialog is not None else
+        "enter runs the first one · esc keeps what you typed and lets go"
+        if screen.typing else HINTS[ screen.page ] )
     put( win, height - 1, 0, hint.ljust( width - 1 )[ : width - 1 ], width - 1,
          curses.color_pair( C_WARN ) if screen.message else curses.color_pair( C_DIM ) )
     if screen.dialog is not None:
         screen.dialog.draw( win )
-    elif screen.help:
-        _help( win, height, width )
+    else:
+        curses.curs_set( 0 )
+        if screen.help:
+            _help( win, height, width )
     win.noutrefresh()
     curses.doupdate()
 
 
 def _help( win, height, width ):
-    w, h = min( width - 4, 66 ), len( KEYS ) + 4
+    w, h = min( width - 4, 78 ), len( KEYS ) + 4
     y0, x0 = max( 0, ( height - h ) // 2 ), max( 0, ( width - w ) // 2 )
     for i in range( h ):
         put( win, y0 + i, x0, " " * w, w, curses.A_REVERSE )
     put( win, y0 + 1, x0 + 2, "keys", w - 4, curses.A_REVERSE | curses.A_BOLD )
     for i, ( key, what ) in enumerate( KEYS ):
-        put( win, y0 + 2 + i, x0 + 2, f"{key:<7} {what}", w - 4, curses.A_REVERSE )
+        put( win, y0 + 2 + i, x0 + 2, f"{key:<10} {what}", w - 4, curses.A_REVERSE )
     put( win, y0 + h - 1, x0 + 2, "any key closes this", w - 4, curses.A_REVERSE )
 
 
@@ -939,10 +1034,14 @@ def loop( win, screen: Screen ):
 
     while True:
         now = time.time()
-        if now - screen.looked > LOOK:
-            screen.looked = now
-            if screen.session.plan:
-                screen.session.look()
+        # Twice a second by itself, and at once after a key: a fold or a tick
+        # that waited for the next tick to show would feel like a lost press.
+        if now - screen.looked > LOOK or screen.dirty:
+            screen.dirty = False
+            if now - screen.looked > LOOK:
+                screen.looked = now
+                if screen.session.plan:
+                    screen.session.look()
             screen.build_cases()
             screen.build_runs()
         screen.build_about()
@@ -963,6 +1062,7 @@ def loop( win, screen: Screen ):
             continue
 
         screen.message = ""
+        screen.dirty   = True
         answer = _common( screen, key )
         if answer is None:
             answer = ( _cases_key if screen.page == "cases" else _runs_key )( screen, key )
@@ -1000,7 +1100,7 @@ def _common( screen: Screen, key ):
         pane.cursor = max( 0, len( pane.rows ) - 1 )
         pane.reveal()
     elif key in ( 9, ord( "\t" ) ):
-        screen.step( 1 )
+        screen.step( 1 )         # the next rectangle OF THIS PAGE
     elif key == curses.KEY_BTAB:
         screen.step( -1 )
     elif key in ( 10, 13, curses.KEY_ENTER ):
@@ -1013,10 +1113,20 @@ def _common( screen: Screen, key ):
         row = pane.current()
         if row is not None and row.open:
             screen.fold( row )
-    elif key in ( curses.KEY_F5, 18 ):                   # ctrl-r
+    elif key in ( _f( 6 ), 18 ):                         # ctrl-r
         screen.reread()
-    elif key == curses.KEY_F1:
+    elif key == _f( 7 ):
+        screen.run_again()
+    elif key == _f( 8 ):
+        screen.message = screen.session.stop() or "interrupted"
+    elif key == _f( 9 ):
+        screen.open_file()
+    elif key == _f( 10 ):
         screen.help = True
+    elif key == _f( 12 ):
+        return "quit"
+    elif any( key == _f( n ) for n in JUMP ):
+        screen.page, screen.active = JUMP[ key - curses.KEY_F0 ]
     else:
         return None
     return ""
@@ -1059,13 +1169,9 @@ def _runs_key( screen: Screen, key ):
     elif key == ord( "r" ):
         screen.run_again()
     elif key == ord( "o" ):
-        row = screen.files.current()
-        if row is not None and row.kind == "file":
-            screen.message = S.open_file( row.data ) or f"opening {row.data.name}"
+        screen.open_file()
     elif key == ord( "x" ):
         screen.message = screen.session.stop() or "interrupted"
-    elif key == ord( "d" ):
-        screen.reread()
     elif key == ord( "?" ):
         screen.help = True
     return ""
@@ -1078,12 +1184,27 @@ def _dialog_key( screen: Screen, key ):
     elif key in ( 10, 13, curses.KEY_ENTER ):
         screen.dialog = None
         screen.launch( dialog.argv() )
-    elif key == curses.KEY_DOWN:
+    elif key == curses.KEY_MOUSE:
+        try:
+            _, x, y, _, state = curses.getmouse()
+        except curses.error:
+            return
+        if state & PRESSED:
+            dialog.click( y, x )
+        elif state & WHEEL_UP:
+            dialog.move( -1 )
+        elif state & WHEEL_DOWN:
+            dialog.move( 1 )
+    elif key in ( curses.KEY_DOWN, 9 ):
         dialog.move( 1 )
-    elif key == curses.KEY_UP:
+    elif key in ( curses.KEY_UP, curses.KEY_BTAB ):
         dialog.move( -1 )
-    elif key == ord( " " ) and dialog.rows[ dialog.cursor ].checked is not None:
-        dialog.toggle()
+    elif key == curses.KEY_RIGHT:
+        dialog.sideways( 1 )
+    elif key == curses.KEY_LEFT:
+        dialog.sideways( -1 )
+    elif key == ord( " " ) and dialog.toggle():
+        pass
     else:
         dialog.type( key )
 

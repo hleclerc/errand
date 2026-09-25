@@ -77,9 +77,15 @@ class Term:
         is what everything since the last clear-screen is.
         """
         self.buf = ""
-        self.read( seconds )
+        end = time.time() + max( seconds, 3.0 )
+        while time.time() < end:
+            self.read( 0.3 )
+            if self.buf.count( "\x1b[2J" ) >= 2:
+                break
         parts = self.buf.split( "\x1b[2J" )
-        return plain( parts[ -1 ] if len( parts ) > 1 else self.buf )
+        # The LAST piece is whatever has been painted so far, which may be half
+        # a screen; the one before it sits between two clears, so it is whole.
+        return plain( parts[ -2 ] if len( parts ) >= 3 else parts[ -1 ] )
 
     def text( self, seconds = 1.0 ):
         """What the program wrote over the next second, escapes removed.
@@ -112,6 +118,20 @@ def plain( data ):
     the screen shows was written to it in one piece.
     """
     return ESCAPE.sub( "", data )
+
+
+def fkey( n, term_name = "xterm-256color" ):
+    """What this terminal sends for F<n>, asked of the TERMINFO.
+
+    `kf1` is `\x1bOP` here and `\x1b[[A` elsewhere; a test that hard-coded one
+    of them would be testing a terminal rather than the screen.
+    """
+    import curses
+    try:
+        curses.setupterm( term_name, ( sys.__stdout__ or sys.stdout ).fileno() )
+        return ( curses.tigetstr( f"kf{n}" ) or b"" ).decode( "latin-1" )
+    except Exception:
+        return ""
 
 
 def tui_env( project: Path ):

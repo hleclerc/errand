@@ -532,20 +532,28 @@ errand --tui
 ```
 
 **Two pages**, because there are two questions: *what do I run*, and *what came of it*. No focus to
-keep track of: one rectangle is active, the arrows drive it, **`tab` goes to the next rectangle**,
-and clicking one makes it the active one; the wheel scrolls whatever is under the pointer and
-changes nothing else.
+keep track of: one rectangle is active, the arrows drive it, and clicking one selects it; the wheel
+scrolls whatever is under the pointer and changes nothing else.
 
-A page is not a mode to switch — it is *wherever the rectangle you are in happens to live*. The two
-rectangles of `cases` and the three of `runs` are one ring, so tabbing off the end of one page lands
-on the next and the screen follows; clicking a page name at the top goes straight there.
+**One function key per rectangle, written in the rectangle's own title** — `F1 cases`, `F2 about`,
+`F3 runs`, `F4 files`, `F5 preview`. Going somewhere is one press from anywhere, the page following
+along; nothing has to be remembered, since the key is written where it takes you, and nothing has to
+be cycled through, since pressing one key until you arrive is not going anywhere. `tab` is the next
+rectangle *of this page*, for when the one you want is next door.
+
+| | | | |
+|---|---|---|---|
+| `F1` `F2` | cases · about | `F6` | read the project again |
+| `F3` `F4` `F5` | runs · files · preview | `F7` `F8` | run that command again · interrupt |
+| `F10` | these keys | `F9` | open the file under the cursor |
+| `F12` | leave | `r` `o` `x` `q` | the same four, on the runs page |
 
 ### cases — what do I run
 
 ```
  [cases]   runs                                      errand · myproject · idle
  find: shp gpu_
- ╭─ cases  3 found ──────────────────────╮╭─ solve ─────────────────────────────╮
+ ╭─ F1 cases  3 found ───────────────────╮╭─ F2 solve ──────────────────────────╮
  │   solve            bench/shapes.py:42 ││ bench/shapes.py:42                  │
  │   solve_coarse     bench/shapes.py:61 ││ kind: bench                         │
  │   shape_gradient   tests/geometry.py:9││ tags: gpu, slow                     │
@@ -559,7 +567,7 @@ on the next and the screen follows; clicking a page name at the top goes straigh
                                           │   12.4s                             │
                                           │   seconds = 12.406                  │
                                           ╰─────────────────────────────────────╯
- type to search   enter run   space tick   tab next pane   esc quit
+ type to search · enter runs · space ticks · F3 runs · F10 keys · F12 quit
 ```
 
 **Typing is the search** — there is no key to press first, because finding one case among three
@@ -589,12 +597,12 @@ somebody else ran it.
 
 ```
  cases   [runs]                                   errand · myproject · running
- ╭─ runs ────────────────────────────────╮╭─ files ─────────────────────────────╮
+ ╭─ F3 runs ─────────────────────────────╮╭─ F4 files ──────────────────────────╮
  │ ▾ errand shapes --n 1e3,5e3       4/8 ││   shape.svg                 12.1 kB │
  │   ok    solve  n=1000  [local]        ││   result.yaml                 512 B │
  │   ok    solve  n=1000  [gpu]          ││   output.txt                 1.2 kB │
  │   ..    solve  n=5000  [local]        │╰─────────────────────────────────────╯
- │ ▸ errand -k bench --fp 32       6 ok  │╭─ output.txt ────────────────────────╮
+ │ ▸ errand -k bench --fp 32       6 ok  │╭─ F5 output.txt ─────────────────────╮
  │ ▸ errand tests --n 10           1 ok  ││ iteration 41   residual 3.1e-07     │
  ╰───────────────────────────────────────╯│ iteration 42   residual 1.9e-07     │
                                           ╰─────────────────────────────────────╯
@@ -602,12 +610,12 @@ somebody else ran it.
 
 **Runs and history are one list**, because they are one thing: a command, and what it produced.
 Today's is at the top and still moving, yesterday's is three rows down, and both read the same way —
-both are read out of the output tree rather than remembered. Fold one open to see its cases; `r`
+both are read out of the output tree rather than remembered. Fold one open to see its cases; `F7`
 runs it again.
 
 Facing them: the files a run wrote, and below, the one under the cursor. Text is shown as text —
 `output.txt` follows the run as it is written — and anything else says what it is and how big.
-Enter or `o` hands it to the desktop (`xdg-open`, `open`), so an experiment's `.svg` is two keys
+Enter or `F9` hands it to the desktop (`xdg-open`, `open`), so an experiment's `.svg` is two keys
 from the case that produced it.
 
 ### asking where
@@ -616,25 +624,29 @@ Enter on a case asks the only question left: where, with which tags, with which 
 *which case*, which was the list you pressed enter in.
 
 ```
- ╭─ run: solve ───────────────────────────────────────────────────────────╮
- │ environments                                                           │
- │   [x] local                                                  driver=cpu│
- │   [x] gpu                                       cuda  driver=cuda      │
- │ --fp                                                                   │
- │   [x] 32                                                               │
- │   [x] 64                                                               │
- │ --n                                                     default 1000   │
- │   1000,5000_                                                           │
- │ [ ] detach, and give the shell back                             --batch│
- │ errand shapes::solve --env local,gpu --fp 32,64 --n 1000,5000          │
- │ space ticks   enter runs   esc gives up                                │
- ╰────────────────────────────────────────────────────────────────────────╯
+ ╭─ run: solve ──────────────────────────────────────────────────────────────────╮
+ │ › --env    [x] local   [x] gpu                      two ticks is two runs     │
+ │   --fp     [x] 32      [x] 64                    only the ones that say so    │
+ │   --n      1000,5000                                     how many points      │
+ │   -j       1                                             how many at once     │
+ │   --batch  [ ] detach                                 outlives this window    │
+ │   ─────────────────────────────────────────────────────────────────────────   │
+ │   errand shapes::solve --env local,gpu --fp 32,64 --n 1000,5000               │
+ ╰───────────────────────────────────────────────────────────────────────────────╯
+   space ticks · ←→ picks · type into a field · enter runs · esc gives up
 ```
+
+**Every line has the same three columns**: the flag on the left, the field in the middle, what it
+means on the right, faded. A thing spread over two lines is a thing you have to assemble before you
+can read it, and there is width to spare. A field shows what you **typed** in bold, or what happens
+anyway in grey, with a cursor blinking in it — which is the only way of saying *type here* that
+nobody has to be taught. Chips are ticked with space, walked with `←→`, and clicked.
 
 **Ticking two of anything is a matrix.** Two environments, two values of a tag and two of a
 parameter are eight runs — for exactly the reason a comma is, and the window builds exactly that
-comma. The line above the keys is not a prompt: it is what is about to happen, said once, so that
-the day you want it in a script you already know what to write.
+comma. Below the rule, in its own colour, is that command: not a prompt, and nobody is being asked
+to type it — it is what is about to happen, said once, so that the day you want it in a script you
+already know what to write. The keys stay on the screen's own bottom line, where they always are.
 
 **Each case's output is read from the file that case is writing**, never from a share of one pipe.
 The paths are worked out before the run starts, so the name is known in advance — which is why it
@@ -647,14 +659,14 @@ of saying so.
 
 | | |
 |---|---|
-| `tab` | the next rectangle — and the page follows it |
+| `F1`…`F12` | one per rectangle, and one per thing to do — see above |
+| `tab` | the next rectangle of this page |
 | typing | on `cases`, the search |
 | arrows, click, wheel | move · choose and activate · scroll what is under the pointer |
 | space | tick a case (once `esc` has let go of the search), or fold |
 | enter | cases: ask where · runs: its files · files: open it |
 | `esc` | cases: let go of the search, then clear it, then leave · runs: back to cases |
-| `r`, `o`, `x` | run that command again · open a file · interrupt what is running |
-| ctrl-r, F1, `q` | read the project again · the keys · leave |
+| `F6`, `F10`, `F12` | read the project again · the keys · leave |
 
 A run started from the screen belongs to the screen, so leaving is refused while one is going —
 `detach` is how work is meant to outlive a window.
