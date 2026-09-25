@@ -263,3 +263,56 @@ if test( "an image says how it is built, not only how it is entered" ):
         a = L.Apptainer( image = "c/i.sif", recipe = "c/i.def" )
         b = L.Apptainer( image = "c/i.sif", recipe = "c/i.def", fakeroot = True )
         assert L.fingerprint( *a.spec( c ) ) != L.fingerprint( *b.spec( c ) )
+
+
+if test( "over ssh, `is it there` is asked of the machine it would be built on" ):
+    # An image built on the cluster last week does not exist here; one sitting
+    # here does not exist there. Answering against the wrong filesystem means
+    # rebuilding on every command, or never building at all.
+    c = L.Context( root = Path( "/here" ) )
+    assert L.Apptainer( image = "c/i.sif" ).probe_shell( c ) == "test -e c/i.sif", \
+           L.Apptainer( image = "c/i.sif" ).probe_shell( c )
+    assert "micromamba -n demo run true" == L.Micromamba( "demo" ).probe_shell( c )
+
+    asked = [ ]
+
+    far = L.Ssh( host = "over-there", root = "/there" )
+
+    class Image:
+        def __init__( self, answer ):
+            self.answer, self.built = answer, 0
+
+        def describe( self ): return "image"
+        def spec( self, ctx ): return [ "r" ]
+        def probe( self, ctx ): return True          # here, and beside the point
+        def probe_shell( self, ctx ): return "test -e i.sif"
+
+        def build( self, ctx ):
+            self.built += 1
+            return [ "true" ]
+
+    def answering( code ):
+        def _run( step, ssh, ctx, quiet = False ):
+            asked.append( ( step, quiet ) )
+            return code if step == "test -e i.sif" else 0
+        return _run
+
+    kept, pushed = setup._run, L.push
+    L.push = lambda *a, **kw: None          # no rsync to a host that does not exist
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path( tmp )
+            layer = Image( answer = 1 )
+            e = Env( "far", [ far, layer ] )
+            setup._run = answering( 1 )               # not there
+            setup.ensure( root, e, L.Context( root = root ), echo = lambda s: None )
+            assert layer.built == 1, "absent over there: it gets built, first sight or not"
+            assert ( "test -e i.sif", True ) in asked, asked
+
+            layer = Image( answer = 0 )
+            e = Env( "far2", [ far, layer ] )
+            setup._run = answering( 0 )               # already there
+            setup.ensure( root, e, L.Context( root = root ), echo = lambda s: None )
+            assert layer.built == 0, "there already: adopted, like anywhere else"
+    finally:
+        setup._run, L.push = kept, pushed

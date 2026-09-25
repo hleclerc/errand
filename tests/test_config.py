@@ -188,3 +188,30 @@ if test( "a project file can read what this machine, and only this one, knows" )
     LOC._cache.clear()
     LOC._cache.update( kept[ 0 ] )
     LOC._loaded_from, LOC._missing_root = kept[ 1 ], kept[ 2 ]
+
+
+if test( "being let in prepares the place, like any other command", tags = [ "slow" ] ):
+    import sys
+    import tempfile
+
+    from _demo import a_project
+    from _infra import run_errand
+
+    with tempfile.TemporaryDirectory() as tmp:
+        project = a_project( tmp )
+        ( project / "errandfile.py" ).write_text(
+            "from errand import Venv, env\n"
+            "env( 'made', [ Venv( python = 'no-such-python', create = True ) ] )\n" )
+        # Being let into an environment that is not built is the one moment
+        # where you MOST want it built: nothing else is about to do it. Here
+        # the interpreter cannot be made, so the answer has to be that -- and
+        # not a command silently run somewhere else.
+        code, output = run_errand( project, "--env", "made", "--", sys.executable, "-c", "pass" )
+        assert code != 0, output
+        assert "made" in output, output
+        # ...and saying not to skips the question. ( `echo` is not an
+        # interpreter, so the layer leaves it alone -- which is the other half
+        # of the same rule. )
+        code, output = run_errand( project, "--env", "made", "--no-setup", "--",
+                                   "echo", "ran anyway" )
+        assert code == 0 and "ran anyway" in output, output

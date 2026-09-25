@@ -90,7 +90,10 @@ if test( "building an image is never done through the image" ):
     ctx = L.Context( root = ROOT )
     steps = L.Apptainer( image = "c/x.sif", recipe = "c/x.def" ).build( ctx )
     assert steps and all( "exec" not in s.split()[ : 2 ] for s in steps )
-    assert str( ROOT / "c/x.def" ) in steps[ 0 ]
+    # Named the way the project declares it, because the step is run FROM the
+    # root -- this one when the image is built here, the remote one when it is
+    # built over there. An absolute path would exist on one machine of the two.
+    assert "c/x.def" in steps[ 0 ] and str( ROOT ) not in steps[ 0 ], steps[ 0 ]
 
     steps = L.Docker( image = "img:1", recipe = "Dockerfile" ).build( ctx )
     assert steps and steps[ 0 ].startswith( "docker build" )

@@ -78,7 +78,7 @@ def ensure( root: Path, env, ctx, *, force = False, echo = print, dry_run = Fals
         if not hasattr( layer, "build" ):
             continue
         key = f"{i}:{layer.describe()}"
-        present = layer.probe( ctx ) if hasattr( layer, "probe" ) else True
+        present = _present( layer, env.ssh, ctx )
         if present and first and not force:
             continue                        # adopted: see above
         if force or not present or have.get( key ) != want.get( key ):
@@ -116,18 +116,42 @@ def ensure( root: Path, env, ctx, *, force = False, echo = print, dry_run = Fals
     return 0
 
 
+def _present( layer, ssh, ctx ) -> bool:
+    """Is that layer THERE -- asked of the machine it would be built on.
+
+    A remote environment's image does not live here, and answering "is it
+    there" against this filesystem is answering about the wrong machine: an
+    image built on the cluster last week would be rebuilt on every command,
+    and one sitting here would never be built over there at all. So a layer
+    may offer a `probe_shell`, a command whose exit code is the answer, and
+    over ssh that is what is asked -- there, in the remote root.
+    """
+    if not hasattr( layer, "probe" ):
+        return True
+    if ssh is None:
+        return layer.probe( ctx )
+    if not hasattr( layer, "probe_shell" ):
+        return False          # cannot ask: better to build than to assume
+    return _run( layer.probe_shell( ctx ), ssh, ctx, quiet = True ) == 0
+
+
 def _record( root: Path, env, want: dict ):
     path = state_path( root, env )
     path.parent.mkdir( parents = True, exist_ok = True )
     yamlish.write( path, { "env": env.name, "layers": want } )
 
 
-def _run( step: str, ssh, ctx ) -> int:
+def _run( step: str, ssh, ctx, *, quiet = False ) -> int:
+    hush = { "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL } if quiet else { }
     if ssh is None:
-        return subprocess.run( [ "sh", "-c", step ] ).returncode
+        # From the root, like the remote side: a step names what it needs the
+        # way the project declares it, and that is relative to the root.
+        return subprocess.run( [ "sh", "-c", step ], cwd = str( ctx.root ), **hush ).returncode
     line = f"cd {shlex.quote( str( ssh.remote_root( ctx ) ) )} && {step}"
     # `-t`: building an image can ask for a password, and prints a progress bar
     # nobody sees without a terminal. An interactive shell, for the same reason
-    # as everywhere else -- micromamba and the rest live in an rc file.
-    return subprocess.run( [ "ssh", "-t", *ssh.options, ssh.host,
-                             f"$SHELL -ic {shlex.quote( line )}" ] ).returncode
+    # as everywhere else -- micromamba and the rest live in an rc file. Not for
+    # a probe, which nobody is watching and which must not steal the terminal.
+    tty = [ ] if quiet else [ "-t" ]
+    return subprocess.run( [ "ssh", *tty, *ssh.options, ssh.host,
+                             f"$SHELL -ic {shlex.quote( line )}" ], **hush ).returncode

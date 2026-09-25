@@ -76,6 +76,13 @@ def sh( argv ) -> str:
     return " ".join( shlex.quote( str( a ) ) for a in argv )
 
 
+# Every step a layer asks for is run FROM THE PROJECT ROOT -- this one when it
+# is built here, the remote one when it is built over there. So a step names
+# what it needs the way the project declares it: `containers/cuda.sif`, not
+# `/home/me/proj/containers/cuda.sif`, which is a path that exists on exactly
+# one of the two machines.
+
+
 # ── layers that only record something ────────────────────────────────────────
 
 INTERPRETERS = ( "python", "python3", "python2" )
@@ -137,6 +144,9 @@ class Venv:
     def probe( self, ctx ):
         return shutil.which( self.python ) is not None or Path( self.python ).exists()
 
+    def probe_shell( self, ctx ):
+        return sh( [ "command", "-v", self.python ] )
+
     def build( self, ctx ):
         steps = [ ]
         if self.create:
@@ -193,6 +203,9 @@ class Micromamba:
 
     def probe( self, ctx ):
         return _quiet( [ *self._exe( ctx ), "-n", self.name, "run", "true" ] )
+
+    def probe_shell( self, ctx ):
+        return sh( [ "micromamba", "-n", self.name, "run", "true" ] )
 
     def build( self, ctx ):
         """Create it when it is not there, install into it when it is.
@@ -251,8 +264,11 @@ class Uv:
     def probe( self, ctx ):
         return Path( self._python( ctx ) ).exists()
 
+    def probe_shell( self, ctx ):
+        return sh( [ "test", "-x", f"{self.path}/bin/python" ] )
+
     def build( self, ctx ):
-        create = [ "uv", "venv", str( ctx.root / self.path ) ]
+        create = [ "uv", "venv", self.path ]
         if self.python:
             create += [ "--python", self.python ]
         steps = [ sh( create ) ]
@@ -301,6 +317,11 @@ class Apptainer:
     def probe( self, ctx ):
         return ( ctx.root / self.image ).exists()
 
+    def probe_shell( self, ctx ):
+        # Relative on purpose: the answer is wanted in the remote root, which
+        # the caller has already `cd`-ed into, and which is not this one.
+        return sh( [ "test", "-e", self.image ] )
+
     def build( self, ctx ):
         if not self.recipe:
             return [ ]     # an image someone else builds; nothing to say about it
@@ -313,7 +334,7 @@ class Apptainer:
         # where rebuilding is the whole point.
         argv = [ "apptainer", "build", "--force",
                  *( [ "--fakeroot" ] if self.fakeroot else [ ] ), *self.build_flags,
-                 str( ctx.root / self.image ), str( ctx.root / self.recipe ) ]
+                 self.image, self.recipe ]
         # Both, and to the same place: apptainer writes its unpacked layers to
         # one and its downloads to the other, and a build that runs out of room
         # in either dies the same way.
@@ -321,7 +342,7 @@ class Apptainer:
                if self.scratch else [ ]
         steps = [ " ".join( [ *room, sh( argv ) ] ) ]
         if self.pip:
-            steps.append( sh( [ "apptainer", "exec", str( ctx.root / self.image ),
+            steps.append( sh( [ "apptainer", "exec", self.image,
                                 "python", "-m", "pip", "install", *self.pip ] ) )
         return steps
 
@@ -376,11 +397,14 @@ class Docker:
     def probe( self, ctx ):
         return _quiet( [ self.engine, "image", "inspect", self.image ] )
 
+    def probe_shell( self, ctx ):
+        return sh( [ self.engine, "image", "inspect", self.image ] ) + " >/dev/null 2>&1"
+
     def build( self, ctx ):
         if not self.recipe:
             return [ ]
         return [ sh( [ self.engine, "build", "-t", self.image,
-                       "-f", str( ctx.root / self.recipe ), str( ctx.root ) ] ) ]
+                       "-f", self.recipe, "." ] ) ]
 
 
 @dataclass
@@ -411,7 +435,7 @@ class Guix:
     packages: list = field( default_factory = list )
 
     def wrap( self, cmd: Command, ctx: Context ) -> Command:
-        spec = [ "-m", str( ctx.root / self.manifest ) ] if self.manifest else list( self.packages )
+        spec = [ "-m", self.manifest ] if self.manifest else list( self.packages )
         return Command( [ "guix", "shell", *spec, "--", *cmd.argv ], cmd.env )
 
     def describe( self ):
@@ -581,7 +605,7 @@ def fetch( paths, host: str, remote_root: Path, local_root: Path, options = ( ) 
 def _install_steps( pip_argv, layer, ctx ):
     steps = [ ]
     if layer.requirements:
-        steps.append( sh( [ *pip_argv, "-r", str( ctx.root / layer.requirements ) ] ) )
+        steps.append( sh( [ *pip_argv, "-r", layer.requirements ] ) )
     if layer.pip:
         steps.append( sh( [ *pip_argv, *layer.pip ] ) )
     return steps

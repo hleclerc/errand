@@ -433,6 +433,16 @@ def run_there( known, command, *, root ):
     rc = 0
     for env, tags in targets:
         ctx = L.Context( root = root, tags = tags )
+        # The same question as before any work: is the place ready? Being let
+        # into an environment that has not been built yet is the one moment
+        # where you MOST want it built -- there is nothing else about to do it.
+        if not known.no_setup:
+            if setup.ensure( root, env, ctx, force = known.setup == "force",
+                             dry_run = known.dry_run,
+                             echo = lambda s: print( dim( s ), flush = True ) ):
+                print( bad( f"  could not prepare {env.name}" ) )
+                rc = 1
+                continue
         # The same sources the work itself would see. Being let into the
         # environment to look at something is pointless if what you look at is
         # somebody else's checkout of the same package.
