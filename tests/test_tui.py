@@ -54,6 +54,54 @@ if test( "the cases are a tree by file, and what would not import is in it" ):
             term.close()
 
 
+if test( "the directories are the tree, and a lonely one costs no row" ):
+    with tempfile.TemporaryDirectory() as tmp:
+        project = a_project( tmp, { "bench/gpu/heavy.py": WORK,
+                                    "tests/one.py": WORK,
+                                    "tests/two.py": WORK } )
+        term = start_tui( project )
+        try:
+            until( term, "tests" )
+            shown = term.frame()
+            # `bench` holds one directory holding one file: three rows that
+            # could only be walked through become one that says where it is.
+            assert "▾ bench/gpu/heavy.py" in shown, shown
+            assert "▾ gpu" not in shown, shown
+            # `tests` holds two files, so it is a directory of its own and the
+            # files hang under it, indented.
+            assert "▾ tests" in shown, shown
+            assert "  ▾ one.py" in shown and "  ▾ two.py" in shown, shown
+
+            # Folding the directory takes its files with it.
+            for _ in range( 3 ):           # past heavy.py and its two cases
+                term.send( DOWN )
+            term.send( " " )
+            folded = term.frame()
+            assert "▸ tests" in folded, folded
+            assert "one.py" not in folded and "two.py" not in folded, folded
+            assert "bench/gpu/heavy.py" in folded, "its neighbour is untouched"
+        finally:
+            term.close()
+
+
+if test( "tab goes to the next rectangle, and the page follows it" ):
+    with tempfile.TemporaryDirectory() as tmp:
+        project = a_project( tmp )
+        term = start_tui( project )
+        try:
+            until( term, "test_demo.py" )
+            # Two rectangles here, three over there, in one ring: tab is never
+            # a page switch you have to think about, only the next box.
+            term.send( "\t" )                  # `about`, still the cases page
+            assert "[cases]" in term.frame(), term.frame()
+            term.send( "\t" )                  # off the end: `runs`
+            assert "[runs]" in term.frame(), term.frame()
+            term.send( "\t" ); term.send( "\t" ); term.send( "\t" )
+            assert "[cases]" in term.frame(), "the ring comes back round"
+        finally:
+            term.close()
+
+
 if test( "enter on a case asks where, and runs it", tags = [ "slow" ] ):
     with tempfile.TemporaryDirectory() as tmp:
         project = a_project( tmp )
@@ -163,7 +211,7 @@ if test( "runs and history are one list, and a command runs again", tags = [ "sl
         term = start_tui( project )
         try:
             until( term, "test_demo.py" )
-            term.send( "\t" )              # to the runs page
+            term.send( "\t" ); term.send( "\t" )   # past `about`, into the runs page
             shown = term.text()
             # A command typed in a shell is in the same list as one run here.
             assert "test_demo::quick --env other" in shown, shown

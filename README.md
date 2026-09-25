@@ -531,10 +531,14 @@ is already happening.
 errand --tui
 ```
 
-**Two pages**, because there are two questions: *what do I run*, and *what came of it*. `tab` goes
-from one to the other. No focus to keep track of either: one pane is active, the arrows drive it,
-and **clicking a pane makes it the active one**; the wheel scrolls whatever is under the pointer and
+**Two pages**, because there are two questions: *what do I run*, and *what came of it*. No focus to
+keep track of: one rectangle is active, the arrows drive it, **`tab` goes to the next rectangle**,
+and clicking one makes it the active one; the wheel scrolls whatever is under the pointer and
 changes nothing else.
+
+A page is not a mode to switch — it is *wherever the rectangle you are in happens to live*. The two
+rectangles of `cases` and the three of `runs` are one ring, so tabbing off the end of one page lands
+on the next and the screen follows; clicking a page name at the top goes straight there.
 
 ### cases — what do I run
 
@@ -555,7 +559,7 @@ changes nothing else.
                                           │   12.4s                             │
                                           │   seconds = 12.406                  │
                                           ╰─────────────────────────────────────╯
- type to search   enter run   space tick   tab runs   esc quit
+ type to search   enter run   space tick   tab next pane   esc quit
 ```
 
 **Typing is the search** — there is no key to press first, because finding one case among three
@@ -572,7 +576,11 @@ rewrite what you typed.
 `esc` lets go of the search *without throwing it away* — the list stays narrowed while you walk it
 with the arrows and tick several with space. A second `esc` clears it; a third leaves.
 
-With nothing typed, the cases are **a tree by file**, because that is the shape the work has.
+With nothing typed, the cases are **a tree of directories and files**, because that is the shape
+the work has: a project is a layout before it is a list, and the directory is how you remember where
+a case lives. A directory holding one single thing does not cost a row of its own — its name joins
+its child's, `bench/gpu/heavy.py` on one line, since a row you can only walk through tells you
+nothing.
 Facing them: everything about the one under the cursor, down to how it went the last time it ran —
 read out of [the output tree](#where-the-output-goes), so it is there after a restart and after
 somebody else ran it.
@@ -639,7 +647,7 @@ of saying so.
 
 | | |
 |---|---|
-| `tab` | the other page |
+| `tab` | the next rectangle — and the page follows it |
 | typing | on `cases`, the search |
 | arrows, click, wheel | move · choose and activate · scroll what is under the pointer |
 | space | tick a case (once `esc` has let go of the search), or fold |

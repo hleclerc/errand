@@ -54,6 +54,8 @@ PRESSED = ( curses.BUTTON1_PRESSED | curses.BUTTON1_CLICKED
 
 C_TITLE, C_ACTIVE, C_DIM, C_OK, C_BAD, C_WARN = 1, 2, 3, 4, 5, 6
 
+PAGES = ( "cases", "runs" )
+
 # Set when something is READING the screen rather than looking at it: every
 # frame is then painted in full, instead of ncurses sending only the cells that
 # changed. A test that had to reconstruct which those were would be testing its
@@ -89,6 +91,44 @@ def size_of( path ):
 def _id( entry ):
     """An entry told apart from every other: two may share a name."""
     return ( str( entry.file ), entry.line, entry.name )
+
+
+def _parts( path, root ):
+    """Where a file sits, one directory at a time. A file outside the project
+    keeps its whole name and lands at the top: it is not part of the layout."""
+    try:
+        return Path( path ).relative_to( root ).parts
+    except ValueError:
+        return ( str( path ), )
+
+
+class _Node:
+    """One directory, or one file with its cases -- the project as it is laid
+    out on disk, which is the only tree nobody has to be taught."""
+
+    __slots__ = ( "path", "children", "entries" )
+
+    def __init__( self, path ):
+        self.path     = Path( path )
+        self.children : dict = { }
+        self.entries  : list = [ ]
+
+    def put( self, parts, path, entries ):
+        node, here = self, self.path
+        for part in parts:
+            here = here / part
+            node = node.children.setdefault( part, _Node( here ) )
+        node.path    = Path( path )
+        node.entries = entries
+
+    def count( self ):
+        return len( self.entries ) + sum( c.count() for c in self.children.values() )
+
+    def sorted( self ):
+        """Directories first, then files, each in alphabetical order: the order
+        a listing has, so the eye already knows it."""
+        return sorted( self.children.items(), key = lambda kv: ( bool( kv[ 1 ].entries ),
+                                                                 kv[ 0 ] ) )
 
 
 # ── rows and panes ───────────────────────────────────────────────────────────
@@ -413,6 +453,7 @@ class Screen:
         # screen wide, and there are more cases than a half screen holds.
         self.pages   = { "cases": [ self.cases, self.about ],
                          "runs" : [ self.runs, self.files, self.look ] }
+        self.tabs    : list = [ ]      # where the page names are, for clicking
         self.page    = "cases"
         self.active  = 0
         self.ticked  : set = set()     # cases, by ( file, line, name )
@@ -445,22 +486,43 @@ class Screen:
                              f"cases  {len( self.ticked )} ticked" if self.ticked else "cases" )
 
     def _tree( self ):
-        """A file, and its cases under it: a tree, because that is the shape
-        the work has -- the file is where you go looking for it."""
-        rows: list = [ ]
+        """Directories, then files, then the cases in them: a tree, because
+        that is the shape the work has -- a project is a layout before it is a
+        list, and the directory is how somebody remembers where a case lives.
+
+        A directory holding one single thing does NOT cost a row of its own:
+        its name joins its child's, `src/bench/gpu.py` on one line. A row you
+        can only walk through is a row that tells you nothing.
+        """
         by_file: dict = { }
         for e in self.session.entries:
             by_file.setdefault( e.file, [ ] ).append( e )
-        for path in sorted( by_file, key = str ):
-            mine = sorted( by_file[ path ], key = lambda e: e.line )
-            folded = path in self.folded
-            rows.append( Row( short( path, self.session.root ), f"{len( mine )}",
-                              kind = "group", data = ( "file", path ), open = not folded ) )
-            if not folded:
-                for e in mine:
-                    rows.append( Row( e.name, f"{e.kind}:{e.line}", kind = "case", data = e,
-                                      depth = 1, checked = _id( e ) in self.ticked ) )
+        root = _Node( self.session.root )
+        for path, mine in by_file.items():
+            root.put( _parts( path, self.session.root ), path,
+                      sorted( mine, key = lambda e: e.line ) )
+        rows: list = [ ]
+        self._branch( root, "", 0, rows )
         return rows
+
+    def _branch( self, node, name, depth, rows ):
+        """Emit `node` under the name it has ended up with, and what is in it."""
+        while len( node.children ) == 1 and not node.entries:
+            ( part, only ), = node.children.items()
+            name, node = ( f"{name}/{part}" if name else part ), only
+        below, shown = depth, True
+        if name:                      # the root itself is the screen, not a row
+            shown = node.path not in self.folded
+            rows.append( Row( name, f"{node.count()}", kind = "group",
+                              data = ( "node", node.path ), open = shown, depth = depth ) )
+            below = depth + 1
+        if not shown:
+            return
+        for part, child in node.sorted():
+            self._branch( child, part, below, rows )
+        for e in node.entries:
+            rows.append( Row( e.name, f"{e.kind}:{e.line}", kind = "case", data = e,
+                              depth = below, checked = _id( e ) in self.ticked ) )
 
     def _found( self ):
         """What the search found, best first -- and flat, because a ranking has
@@ -631,8 +693,21 @@ class Screen:
     def show( self, page ):
         self.page, self.active = page, 0
 
+    def step( self, delta ):
+        """tab goes to the NEXT RECTANGLE, which is what a tab does everywhere.
+
+        A page is not a mode to be switched: it is wherever the rectangle you
+        are in happens to live. So tabbing off the last rectangle of `cases`
+        lands in `runs` and the screen follows, and nobody has to hold two
+        ideas -- which pane, and which page -- to move one step.
+        """
+        ring = [ ( page, i ) for page in PAGES for i in range( len( self.pages[ page ] ) ) ]
+        here = ( self.page, min( self.active, len( self.panes ) - 1 ) )
+        at = ring.index( here ) if here in ring else 0
+        self.page, self.active = ring[ ( at + delta ) % len( ring ) ]
+
     def fold( self, row ):
-        if row.data[ 0 ] == "file":
+        if row.data[ 0 ] == "node":
             self.folded.symmetric_difference_update( { row.data[ 1 ] } )
         else:
             line = row.data[ 1 ]
@@ -701,6 +776,11 @@ class Screen:
         if TRACE:
             open( TRACE, "a" ).write( f"mouse y={y} x={x} state={hex(state)} "
                                       f"boxes={[p.box for p in self.panes]}\n" )
+        if y == 0 and state & PRESSED:
+            for left, right, name in self.tabs:
+                if left <= x < right:
+                    self.show( name )
+            return
         for index, pane in enumerate( self.panes ):
             if not pane.holds( y, x ):
                 continue
@@ -749,19 +829,20 @@ def _summary( states ):
 # ── the loop ─────────────────────────────────────────────────────────────────
 
 HINTS = {
-    "cases": "type to search   enter run   space tick   tab runs   esc quit",
-    "runs" : "enter files   r again   o open   x stop   tab cases   q quit",
+    "cases": "type to search   enter run   space tick   tab next pane   esc quit",
+    "runs" : "enter files   r again   o open   x stop   tab next pane   q quit",
 }
 
 KEYS = [
-    ( "tab",    "the other page: cases ⇄ runs" ),
+    ( "tab",    "the next rectangle -- and the page follows it" ),
     ( "typing", "on `cases`, goes straight into the search" ),
-    ( "arrows", "move in the active pane; shift-tab walks the panes" ),
+    ( "arrows", "move in the active rectangle; shift-tab is the way back" ),
     ( "click",  "choose, and make that pane the active one" ),
     ( "wheel",  "scroll whatever is under the pointer" ),
     ( "space",  "tick a case ( once esc has let go of the search ), or fold" ),
     ( "enter",  "cases: ask where to run · runs: its files · files: open it" ),
     ( "esc",    "cases: let go of the search, clear it, leave · runs: back to cases" ),
+    ( "click",  "a page name at the top goes straight to that page" ),
     ( "r",      "run the command under the cursor again" ),
     ( "o",      "open the file under the cursor" ),
     ( "x",      "interrupt what is running" ),
@@ -800,9 +881,14 @@ def draw( win, screen: Screen ):
 
     state = ( "running" if screen.session.running else
               "following" if screen.session.record else "idle" )
-    tabs = "  ".join( f"[{name}]" if name == screen.page else f" {name} "
-                      for name in ( "cases", "runs" ) )
-    put( win, 0, 1, tabs, max( 0, width - 2 ), curses.color_pair( C_ACTIVE ) | curses.A_BOLD )
+    screen.tabs, at = [ ], 1
+    for name in PAGES:
+        shown = f"[{name}]" if name == screen.page else f" {name} "
+        put( win, 0, at, shown, max( 0, width - at ),
+             curses.color_pair( C_ACTIVE if name == screen.page else C_DIM )
+             | ( curses.A_BOLD if name == screen.page else 0 ) )
+        screen.tabs.append( ( at, at + len( shown ), name ) )
+        at += len( shown ) + 2
     right = f"errand · {screen.session.root.name} · {state}"
     put( win, 0, max( 0, width - len( right ) - 1 ), right, width - 1,
          curses.color_pair( C_DIM ) )
@@ -914,9 +1000,9 @@ def _common( screen: Screen, key ):
         pane.cursor = max( 0, len( pane.rows ) - 1 )
         pane.reveal()
     elif key in ( 9, ord( "\t" ) ):
-        screen.show( "runs" if screen.page == "cases" else "cases" )
+        screen.step( 1 )
     elif key == curses.KEY_BTAB:
-        screen.active = ( screen.active + 1 ) % len( screen.panes )
+        screen.step( -1 )
     elif key in ( 10, 13, curses.KEY_ENTER ):
         screen.enter()
     elif key == curses.KEY_RIGHT:
