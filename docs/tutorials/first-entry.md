@@ -1,4 +1,11 @@
-# 1 · Your first entry
+# 1 · errand's own entries
+
+::: tip You may not need this tutorial
+This one writes work in errand's own declaration, which is optional. With a pytest, Catch2 or
+cargo project, start with [3 · Adopt an existing suite](./adopt-a-suite); with only a command, see
+[Start from what you have](/guide/start). Come back when you have numbers to follow or a picture to
+look at.
+:::
 
 Two files, no configuration. `errand` runs in whatever interpreter you started it with.
 
@@ -53,7 +60,7 @@ if test( "the two agree", tags = [ "slow" ] ):
 Five entries in one file, no `if __name__ == "__main__":` anywhere. The guard *is* the entry, and
 they are told apart by **call site** — which is why two of them may share a name.
 
-### It must be fast
+### Numbers to follow
 
 ```python
 if p := bench( "sieve", n = Param( 100_000, help = "upper bound" ) ):
@@ -63,8 +70,9 @@ if p := bench( "sieve", n = Param( 100_000, help = "upper bound" ) ):
     p.results[ "primes" ]  = len( found )
 ```
 
-`bench` [keeps its numbers](/guide/declaring-work#test-bench-experiment) and takes the machine to
-itself while it runs — so nothing else errand launched is competing for the cache.
+`bench` [keeps its numbers](/guide/declaring-work#test-bench-track-experiment) and takes the machine to
+itself while it runs — so nothing else errand launched is competing for the cache. The numbers are
+timings here, but they need not be: `track` keeps numbers of any kind without the exclusivity.
 
 And a benchmark that also asserts, because there is no rule against it:
 
@@ -105,7 +113,7 @@ errand --help                     # what matched, with the parameters it takes
 ```
 
 **`errand` on its own never runs the benchmarks.** They are not `bulk`; you name them, or you ask
-for `-k bench`. The experiment likewise. A benchmark is not something you want fired by accident.
+for `-k bench`. The experiment likewise. Numbers worth keeping are not something you want produced by accident.
 
 A comma is a matrix, here and everywhere else:
 

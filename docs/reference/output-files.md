@@ -96,7 +96,7 @@ a machine got slower is a different question, and one that wants to know somethi
 
 A symlink to the newest run, so every run can be stamped without costing you a stable path. Leave a
 tab open on `latest/shape.png` and reload it — that is what
-[`experiment`](/guide/declaring-work#test-bench-experiment) sets `stable_path` for.
+[`experiment`](/guide/declaring-work#test-bench-track-experiment) sets `stable_path` for.
 
 On a filesystem without symlinks its absence is a loss, not a failure: the run still writes
 everything else.

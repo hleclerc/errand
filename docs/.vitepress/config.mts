@@ -30,19 +30,26 @@ export default defineConfig( {
           items: [
             { text: 'What errand is',    link: '/guide/what-is-errand' },
             { text: 'Installing',        link: '/guide/installing' },
-            { text: 'Declaring work',    link: '/guide/declaring-work' },
-            { text: 'Running it',        link: '/guide/running' },
-            { text: 'Parameters & matrices', link: '/guide/matrices' },
+            { text: 'Start from what you have', link: '/guide/start' },
           ]
         },
         {
           text: 'Where and how it runs',
           items: [
-            { text: 'Environments',      link: '/guide/environments' },
+            { text: 'Environments (layers)', link: '/guide/environments' },
             { text: 'Keeping them current', link: '/guide/upkeep' },
             { text: 'Tags',              link: '/guide/tags' },
             { text: 'Running elsewhere', link: '/guide/remote' },
             { text: 'Detached runs',     link: '/guide/detached' },
+          ]
+        },
+        {
+          text: 'Running work',
+          items: [
+            { text: 'Running it',        link: '/guide/running' },
+            { text: 'Parameters & matrices', link: '/guide/matrices' },
+            { text: 'Other languages',   link: '/guide/providers' },
+            { text: 'Writing entries',   link: '/guide/declaring-work' },
           ]
         },
         {
@@ -57,7 +64,6 @@ export default defineConfig( {
           text: 'Projects',
           items: [
             { text: 'Configuration',     link: '/guide/configuration' },
-            { text: 'Other languages',   link: '/guide/providers' },
           ]
         },
       ],
@@ -67,10 +73,10 @@ export default defineConfig( {
           text: 'Tutorials',
           items: [
             { text: 'All of them',               link: '/tutorials/' },
-            { text: '1 · Your first entry',      link: '/tutorials/first-entry' },
+            { text: '1 · errand\'s own entries',  link: '/tutorials/first-entry' },
             { text: '2 · Four environments',     link: '/tutorials/environments' },
             { text: '3 · Adopt an existing suite', link: '/tutorials/adopt-a-suite' },
-            { text: '4 · A bench over two machines', link: '/tutorials/two-machines' },
+            { text: '4 · Numbers over two machines', link: '/tutorials/two-machines' },
           ]
         }
       ],

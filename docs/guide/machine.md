@@ -9,7 +9,7 @@ if p := test( "on the card", gpus = 1 ):
 ```
 
 `cpus`, `ram` and `gpus` are counted against what the host has. `exclusive` is the blunt version,
-for when the answer is "all of it and no neighbours" — and it is what [`bench`](./declaring-work#test-bench-experiment)
+for when the answer is "all of it and no neighbours" — and it is what [`bench`](./declaring-work#test-bench-track-experiment)
 sets for you.
 
 An exclusive entry waits for what is already running and holds everything else back while it runs;

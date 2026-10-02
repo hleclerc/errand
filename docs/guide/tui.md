@@ -4,6 +4,11 @@
 errand --tui
 ```
 
+Here it is, over three places at once — your machine, a container, and a cluster behind ssh and
+Slurm. Search a case, press enter, tick the places, and each one gets its own row:
+
+<Term scene="tui" caption="errand --tui, drawn by hand from the screens below: a case ticked on three environments, each with its own stack of layers. The rows fill in as the runs finish; the cluster's output shows the ssh, the allocation and the fetch back." />
+
 **Two pages**, because there are two questions: *what do I run*, and *what came of it*.
 
 No focus to keep track of: one rectangle is active, the arrows drive it, and clicking one selects it;

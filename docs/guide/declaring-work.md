@@ -1,4 +1,11 @@
-# Declaring work
+# Writing entries
+
+::: tip This page is about errand's own declaration, which is optional
+If you have a pytest, Catch2 or cargo suite, or just a command, you do not need any of this:
+see [Start from what you have](./start). Entries are for work that has no framework of its own — a
+number to follow, a picture to look at, a step to run on a cluster — and they mix freely with
+adopted suites in one project.
+:::
 
 An **entry** is a piece of work that produces something. You declare it next to the code it
 exercises, with a guard that reads like `if __name__ == "__main__":` but does more — several per
@@ -45,33 +52,43 @@ Four traits say how an entry should be treated:
 | `exclusive` | it needs the machine to itself | `False` |
 | `stable_path` | `latest/` is what you are meant to open | `False` |
 
-## test, bench, experiment
+## test, bench, track, experiment
 
-Setting the traits by hand every time would be tedious, so three ordinary functions set them for
+Setting the traits by hand every time would be tedious, so four ordinary functions set them for
 you:
 
 ```python
-from errand import test, bench, experiment, Param
+from errand import test, bench, track, experiment, Param
 
-if test( "addition" ):                       # bulk
+if test( "addition" ):                        # bulk
     assert 1 + 1 == 2
 
-if p := bench( "solve", n = Param( 1000 ) ): # keep, exclusive, not bulk
+if p := bench( "solve", n = Param( 1000 ) ):  # keep, exclusive, not bulk
     p.results[ "seconds" ] = solve( p.n )
 
-if p := experiment( "the shape of it" ):     # stable_path, not bulk
+if p := track( "accuracy", n = Param( 1000 ) ):   # keep, not bulk
+    p.results[ "error" ] = abs( solve( p.n ) - exact( p.n ) )
+
+if p := experiment( "the shape of it" ):      # stable_path, not bulk
     plot( ).savefig( p.out_dir / "shape.png" )
 ```
 
-| | it must | traits |
+| | it is for | traits |
 |---|---|---|
-| `test` | pass | `bulk` |
-| `bench` | be fast — and its numbers are kept | `keep`, `exclusive`, not `bulk` |
-| `experiment` | be looked at — `latest/` is the path to open | `stable_path`, not `bulk` |
+| `test` | something that must pass | `bulk` |
+| `track` | **numbers you want to follow** — an error, a residual, a size, a score, a count — kept and compared date to date | `keep`, not `bulk` |
+| `bench` | `track`, measured **alone**: the numbers are timings, or anything a neighbour would disturb | `keep`, `exclusive`, not `bulk` |
+| `experiment` | something to be looked at — `latest/` is the path to open | `stable_path`, not `bulk` |
 
-They are three lines of Python over `entry`, and you can write a fourth of your own the same way.
-Note that a bare `errand` runs **only the tests**: a benchmark or an experiment is named, or asked
-for with `-k bench` / `-k exp`.
+A benchmark here is not necessarily about speed. What makes an entry worth keeping is that it
+produces **numbers whose evolution you care about**; whether they are durations is incidental.
+`bench` takes the machine to itself because the commonest numbers worth following *are* timings, and
+a timing taken while something else was running is not a timing. When the numbers are not
+timings, use `track`, or `bench( …, exclusive = False )` — they are the same thing.
+
+They are four lines of Python over `entry`, and you can write a fifth of your own the same way.
+Note that a bare `errand` runs **only the tests**: a `bench`, a `track` or an `experiment` is named,
+or asked for with `-k bench` (both of the first two) / `-k exp`.
 
 Override a trait on the spot when the preset is not quite right:
 

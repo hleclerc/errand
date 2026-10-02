@@ -1,6 +1,7 @@
 # Other languages, and suites you already have
 
-An entry does not have to be a Python call site. Providers for C++ (Catch2), Rust (`cargo test`) and
+errand does not care what your tests are written in. An entry does not have to be a Python call
+site, and most of what you run will not be. Providers for C++ (Catch2), Rust (`cargo test`) and
 pytest come with `errand`, and one line in [`errandfile.py`](./configuration) puts an existing suite
 under it — with an output directory, summaries, environment matrices and remote repatriation, none
 of which it had before:
@@ -51,14 +52,16 @@ A provider finds its own entries the way its ecosystem does — pytest's collect
 `test_*.cpp` under a directory, cargo's targets. That is a guess about your layout, so it is a guess
 you write down.
 
-With no `errandfile.py` at all, `errand` guesses on its own and **tells you what it guessed** before
-running anything:
+With no `errandfile.py` at all, `errand` reads the directory and **tells you what it guessed**
+before running anything:
 
 ```text
-  no errandfile.py; guessed:  pytest (tests/)  ·  catch2 (cpp/)  ·  cargo (rust/)
+  no errandfile.py; guessed:  pytest (tests/)  ·  catch2 (cpp/)  ·  cargo (rust/)   ( errand --init writes it down )
 ```
 
-Convenient for a first look, never silent, and the cure is to write the line. Every framework
+Convenient for a first look, never silent, and the cure is to write the line — which is what
+`errand --init` does, with `runs/` made beside it. The rules it follows are in
+[Start from what you have](./start#what-it-looks-for). Every framework
 locates its tests by assuming something about your layout, so there is no version of this that does
 not guess. What `errandfile.py` changes is that the assumption is **visible, versioned, and
 arguable**: `Pytest( dirs = [ "tests" ] )` says exactly what will be looked at, and takes arguments

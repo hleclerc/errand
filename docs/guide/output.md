@@ -40,7 +40,7 @@ end when there is more of it than anyone would read.
 
 **`latest/`** is a symlink, so every run can be stamped without costing you a stable path. Leave a
 tab open on `latest/shape.png` and reload it. That is what
-[`experiment`](./declaring-work#test-bench-experiment) sets `stable_path` for.
+[`experiment`](./declaring-work#test-bench-track-experiment) sets `stable_path` for.
 
 ## What lands in a run directory
 

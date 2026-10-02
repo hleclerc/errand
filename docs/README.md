@@ -16,12 +16,13 @@ From the project root, the Makefile says the same thing: `make site`, `make site
 ## The layout
 
 ```
-index.md                 the home page: hero, features, hello-errand
+index.md                 the home page: hero, features, the layers, "whatever you test with"
 guide/                   the documentation, by sub-theme
 tutorials/               four walkthroughs, in order; the first three are examples/
 reference/               the flags, the API, the layers, the providers, the files
 .vitepress/config.mts    nav, sidebar, base
-.vitepress/theme/        the one CSS file that makes it errand's rather than VitePress's
+.vitepress/theme/        the CSS that makes it errand's, and `Term.vue` + `scenes.js`: the terminal
+                         recordings (`<Term scene="tui" />`), drawn by hand, cell by cell
 ```
 
 `base` is `/errand/`, for GitHub Pages under `github.com/hleclerc/errand`. Change it in

@@ -768,6 +768,8 @@ def build_parser( tag_names = ( ) ):
     p.add_argument( "-e", "--entry-tags", default = None, help = "filter entries by tag expression" )
     p.add_argument( "-t", "--env-tags", default = None, help = "choose environments by tag expression" )
     p.add_argument( "--env", default = None, help = "environment(s) by name, comma-separated" )
+    p.add_argument( "--init", nargs = "?", const = "yes", default = None,
+                    help = "write an errandfile.py from what this directory holds ( =force to replace )" )
     p.add_argument( "--envs", action = "store_true", help = "list environments and stop" )
     p.add_argument( "--setup", nargs = "?", const = "yes", default = None,
                     help = "build/update environments now ('force' to start over)" )
@@ -885,6 +887,11 @@ def main( argv = None ):
         from . import tui
         return tui.main( root = root, out_root = out_root )
 
+    if known.init:
+        from . import detect
+        return detect.init( root, force = known.init == "force",
+                            echo = lambda s: print( dim( s ) ) )
+
     if known.envs:
         return print_envs( root )
 
@@ -931,6 +938,11 @@ def main( argv = None ):
         kinds.add( KINDS[ k ] )
 
     _put_src_on_path( root )
+
+    if config.guessed and not known.help:
+        from . import detect
+        print( dim( f"  {detect.announce( config.guessed )}   ( errand --init writes it down )" ),
+               file = sys.stderr )
 
     try:
         selected, modules, selectors = discovery.select(

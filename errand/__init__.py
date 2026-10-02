@@ -20,12 +20,13 @@ from .entries import (          # noqa: F401  -- the public surface of a file of
     out_dir,
     tag,
     test,
+    track,
 )
 from .local import Skipped, have, need, skip   # noqa: F401
 
 __all__ = [
     "Args", "Param", "Skipped", "bench", "entry", "experiment", "has_tag", "have",
-    "need", "out_dir", "skip", "tag", "test",
+    "need", "out_dir", "skip", "tag", "test", "track",
     "configure", "env", "provider", "main",
     "Vars", "Venv", "Micromamba", "Conda", "Uv", "Nix", "Guix", "Module",
     "Apptainer", "Docker", "Podman", "Ssh", "Slurm",

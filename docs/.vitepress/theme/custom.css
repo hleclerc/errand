@@ -46,3 +46,60 @@
   display: table;
   width: 100%;
 }
+
+/* ── the recordings ( Term.vue ) ─────────────────────────────────────────────
+ * A terminal is dark in both themes: it is a picture of one, and the colours of
+ * its cells are the colours errand's own screen uses. */
+.term {
+  --t-bg: #1c1917;
+  --t-fg: #e7e5e4;
+  --t-dim: #a8a29e;
+  --t-run: #fb923c;
+  --t-ok: #4ade80;
+  --t-err: #f87171;
+  margin: 1.5rem 0;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var( --t-bg );
+  border: 1px solid var( --vp-c-divider );
+  box-shadow: 0 6px 24px rgba( 0, 0, 0, 0.18 );
+}
+.term-bar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 12px;
+  background: #292524;
+  color: var( --t-dim );
+  font: 12px/1 var( --vp-font-family-mono );
+}
+.term-bar .dots { display: flex; gap: 6px; }
+.term-bar .dots i { width: 10px; height: 10px; border-radius: 50%; background: #57534e; }
+.term-bar .dots i:first-child { background: #f87171; }
+.term-bar .dots i:nth-child( 2 ) { background: #fbbf24; }
+.term-bar .dots i:nth-child( 3 ) { background: #4ade80; }
+.term-title { flex: 1; text-align: center; }
+.term-ctl { display: flex; gap: 4px; }
+.term-ctl button {
+  border: 0; border-radius: 4px; padding: 3px 7px;
+  background: transparent; color: var( --t-dim ); cursor: pointer;
+  font: inherit;
+}
+.term-ctl button:hover { background: #44403c; color: var( --t-fg ); }
+.term-screen {
+  margin: 0; padding: 14px 16px;
+  overflow-x: auto;
+  color: var( --t-fg );
+  font: 12px/1.35 var( --vp-font-family-mono );
+  white-space: pre;
+}
+.term .t-dim { color: var( --t-dim ); }
+.term .t-run { color: var( --t-run ); }
+.term .t-ok  { color: var( --t-ok ); }
+.term .t-err { color: var( --t-err ); }
+.term .t-b   { font-weight: 700; color: #fff; }
+.term .t-hl  { background: #44403c; color: #fff; }
+.term figcaption {
+  padding: 8px 14px 10px;
+  color: var( --t-dim );
+  font-size: 12px;
+  border-top: 1px solid #292524;
+}

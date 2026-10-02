@@ -23,6 +23,8 @@ env( "cluster", [ Ssh( host = "gpu-box", root = "/home/me/proj" ),
      driver = "jax", cuda = True )
 ```
 
+<Term scene="stack" caption="The cluster environment above, crossed by one run." />
+
 Read a stack outside in: `cluster` is *that machine*, then *an allocation on it*, then *the
 container*, then your command. There is no separate remote mode, no host file, no second config —
 `Ssh` and `Slurm` are layers like the others.

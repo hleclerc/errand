@@ -189,8 +189,19 @@ def test( name, tags = None, /, **kw ):
 
 
 def bench( name, tags = None, /, **kw ):
-    """It must be fast. Its numbers are kept; it takes the machine to itself."""
+    """Numbers to follow, measured alone. Kept; takes the machine to itself.
+
+    Exclusive because the commonest numbers worth following are timings, and a
+    timing taken while something else ran is not a timing. The numbers need not
+    be times at all -- an error, a residual, a score, a size -- in which case
+    `exclusive = False`, or `track`, says so.
+    """
     return entry( name, tags, **{ "bulk": False, "keep": True, "exclusive": True, **kw } )
+
+
+def track( name, tags = None, /, **kw ):
+    """Numbers to follow over time that do not need the machine to themselves."""
+    return entry( name, tags, **{ "bulk": False, "keep": True, **kw } )
 
 
 def experiment( name, tags = None, /, **kw ):

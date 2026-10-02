@@ -72,13 +72,25 @@ Run `errand` in a project with no `errandfile.py` at all and it will find these 
 and say so before running anything:
 
 ```text
-  no errandfile.py; guessed:  pytest (tests/)  ·  catch2 (cpp/)  ·  cargo (rust/)
+  no errandfile.py; guessed:  pytest (tests/)  ·  catch2 (cpp/)  ·  cargo (rust/)   ( errand --init writes it down )
 ```
 
 Every framework locates its tests by assuming something about your layout, so there is no version of
 this that does not guess. What `errandfile.py` changes is that the assumption is **visible,
 versioned, and arguable** — `Pytest( dirs = [ "tests" ] )` says exactly what will be looked at, and
 takes arguments to say something else.
+
+Try it. Move the file aside, look at what errand makes of the bare directory, then have it write the
+file back:
+
+```bash
+mv errandfile.py errandfile.bak
+errand -h                  # the guess, announced; nothing run
+errand --init              # errandfile.py again, from what was found
+```
+
+The `configure( src = … )` line is not in what `--init` writes — it is not a thing a directory can
+tell: it is yours to add.
 
 ## Compiling, and finding the binary
 

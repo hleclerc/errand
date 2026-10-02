@@ -1,8 +1,9 @@
-# 4 · A bench over two machines
+# 4 · Numbers over two machines
 
 This one is not an example directory — it is the thing the other three were building towards, done
-in a project of your own. The goal: **one number, taken here and on another machine, in a form you
-can compare a month from now.**
+in a project of your own. The goal: **numbers, taken here and on another machine, in a form you
+can compare a month from now.** Timings are the obvious case; an error or a residual follows the
+same way.
 
 You need an ssh host you can reach without a password. That is all.
 
@@ -23,8 +24,9 @@ if p := bench( "cost", n      = Param( 100_000, help = "number of unknowns" ),
 ```
 
 `bench` means three things at once: the numbers are [kept](/guide/declaring-work#the-four-traits),
-the entry takes the machine to itself while it runs, and a bare `errand` will not fire it by
-accident.
+the entry takes the machine to itself while it runs (these are timings, so it must), and a bare
+`errand` will not fire it by accident. For numbers that are not timings, `track` is the same without
+the exclusivity.
 
 Check that errand sees it before going any further:
 

@@ -3,6 +3,11 @@
 None is needed. `errand` with no configuration at all finds your entries and runs them in the
 interpreter you started it with.
 
+You do not have to write the file from a blank page: **`errand --init`** reads the directory,
+writes the `errandfile.py` that says what errand would otherwise guess (see
+[Start from what you have](./start)), makes `runs/`, adds it to `.gitignore` if there is a git
+here, and leaves a commented stack of layers ready to adapt. It never overwrites.
+
 To declare environments, tags and the rest, put an **`errandfile.py`** at the root of the project —
 the same idea as a Makefile or a Dockerfile. It is ordinary Python, loaded once by path and under a
 private name, with no entry point to call and nothing to return:

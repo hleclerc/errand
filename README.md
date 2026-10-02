@@ -4,9 +4,14 @@
 > back everything it produced, into a path you can predict.**
 
 An *errand* is a trip you make on someone's behalf and come home from with the things. That is the
-whole model. You declare a piece of work next to the code it exercises; `errand` works out where to
-run it, makes sure that place is ready, runs it — in several places at once if you ask — and
-repatriates what it produced.
+whole model. You say what to run and where it may run; `errand` makes sure that place is ready, goes
+in — through ssh, a Slurm allocation, a container, whatever the way is — runs it, in several places
+at once if you ask, and repatriates what it produced.
+
+What you run is yours: a pytest suite, a Catch2 binary, a cargo project, a Makefile target, a script.
+With no configuration `errand` looks at the directory and says what it found; `errand --init` writes
+that down as an `errandfile.py`. Declaring work with errand's own `if track( … ):` guard is one
+more way to give it something to run, not the way in.
 
 It stands on three legs, and you want all three:
 
@@ -56,6 +61,9 @@ make            # everything else, including the release order
 
 ## Declaring work
 
+*This section is about errand's own declaration, which is optional: a pytest, Catch2 or cargo
+suite, or a plain command, needs none of it — see [Other languages](#other-languages).*
+
 An entry is a piece of work that produces something. You declare it next to the code it exercises,
 with a guard that reads like `if __name__ == "__main__":` but does more — several per file, mixable
 freely, each identified by its **call site** so that two can share a name:
@@ -83,13 +91,16 @@ Four traits say how it should be treated:
 | `exclusive` | it needs the machine to itself | `False` |
 | `stable_path` | `latest/` is what you are meant to open | `False` |
 
-Setting them by hand every time would be tedious, so three ordinary functions set them for you:
+Setting them by hand every time would be tedious, so four ordinary functions set them for you:
 
 ```python
-from errand import test, bench, experiment
+from errand import test, bench, track, experiment
 
 if test( "addition" ):                       # bulk
     assert 1 + 1 == 2
+
+if p := track( "accuracy", n = Param( 1000 ) ):   # keep
+    p.results[ "error" ] = abs( solve( p.n ) - exact( p.n ) )
 
 if p := bench( "solve", n = Param( 1000 ) ): # keep, exclusive
     p.results[ "seconds" ] = solve( p.n )
@@ -98,7 +109,12 @@ if p := experiment( "the shape of it" ):     # stable_path
     plot( ).savefig( p.out_dir / "shape.png" )
 ```
 
-They are three lines of Python over `entry`, and you can write a fourth of your own the same way.
+`track` is for **numbers you want to follow** — an error, a residual, a size, a score, a timing —
+kept and compared date to date. A benchmark is not necessarily about speed. `bench` is `track`
+measured alone, since the commonest numbers worth following are timings and a timing taken while
+something else ran is not a timing.
+
+They are four lines of Python over `entry`, and you can write a fifth of your own the same way.
 Override a trait on the spot when the preset is not quite right:
 
 ```python
@@ -823,7 +839,8 @@ env( "cluster", [ Ssh( host = value( "ssh_host", "gpu-box" ),
 
 ## Other languages
 
-An entry does not have to be a Python call site. Providers for C++ (Catch2, GoogleTest, doctest),
+errand does not care what your tests are written in. An entry does not have to be a Python call
+site. Providers for C++ (Catch2, GoogleTest, doctest),
 Rust (`cargo test`, Criterion), JavaScript and plain executables come with `errand`, and one line
 in `errandfile.py` puts an existing suite under it — with an output directory, summaries, environment
 matrices and remote repatriation, none of which it had before:
@@ -843,8 +860,15 @@ A provider finds its own entries the way its ecosystem does — `pytest`'s colle
 `test_*.cpp` under a directory, `cargo`'s targets. That is a guess about your layout, so it is a
 guess you write down: a provider line in `errandfile.py` is the declaration of what will be looked for
 and where, and it takes the arguments to say something else. With no `errandfile.py` at all, `errand`
-guesses on its own and **tells you what it guessed** before running anything — convenient for a
-first look, never silent, and the cure is to write the line.
+reads the directory, guesses, and **tells you what it guessed** before running anything:
+
+```text
+  no errandfile.py; guessed:  pytest (tests/)  ·  catch2 (cpp/)  ·  cargo (rust/)   ( errand --init writes it down )
+```
+
+Convenient for a first look, never silent, and the cure is to write the line — which is what
+`errand --init` does, and makes `runs/` beside it. It never overwrites (`--init=force` does). Nothing
+is run to guess: it lists directories and reads a few files.
 
 Discovery over a large tree is not free, and will be cached against file mtimes. Later; it is an
 optimization, not a design question.

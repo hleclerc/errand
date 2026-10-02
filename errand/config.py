@@ -67,6 +67,9 @@ class Settings:
 settings  = Settings()
 envs      : dict = { }
 providers : list = [ ]
+# What was GUESSED for a project with no config file of its own: [ detect.Guess ].
+# Kept apart from `providers` so that it can be announced -- a guess is never silent.
+guessed   : list = [ ]
 
 
 def configure( **kw ):
@@ -98,6 +101,7 @@ def reset( ):
     settings = Settings()
     envs.clear()
     providers.clear()
+    guessed.clear()
 
 
 def load( root: Path, warn = None ) -> bool:
@@ -109,6 +113,12 @@ def load( root: Path, warn = None ) -> bool:
     reset()
     path = config_in( root )
     if path is None:
+        # No declaration: look at what is there. Existing suites are adopted for
+        # this run only, and `cli` says so; `errand --init` writes the guess down.
+        from . import detect
+        for g in detect.guess( root ):
+            guessed.append( g )
+            providers.append( g.make() )
         return False
     if path.name == "errand.py" and warn:
         warn( f"{path} shadows the errand package: `python -m errand` and any script "

@@ -1,5 +1,5 @@
 """Declaring work: presets, traits, parameters and matrices."""
-from errand import test, bench, experiment, entry, Param
+from errand import test, bench, experiment, entry, track, Param
 from errand import entries as E
 from errand.cli import expand
 
@@ -123,3 +123,9 @@ if test( "choices are checked before anything runs" ):
         assert "newton" in str( err )
     else:
         assert False, "a value outside choices must not reach the body"
+
+
+if test( "track keeps the numbers without taking the machine" ):
+    got = collected_of( lambda: track( "t" ) )[ 0 ]
+    assert got.traits[ "keep" ] and not got.traits[ "bulk" ] and not got.traits[ "exclusive" ]
+    assert got.kind == "bench"           # numbers followed over time: one kind for -k

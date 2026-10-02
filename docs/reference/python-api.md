@@ -3,7 +3,7 @@
 Everything a file of work needs comes from `errand` itself:
 
 ```python
-from errand import entry, test, bench, experiment, Param
+from errand import entry, test, bench, track, experiment, Param
 from errand import has_tag, tag, out_dir
 from errand import need, have, skip
 ```
@@ -58,15 +58,18 @@ Returns `False` while the file is being read for collection, and while another e
 one being run. Returns an `Args` for the entry that is running, which is why the walrus reads the
 way it does.
 
-### test / bench / experiment
+### test / bench / track / experiment
 
 ```python
 test( name, tags = None, /, **kw )        # bulk
+track( name, tags = None, /, **kw )       # keep, not bulk
 bench( name, tags = None, /, **kw )       # keep, exclusive, not bulk
 experiment( name, tags = None, /, **kw )  # stable_path, not bulk
 ```
 
-Three lines of Python over `entry`, and you can write a fourth the same way. Any trait can be
+`track` is for numbers you want to follow — any numbers; `bench` is `track` measured alone, for
+timings and anything else a neighbour would disturb. Four lines of Python over `entry`, and you can
+write a fifth the same way. Any trait can be
 overridden on the spot:
 
 ```python

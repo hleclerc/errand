@@ -13,10 +13,19 @@ errand [PATTERN] [options] [-- COMMAND …]
 | flag | |
 |---|---|
 | `PATTERN` | `file[::name]`, comma-separated; fnmatch on both sides. The file part matches the full stem |
-| `-k`, `--kind` | `test`, `bench` or `experiment` (`exp` is accepted). Repeatable |
+| `-k`, `--kind` | `test`, `bench` (every entry whose numbers are kept: `bench` and `track`) or `experiment` (`exp` is accepted). Repeatable |
 | `-e`, `--entry-tags` | an [expression](./expressions) over the tags written on an entry |
 | `-h`, `--help` | show what matched, and the parameters each one takes — a dry run of the pattern |
 | `--<param>` | any parameter declared by a matched entry. A comma is a [matrix](/guide/matrices) |
+
+## Starting a project
+
+| flag | |
+|---|---|
+| `--init` | write an `errandfile.py` from what the directory holds — [what it looks for](/guide/start#what-it-looks-for) — and make `runs/`. Never overwrites |
+| `--init=force` | replace an existing one |
+
+With no `errandfile.py`, the same reading is done for the run itself, and announced.
 
 ## Choosing where
 
