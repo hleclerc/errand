@@ -6,6 +6,7 @@ import contextlib
 import io
 import itertools
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -412,6 +413,42 @@ def dispatch( env, tags, argv, *, root, out_root, entries, overrides_list ):
                     echo = lambda s: print( dim( s ), flush = True ) )
 
 
+def run_here( known, command ):
+    """`errand [-x] -- <command>`: that command on this machine, once the queue
+    lets it, under a memory ceiling, and at low priority unless it is exclusive.
+    What `job` used to be: the machine is shared by every session and project."""
+    needs = { k: v for k, v in ( ( "cpus", known.cpus ), ( "ram", known.ram ) ) if v }
+    mem = known.mem or ( "24G" if known.exclusive else "8G" )
+    wrap = [ ]
+    scope = [ "systemd-run", "--user", "--scope", "-q", "-p", f"MemoryMax={mem}" ]
+    # Without a user bus ( ssh, cron, a changed XDG_RUNTIME_DIR ) the scope cannot
+    # be made; the command still runs, only without its ceiling.
+    if shutil.which( "systemd-run" ) and subprocess.run( scope + [ "true" ], capture_output = True ).returncode == 0:
+        wrap += scope
+    if not known.exclusive:
+        wrap += [ "nice", "-n", "5" ]
+    label = known.label or " ".join( command )
+    say = lambda m: None if known.quiet else print( m, file = sys.stderr, flush = True )
+    with queue.claim( needs, exclusive = known.exclusive, label = label,
+                      enabled = not known.no_queue, echo = say ) as granted:
+        env = { **os.environ, **( granted.env() if granted else { } ),
+                **( granted.handed_down() if granted else { } ),
+                "JOB_CLASS": "bench" if known.exclusive else "generic" }
+        say( f"[errand {os.getpid()} {'exclusive' if known.exclusive else 'shared'}] {label}" )
+        try:
+            if known.log:
+                with open( known.log, "w" ) as out:
+                    rc = subprocess.run( wrap + list( command ), env = env,
+                                         stdout = out, stderr = subprocess.STDOUT ).returncode
+            else:
+                rc = subprocess.run( wrap + list( command ), env = env ).returncode
+        except FileNotFoundError as err:
+            say( f"errand: {err}" )
+            rc = 127
+        say( f"[errand {os.getpid()}] done, code {rc}" )
+    return rc
+
+
 def run_there( known, command, *, root ):
     """`errand --env X -- <command>`: that command, in that environment.
 
@@ -745,6 +782,16 @@ def build_parser( tag_names = ( ) ):
     p.add_argument( "--no-queue", action = "store_true",
                     help = "do not wait for the machine to be free" )
     p.add_argument( "--queue", action = "store_true", help = "what the host is busy with, and stop" )
+    p.add_argument( "--claim-wait", dest = "wait", action = "store_true", help = "wait until nothing holds the machine, and stop" )
+    p.add_argument( "-x", "--claim-exclusive", dest = "exclusive", action = "store_true",
+                    help = "with `-- cmd` and no --env: the machine to itself ( a benchmark )" )
+    p.add_argument( "--claim-cpus", dest = "cpus", default = None, help = "with `-- cmd`: cores the command needs" )
+    p.add_argument( "--claim-ram", dest = "ram", default = None, help = "with `-- cmd`: memory the command needs, e.g. 8G" )
+    p.add_argument( "-m", "--claim-mem", dest = "mem", default = None,
+                    help = "with `-- cmd`: memory ceiling of the command ( default 8G, 24G exclusive )" )
+    p.add_argument( "-n", "--claim-label", dest = "label", default = None, help = "with `-- cmd`: its name in the queue" )
+    p.add_argument( "-q", dest = "quiet", action = "store_true", help = "with `-- cmd`: no banner" )
+    p.add_argument( "-l", "--claim-log", dest = "log", default = None, help = "with `-- cmd`: stdout and stderr go there" )
     p.add_argument( "--batch", action = "store_true",
                     help = "launch it and give the shell back" )
     p.add_argument( "--tui", action = "store_true",
@@ -842,7 +889,12 @@ def main( argv = None ):
         return print_envs( root )
 
     if handed:
+        if not ( known.env or known.env_tags ):
+            return run_here( known, handed )
         return run_there( known, handed, root = root )
+
+    if known.wait:
+        return queue.wait_idle()
 
     if known.forget:
         batch.forget( root, known.forget )

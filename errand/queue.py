@@ -7,6 +7,7 @@ project. That means state outside the process, and the smallest honest form of
 it is a directory of claims.
 
     <queue>/claims/<host>-<pid>-<n>.yaml    one file per held claim
+    <queue>/waiting/<host>-<pid>-<n>.yaml   an exclusive request that is queued
     <queue>/lock-<host>                     held only while deciding
 
 Every name carries the host, so a file is readable on its own and a queue
@@ -210,8 +211,39 @@ def taken_devices( others: list ) -> set:
     return out
 
 
-def _fits( needs: dict, exclusive: bool, others: list ):
-    """( waiting_for, devices ). `waiting_for` is None when it fits."""
+def _waiting_dir( ) -> Path:
+    d = queue_dir() / "waiting"
+    d.mkdir( parents = True, exist_ok = True )
+    return d
+
+
+def waiting_exclusive( ) -> list:
+    """The exclusive requests that are queued and still breathing."""
+    out, now = [ ], time.time()
+    for path in sorted( _waiting_dir().glob( "*.yaml" ) ):
+        try:
+            age = now - path.stat().st_mtime
+        except OSError:
+            continue
+        if age > STALE_AFTER:
+            path.unlink( missing_ok = True )
+            continue
+        row = yamlish.read( path )
+        if row:
+            row[ "path" ] = str( path )
+            out.append( row )
+    return out
+
+
+def _fits( needs: dict, exclusive: bool, others: list, ahead: list = ( ) ):
+    """( waiting_for, devices ). `waiting_for` is None when it fits.
+
+    `ahead` are the exclusive requests already queued. Whatever arrives after
+    one waits behind it: otherwise a steady stream of small work would starve
+    a benchmark for ever, which is the one thing a queue is for.
+    """
+    if ahead and not exclusive:
+        return f"{ahead[ 0 ].get( 'label', 'something' )}, which is waiting for the machine to itself", [ ]
     if exclusive and others:
         return f"the machine to itself ({len( others )} running)", [ ]
     if any( o.get( "exclusive" ) for o in others ):
@@ -249,6 +281,35 @@ def _fits( needs: dict, exclusive: bool, others: list ):
     return None, free[ : wanted_gpus ]
 
 
+def _acquire( needs: dict, exclusive: bool, label: str, mine: Path, echo ) -> list:
+    """Block until the claim fits, then write it. Returns the devices given."""
+    queued = _waiting_dir() / mine.name
+    waited_for = None
+    try:
+        while True:
+            with _lock():
+                others = [ o for o in held() if o[ "path" ] != str( mine ) ]
+                ahead = [ w for w in waiting_exclusive() if w[ "path" ] != str( queued ) ]
+                waiting, got = _fits( needs, exclusive, others, ahead )
+                if waiting is None:
+                    yamlish.write( mine, { "label": label, "pid": os.getpid(), "host": host(),
+                                           "exclusive": exclusive, "since": time.time(),
+                                           "devices": got, **needs } )
+                    return got
+                if exclusive:
+                    if queued.exists():
+                        os.utime( queued, None )
+                    else:
+                        yamlish.write( queued, { "label": label, "pid": os.getpid(),
+                                                 "host": host(), "since": time.time() } )
+            if echo and waiting != waited_for:
+                echo( f"  waiting for {waiting}" )
+                waited_for = waiting
+            time.sleep( POLL )
+    finally:
+        queued.unlink( missing_ok = True )
+
+
 @contextlib.contextmanager
 def claim( needs: dict, *, exclusive = False, label = "", enabled = True, echo = None ):
     """Hold a share of the machine for the duration of the block."""
@@ -268,21 +329,7 @@ def claim( needs: dict, *, exclusive = False, label = "", enabled = True, echo =
 
     needs = normalize( needs )
     mine = _claims_dir() / f"{host()}-{os.getpid()}-{time.time_ns()}.yaml"
-    waited_for = None
-
-    while True:
-        with _lock():
-            others = [ o for o in held() if o[ "path" ] != str( mine ) ]
-            waiting, got = _fits( needs, exclusive, others )
-            if waiting is None:
-                yamlish.write( mine, { "label": label, "pid": os.getpid(), "host": host(),
-                                       "exclusive": exclusive, "since": time.time(),
-                                       "devices": got, **needs } )
-                break
-        if echo and waiting != waited_for:
-            echo( f"  waiting for {waiting}" )
-            waited_for = waiting
-        time.sleep( POLL )
+    got = _acquire( needs, exclusive, label, mine, echo )
 
     stop = threading.Event()
     beat = threading.Thread( target = _heartbeat, args = ( mine, stop ), daemon = True )
@@ -331,9 +378,18 @@ def _heartbeat( path: Path, stop: threading.Event ):
             return      # reclaimed while we were away; nothing to keep alive
 
 
+def wait_idle( ) -> int:
+    """Return once nothing holds the machine and nothing is queued for it."""
+    while held() or waiting_exclusive():
+        time.sleep( 1.0 )
+    return 0
+
+
 def describe( ) -> list:
     """One line per live claim, for a banner or a monitor."""
     out = [ ]
+    for row in waiting_exclusive():
+        out.append( f"{row.get( 'label', '?' )}  waits for the whole machine  pid {row.get( 'pid' )}" )
     for row in held():
         what = "the whole machine" if row.get( "exclusive" ) else ", ".join(
             f"{k}={row[ k ]:g}" for k in ( "cpus", "ram", "gpus" ) if row.get( k ) ) or "a slot"

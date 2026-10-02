@@ -304,3 +304,38 @@ if test( "an errand inside an errand inherits the claim rather than waiting for 
                     os.environ.pop( Q.CLAIM, None )
                 else:
                     os.environ[ Q.CLAIM ] = before
+
+
+if test( "what arrives after an exclusive request waits behind it" ):
+    with private_queue():
+        order, small = [ ], threading.Event()
+
+        def exclusive( ):
+            with Q.claim( { }, exclusive = True, label = "bench" ):
+                order.append( "X" )
+
+        def late( ):
+            with Q.claim( { }, label = "late" ):
+                order.append( "late" )
+
+        with Q.claim( { }, label = "running" ):
+            x = threading.Thread( target = exclusive )
+            x.start()
+            while not Q.waiting_exclusive():
+                time.sleep( 0.05 )
+            y = threading.Thread( target = late )
+            y.start()
+            time.sleep( 1.0 )
+            assert order == [ ], "nothing may pass while the running claim is held"
+        x.join( 10 ); y.join( 10 )
+        assert order == [ "X", "late" ], order
+        assert not Q.waiting_exclusive()
+
+
+if test( "`errand -- cmd` runs the command through the queue and says its code" ):
+    with private_queue():
+        r = subprocess.run( [ sys.executable, "-m", "errand", "-x", "--", sys.executable, "-c",
+                              "import sys; sys.exit( 3 )" ], capture_output = True, text = True,
+                            env = { **os.environ, "PYTHONPATH": os.pathsep.join( sys.path ) } )
+        assert r.returncode == 3, r.stderr
+        assert "exclusive" in r.stderr
