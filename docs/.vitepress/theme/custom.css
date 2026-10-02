@@ -1,0 +1,48 @@
+/*
+ * errand's colours. An errand is a trip you take on someone's behalf and come
+ * home from, so the palette is warm rather than corporate-blue, and the one
+ * place it gets loud is the home page's title.
+ */
+:root {
+  --vp-c-brand-1: #c2410c;
+  --vp-c-brand-2: #ea580c;
+  --vp-c-brand-3: #f97316;
+  --vp-c-brand-soft: rgba( 249, 115, 22, 0.14 );
+
+  --vp-home-hero-name-color: transparent;
+  --vp-home-hero-name-background: -webkit-linear-gradient( 120deg, #f97316 30%, #c2410c );
+  --vp-home-hero-image-background-image: linear-gradient( -45deg, #f9731655 50%, #0ea5e955 50% );
+  --vp-home-hero-image-filter: blur( 48px );
+}
+
+.dark {
+  --vp-c-brand-1: #fb923c;
+  --vp-c-brand-2: #f97316;
+  --vp-c-brand-3: #ea580c;
+  --vp-c-brand-soft: rgba( 249, 115, 22, 0.18 );
+}
+
+/* The hero's tagline is a sentence, not a slogan: let it breathe. */
+.VPHero .tagline {
+  max-width: 46rem;
+}
+
+/* The screens of the TUI, and the output trees, are drawn with characters and
+ * are wider than prose. At the default size they wrap or scroll; at this one
+ * they fit, and they are still perfectly readable. */
+.vp-doc div[class~="language-text"] pre,
+.vp-doc div[class~="language-ansi"] pre {
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* A table of flags is read by scanning the left column, so keep that column
+ * from breaking mid-flag. */
+.vp-doc table code {
+  white-space: nowrap;
+}
+
+.vp-doc table {
+  display: table;
+  width: 100%;
+}

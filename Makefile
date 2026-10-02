@@ -28,7 +28,7 @@ VENV    ?= .venv
 TOOLS   := .venv-release
 TOOLSPY := $(TOOLS)/bin/python
 
-.PHONY: help dev venv test build check testpypi pypi tag clean
+.PHONY: help dev venv test build check testpypi pypi tag clean site site-build
 
 help:
 	@echo "errand $(VERSION)   ( distribution: $(DIST) )"
@@ -36,6 +36,9 @@ help:
 	@echo "  make venv        a virtual environment with errand installed in it, editable"
 	@echo "  make dev         pip install -e .  into the interpreter you are using now"
 	@echo "  make test        run the suite         ( make test ARGS='test_queue' )"
+	@echo
+	@echo "  make site        the website, live reloading   ( docs/, VitePress )"
+	@echo "  make site-build  the website into docs/.vitepress/dist"
 	@echo
 	@echo "  make build       sdist + wheel into dist/"
 	@echo "  make check       twine check --strict"
@@ -63,6 +66,22 @@ venv:
 # thing to run, and having to install something first would be the wrong order.
 test:
 	cd tests && PYTHONPATH=$(CURDIR) $(PY) -m errand $(ARGS)
+
+# ── the website ─────────────────────────────────────────────────────────────
+#
+# Everything web lives under docs/, including its package.json, so the project
+# root stays a Python package root. `npm install` is idempotent and quick once
+# the modules are there, so there is no separate step to remember.
+
+site: docs/node_modules
+	cd docs && npm run dev
+
+site-build: docs/node_modules
+	cd docs && npm run build
+
+docs/node_modules: docs/package.json
+	cd docs && npm install
+	@touch $@
 
 # ── publishing ──────────────────────────────────────────────────────────────
 

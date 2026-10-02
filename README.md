@@ -29,6 +29,9 @@ all](examples/01-minimal/), [four environments over three machines](examples/02-
 [an existing pytest / Catch2 / cargo project adopted in three
 lines](examples/03-existing-suite/).
 
+Everything below, split by sub-theme and with the examples written up as tutorials, is on the
+website: **<https://hleclerc.github.io/errand/>** — built from [`docs/`](docs/).
+
 ## Installing
 
 ```bash
