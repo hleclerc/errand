@@ -2,16 +2,17 @@
 
 errand does not care what your tests are written in. An entry does not have to be a Python call
 site, and most of what you run will not be. Providers for C++ (Catch2), Rust (`cargo test`) and
-pytest come with `errand`, and one line in [`errandfile.py`](./configuration) puts an existing suite
+pytest come with `errand`, and one line in [`errand-project.py`](./configuration) puts an existing suite
 under it — with an output directory, summaries, environment matrices and remote repatriation, none
 of which it had before:
 
 ```python
-from errand import provider, Pytest, Catch2, Cargo
+# errand-project.py
+import errand
 
-provider( Pytest( ) )
-provider( Catch2( dir = "tests/cpp" ) )
-provider( Cargo( ) )
+errand.provider( errand.Pytest( ) )
+errand.provider( errand.Catch2( dir = "tests/cpp" ) )
+errand.provider( errand.Cargo( ) )
 ```
 
 ```bash
@@ -52,18 +53,18 @@ A provider finds its own entries the way its ecosystem does — pytest's collect
 `test_*.cpp` under a directory, cargo's targets. That is a guess about your layout, so it is a guess
 you write down.
 
-With no `errandfile.py` at all, `errand` reads the directory and **tells you what it guessed**
+With no `errand-*.py` at all, `errand` reads the directory and **tells you what it guessed**
 before running anything:
 
 ```text
-  no errandfile.py; guessed:  pytest (tests/)  ·  catch2 (cpp/)  ·  cargo (rust/)   ( errand --init writes it down )
+  no errand-*.py; guessed:  pytest (tests/)  ·  catch2 (cpp/)  ·  cargo (rust/)   ( errand --init writes it down )
 ```
 
 Convenient for a first look, never silent, and the cure is to write the line — which is what
-`errand --init` does, with `runs/` made beside it. The rules it follows are in
+`errand --init` does, with `runs/` made beside it, and an `errand-envs.py` for the environments. The rules it follows are in
 [Start from what you have](./start#what-it-looks-for). Every framework
 locates its tests by assuming something about your layout, so there is no version of this that does
-not guess. What `errandfile.py` changes is that the assumption is **visible, versioned, and
+not guess. What `errand-project.py` changes is that the assumption is **visible, versioned, and
 arguable**: `Pytest( dirs = [ "tests" ] )` says exactly what will be looked at, and takes arguments
 to say something else.
 
@@ -74,8 +75,9 @@ entries** — not once per file, and not once per parallel process, which under 
 several of them writing the same binary at the same time:
 
 ```python
-provider( Catch2( dir = "cpp", build = "make -C cpp" ) )
-provider( Catch2( dir = "cpp", build = "cmake --build build", binary = "build/{stem}" ) )
+# errand-project.py
+errand.provider( errand.Catch2( dir = "cpp", build = "make -C cpp" ) )
+errand.provider( errand.Catch2( dir = "cpp", build = "cmake --build build", binary = "build/{stem}" ) )
 ```
 
 `binary` says where a source's executable lands, `{stem}` being the source's name; it defaults to

@@ -111,24 +111,24 @@ if test( "what this machine can actually run" ):
 # --- a real container -------------------------------------------------------
 
 APPTAINER_PROJECT = '''
-from errand import configure, env, Apptainer, Vars
+import errand
 
-configure( exclude = [ "_lib" ] )
+errand.configure( exclude = [ "_lib" ] )
 
-env( "boxed",
-     [ Apptainer( image = "image.sif", recipe = "image.def" ),
-       Vars( {{ "PYTHONPATH": "{root}/_lib", "MARK": "crossed" }} ) ],
+errand.envs[ "boxed" ] = errand.Env(
+     [ errand.Apptainer( image = "image.sif", recipe = "image.def" ),
+       errand.Vars( {{ "PYTHONPATH": "{root}/_lib", "MARK": "crossed" }} ) ],
      boxed = True )
 '''
 
 DOCKER_PROJECT = '''
-from errand import configure, env, {cls}, Vars
+import errand
 
-configure( exclude = [ "_lib" ] )
+errand.configure( exclude = [ "_lib" ] )
 
-env( "boxed",
-     [ {cls}( image = "{image}" ),
-       Vars( {{ "PYTHONPATH": "{root}/_lib", "MARK": "crossed" }} ) ],
+errand.envs[ "boxed" ] = errand.Env(
+     [ errand.{cls}( image = "{image}" ),
+       errand.Vars( {{ "PYTHONPATH": "{root}/_lib", "MARK": "crossed" }} ) ],
      boxed = True )
 '''
 
@@ -153,15 +153,15 @@ if test( "a run inside a container comes back out", tags = [ "container", "slow"
     with tempfile.TemporaryDirectory() as tmp:
         root = Path( tmp ) / "proj"
         if engine == "apptainer":
-            errandfile = APPTAINER_PROJECT.format( root = root )
+            config = APPTAINER_PROJECT.format( root = root )
             files = { "bench_work.py": WORK, "image.def": RECIPE }
         else:
-            errandfile = DOCKER_PROJECT.format(
+            config = DOCKER_PROJECT.format(
                 cls = "Podman" if engine == "podman" else "Docker",
                 image = BASE_IMAGE, root = root )
             files = { "bench_work.py": WORK }
 
-        project = write_project( root, errandfile, files, vendor = True )
+        project = write_project( root, config, files, vendor = True )
         code, output = run_errand( project, "-k", "bench", "--env", "boxed", "--n=2,3" )
         assert code == 0, output
 

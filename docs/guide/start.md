@@ -6,14 +6,14 @@ with, and where you would like that to run.
 ```bash
 cd my-project
 errand                 # looks at the directory, says what it found, runs it
-errand --init          # writes that down as errandfile.py, and makes runs/
+errand --init          # writes that down as errand-project.py, and makes runs/
 ```
 
-With no `errandfile.py`, errand reads the directory and **tells you what it guessed** before it runs
+With no `errand-*.py`, errand reads the directory and **tells you what it guessed** before it runs
 anything:
 
 ```text
-  no errandfile.py; guessed:  pytest (tests/)  ·  catch2 (cpp/)  ·  cargo (rust/)   ( errand --init writes it down )
+  no errand-*.py; guessed:  pytest (tests/)  ·  catch2 (cpp/)  ·  cargo (rust/)   ( errand --init writes it down )
 ```
 
 It is a guess about your layout — every framework finds its tests by assuming something — so it is
@@ -59,27 +59,27 @@ my-project/
 ::: code-group
 
 ```python [pytest]
-# errandfile.py, as written by `errand --init`
-from errand import configure, provider, Pytest
+# errand-project.py, as written by `errand --init`
+import errand
 
-configure( out = "runs" )
-provider( Pytest( dirs = [ 'tests' ] ) )
+errand.configure( out = "runs" )
+errand.provider( errand.Pytest( dirs = [ 'tests' ] ) )
 ```
 
 ```python [C++ · Catch2]
-# errandfile.py, as written by `errand --init`
-from errand import configure, provider, Catch2
+# errand-project.py, as written by `errand --init`
+import errand
 
-configure( out = "runs" )
-provider( Catch2( dir = 'cpp', build = 'make -C cpp' ) )     # built once, before any file runs
+errand.configure( out = "runs" )
+errand.provider( errand.Catch2( dir = 'cpp', build = 'make -C cpp' ) )     # built once, before any file runs
 ```
 
 ```python [Rust · cargo]
-# errandfile.py, as written by `errand --init`
-from errand import configure, provider, Cargo
+# errand-project.py, as written by `errand --init`
+import errand
 
-configure( out = "runs" )
-provider( Cargo( manifest = 'Cargo.toml' ) )
+errand.configure( out = "runs" )
+errand.provider( errand.Cargo( manifest = 'Cargo.toml' ) )
 ```
 
 ```python [Any command]
@@ -93,7 +93,7 @@ if entry( "check", bulk = False ):
 ```
 
 ```python [errand's own entries]
-# No errandfile needed at all: a file that imports errand is found by that alone.
+# No project file needed at all: a file that imports errand is found by that alone.
 from errand import track, Param
 
 if p := track( "cost", n = Param( 1000 ) ):
@@ -116,23 +116,25 @@ on them. The detail of each is in [Other languages](./providers).
 | errand's own entries | any `.py` that imports `errand` — found by a text check, nothing to declare | nothing |
 
 Nothing is run to find any of that: it lists directories and reads a few files. An empty directory
-gets an `errandfile.py` too — with the three provider lines and a stack of layers in comments, ready
-to be uncommented.
+gets an `errand-project.py` too — with the three provider lines in comments — and an `errand-envs.py`
+holding a stack of layers in comments, ready to be uncommented.
 
 `errand --init` never overwrites: `--init=force` replaces an existing file.
 
 ## Then: where it runs
 
 The same suite, unchanged, in more than one place — that is the point of the file you just wrote.
-Add a stack of [layers](./environments) beside the provider line:
+Add a stack of [layers](./environments) in the `errand-envs.py` that `--init` wrote beside it — where
+*you* run the project, so that file is not versioned:
 
 ```python
-from errand import env, Micromamba, Apptainer, Ssh, Slurm
+# errand-envs.py
+import errand
 
-env( "local",   [ Micromamba( "myproject", python = "3.13" ) ] )
-env( "cluster", [ Ssh( host = "gpu-box", root = "~/errand/myproject" ),
-                  Slurm( partition = "gpu", time = "00:30:00" ),
-                  Apptainer( image = "containers/main.sif", recipe = "containers/main.def" ) ] )
+errand.envs[ "local" ]   = errand.Env( [ errand.Micromamba( "myproject", python = "3.13" ) ] )
+errand.envs[ "cluster" ] = errand.Env( [ errand.Ssh( host = "gpu-box", root = "~/errand/myproject" ),
+                                         errand.Slurm( partition = "gpu", time = "00:30:00" ),
+                                         errand.Apptainer( image = "containers/main.sif", recipe = "containers/main.def" ) ] )
 ```
 
 ```bash

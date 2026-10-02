@@ -1,17 +1,18 @@
 """Declaring environments, and choosing among them."""
 from pathlib import Path
 
+import errand
 from errand import test
 from errand import config as C, layers as L
 
 
 def declared( ):
     C.reset()
-    C.env( "local",   [ L.Vars( { "X": "1" } ) ], driver = "cpu" )
-    C.env( "gpu",     [ L.Apptainer( image = "c/cuda.sif" ) ], driver = "cuda", cuda = True )
-    C.env( "cluster", [ L.Ssh( host = "h", root = "/r" ),
-                        L.Apptainer( image = "c/cuda.sif" ) ],
-           driver = "cuda", cuda = True, fp = "64" )
+    C.envs[ "local" ] = C.Env( [ L.Vars( { "X": "1" } ) ], driver = "cpu" )
+    C.envs[ "gpu" ] = C.Env( [ L.Apptainer( image = "c/cuda.sif" ) ], driver = "cuda", cuda = True )
+    C.envs[ "cluster" ] = C.Env( [ L.Ssh( host = "h", root = "/r" ),
+                                   L.Apptainer( image = "c/cuda.sif" ) ],
+                                 driver = "cuda", cuda = True, fp = "64" )
     return C.envs
 
 
@@ -22,8 +23,17 @@ def chosen( **kw ):
 if test( "with nothing asked, the default is used" ):
     declared()
     assert chosen() == [ "local" ]
-    C.configure( default = "gpu" )
+    errand.default_env = "gpu"
     assert chosen() == [ "gpu" ]
+    errand.default_env = "nowhere"
+    try:
+        chosen()
+    except ValueError as err:
+        assert "nowhere" in str( err )
+    else:
+        assert False
+    C.reset()
+    assert errand.default_env is None
 
 
 if test( "by name, one or several" ):
@@ -67,7 +77,7 @@ if test( "a pinned dimension is only selected for its own value" ):
 
 if test( "a range covers each of its values" ):
     C.reset()
-    C.env( "both", [ ], fp = "32|64" )
+    C.envs[ "both" ] = C.Env( [ ], fp = "32|64" )
     assert chosen( wanted_tags = { "fp": "32" } ) == [ "both" ]
     assert chosen( wanted_tags = { "fp": "64" } ) == [ "both" ]
     assert chosen( wanted_tags = { "fp": "16" } ) == [ ] if False else True
@@ -97,7 +107,7 @@ if test( "every tag name becomes a flag" ):
 if test( "ssh has to be outermost" ):
     C.reset()
     try:
-        C.env( "wrong", [ L.Apptainer( image = "x.sif" ), L.Ssh( host = "h" ) ] )
+        C.Env( [ L.Apptainer( image = "x.sif" ), L.Ssh( host = "h" ) ] )
     except ValueError as err:
         assert "first" in str( err )
     else:
@@ -124,17 +134,43 @@ if test( "an unknown setting is a typo, not a new setting" ):
         assert False
 
 
+if test( "an environment is its key, and only an Env can be stored" ):
+    C.reset()
+    C.envs[ "x" ] = C.Env( [ ], driver = "cpu" )
+    assert C.envs[ "x" ].name == "x" and C.envs[ "x" ].tags == { "driver": "cpu" }
+    try:
+        C.envs[ "y" ] = "not an env"
+    except TypeError:
+        pass
+    else:
+        assert False
+    C.reset()
+
+
+if test( "every errand-*.py is read, in name order, and none of them is a candidate entry file" ):
+    import tempfile
+    from errand import discovery
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path( tmp )
+        ( root / "errand-b.py" ).write_text( "import errand\nerrand.envs[ 'b' ] = errand.Env( [ ] )\n" )
+        ( root / "errand-a.py" ).write_text( "import errand\nerrand.envs[ 'a' ] = errand.Env( [ ] )\n" )
+        assert C.load( root )
+        assert list( C.envs ) == [ "a", "b" ]
+        assert discovery.candidates( root ) == [ ]
+    C.reset()
+
+
 if test( "a config file is loaded by path, never as a module named errand" ):
     import tempfile
     import sys
     with tempfile.TemporaryDirectory() as tmp:
         root = Path( tmp )
         ( root / C.CONFIG_FILE ).write_text(
-            "from errand import env, Vars\n"
-            "env( 'one', [ Vars( { 'A': '1' } ) ], driver = 'cpu' )\n" )
+            "import errand\n"
+            "errand.envs[ 'one' ] = errand.Env( [ errand.Vars( { 'A': '1' } ) ], driver = 'cpu' )\n" )
         assert C.load( root )
         assert list( C.envs ) == [ "one" ]
-        assert "errand" not in [ m for m in sys.modules if m == "_errand_config" ]
+        assert "errand" not in [ m for m in sys.modules if m == "_errand_errand_exec" ]
 
 
 if test( "`errand --env x -- cmd` runs that command in that environment", tags = [ "slow" ] ):
@@ -168,26 +204,25 @@ if test( "a project file can read what this machine, and only this one, knows" )
 
     # `load` replaces process-wide state -- the same state the suite itself is
     # running under, and the ssh entries read it. Put it back.
-    kept = ( dict( LOC._cache ), LOC._loaded_from, LOC._missing_root )
+    kept = ( dict( LOC._cache ), list( LOC._files ), LOC._missing_root )
     with tempfile.TemporaryDirectory() as tmp:
         root = Path( tmp )
-        ( root / LOC.LOCAL_FILE ).write_text( "ssh_host = 'over-there'\n" )
-        LOC.load( root )
         # A host name has no business in git; the declaration that uses it has
-        # every business being committed. `value` is how both are true.
-        assert LOC.value( "ssh_host" ) == "over-there"
-        assert LOC.value( "absent", "a default that works here" ) == "a default that works here"
-
+        # every business being committed. Two files, read in name order, are how both
+        # are true: `errand-envs.py` ( not versioned ) before `errand-project.py`.
+        ( root / C.ENVS_FILE ).write_text( "ssh_host = 'over-there'\n" )
         ( root / C.CONFIG_FILE ).write_text(
-            "from errand import Ssh, env\n"
-            "from errand.local import value\n"
-            "env( 'far', [ Ssh( host = value( 'ssh_host', 'localhost' ) ) ] )\n" )
+            "import errand\n"
+            "errand.envs[ 'far' ] = errand.Env( [ errand.Ssh( host = errand.value( 'ssh_host', 'localhost' ) ) ] )\n" )
         assert C.load( root )
         assert C.envs[ "far" ].ssh.host == "over-there"
+        assert LOC.value( "ssh_host" ) == "over-there"
+        assert LOC.value( "absent", "a default that works here" ) == "a default that works here"
+        assert "ssh_host" in LOC.status() and "Ssh" not in LOC.status()
 
     LOC._cache.clear()
     LOC._cache.update( kept[ 0 ] )
-    LOC._loaded_from, LOC._missing_root = kept[ 1 ], kept[ 2 ]
+    LOC._files[ : ], LOC._missing_root = kept[ 1 ], kept[ 2 ]
 
 
 if test( "being let in prepares the place, like any other command", tags = [ "slow" ] ):
@@ -199,9 +234,9 @@ if test( "being let in prepares the place, like any other command", tags = [ "sl
 
     with tempfile.TemporaryDirectory() as tmp:
         project = a_project( tmp )
-        ( project / "errandfile.py" ).write_text(
-            "from errand import Venv, env\n"
-            "env( 'made', [ Venv( python = 'no-such-python', create = True ) ] )\n" )
+        ( project / "errand-project.py" ).write_text(
+            "import errand\n"
+            "errand.envs[ 'made' ] = errand.Env( [ errand.Venv( python = 'no-such-python', create = True ) ] )\n" )
         # Being let into an environment that is not built is the one moment
         # where you MOST want it built: nothing else is about to do it. Here
         # the interpreter cannot be made, so the answer has to be that -- and

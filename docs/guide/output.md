@@ -101,7 +101,7 @@ a machine got slower is a different question, and one that wants to know somethi
 
 ## Where the tree goes
 
-`configure( out = "runs" )` — see [Configuration](./configuration). It is the one path errand
+`errand.configure( out = "runs" )` — see [Configuration](./configuration). It is the one path errand
 writes to, and it is the whole state: there is no database, no ledger and no daemon. Delete `runs/`
 and you have deleted your results, nothing else.
 

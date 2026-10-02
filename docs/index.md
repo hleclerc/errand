@@ -65,14 +65,14 @@ Describe a place once, as a stack read from the outside in — *that machine, an
 container, your command*:
 
 ```python
-# errandfile.py
-from errand import env, Micromamba, Apptainer, Ssh, Slurm
+# errand-envs.py
+import errand
 
-env( "local",   [ Micromamba( "myproject", python = "3.13" ) ] )
-env( "cluster", [ Ssh( host = "gpu-box", root = "~/errand/myproject" ),
-                  Slurm( partition = "gpu", gpus = 1, time = "2:00:00" ),
-                  Apptainer( image = "containers/cuda.sif", recipe = "containers/cuda.def" ) ],
-     cuda = True )
+errand.envs[ "local" ]   = errand.Env( [ errand.Micromamba( "myproject", python = "3.13" ) ] )
+errand.envs[ "cluster" ] = errand.Env( [ errand.Ssh( host = "gpu-box", root = "~/errand/myproject" ),
+                                         errand.Slurm( partition = "gpu", gpus = 1, time = "2:00:00" ),
+                                         errand.Apptainer( image = "containers/cuda.sif", recipe = "containers/cuda.def" ) ],
+                                       cuda = True )
 ```
 
 Then go there:
@@ -95,7 +95,7 @@ places to start it in. Pick yours.
 
 ```bash [pytest]
 cd my-project                  # a tests/ directory, nothing about errand in it
-errand --init                  # writes errandfile.py: provider( Pytest( dirs = [ 'tests' ] ) )
+errand --init                  # writes errand-project.py: errand.provider( errand.Pytest( dirs = [ 'tests' ] ) )
 errand                         # the suite, here
 errand --env local,cluster     # the same suite, in both places, side by side
 errand -e '!slow'              # @pytest.mark.slow is an entry tag
@@ -103,7 +103,7 @@ errand -e '!slow'              # @pytest.mark.slow is an entry tag
 
 ```bash [C++ · Catch2]
 cd my-project                  # cpp/test_*.cpp and a Makefile
-errand --init                  # provider( Catch2( dir = 'cpp', build = 'make -C cpp' ) )
+errand --init                  # errand.provider( errand.Catch2( dir = 'cpp', build = 'make -C cpp' ) )
 errand                         # built once, then each test file run
 errand test_geometry::area     # one Catch2 case, by name
 errand --env cluster           # compiled and run over there, results back here
@@ -111,7 +111,7 @@ errand --env cluster           # compiled and run over there, results back here
 
 ```bash [Rust · cargo]
 cd my-project                  # a Cargo.toml
-errand --init                  # provider( Cargo( ) )
+errand --init                  # errand.provider( errand.Cargo( ) )
 errand                         # one entry per test target
 errand --env cluster           # cargo test, inside the cluster's container
 ```

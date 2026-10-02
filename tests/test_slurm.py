@@ -3,7 +3,7 @@
 Nothing here names a partition. A cluster already knows which of its
 partitions is the default, and that answer stays correct when the cluster is
 rearranged, which a name copied out of somebody else's script does not. Name
-one in `errand.local.py` only to override:
+one in `errand-envs.py` only to override:
 
     slurm_host      = "login.hpc"     # or reuse ssh_host, if that machine has slurm
     slurm_partition = "gpu"           # optional
@@ -26,7 +26,7 @@ def flags( layer, **needs ):
 
 
 if test( "nothing stated is nothing passed", tags = [ "slurm" ] ):
-    # An empty Slurm() submits a bare `srun`: the cluster's own defaults, which
+    # An empty errand.Slurm() submits a bare `srun`: the cluster's own defaults, which
     # is what somebody who did not say otherwise meant.
     assert flags( L.Slurm() ) == [ ]
     assert "--partition" not in flags( L.Slurm( gpus = 1 ) )
@@ -42,14 +42,14 @@ if test( "a stated partition is used, a missing one is left to slurm", tags = [ 
 # --- a real submission ------------------------------------------------------
 
 PROJECT = '''
-from errand import configure, env, Ssh, Slurm, Vars
+import errand
 
-configure( exclude = [ "_lib" ] )
+errand.configure( exclude = [ "_lib" ] )
 
-env( "batch",
-     [ Ssh( host = {host!r}, root = {root!r}, options = {options!r} ),
-       Slurm( {partition}time = "00:05:00" ),
-       Vars( {{ "PYTHONPATH": "{root}/_lib" }} ) ],
+errand.envs[ "batch" ] = errand.Env(
+     [ errand.Ssh( host = {host!r}, root = {root!r}, options = {options!r} ),
+       errand.Slurm( {partition}time = "00:05:00" ),
+       errand.Vars( {{ "PYTHONPATH": "{root}/_lib" }} ) ],
      where = "batch" )
 '''
 
@@ -77,7 +77,7 @@ def slurm_target( ):
     if _has_slurm( "localhost", LOCALHOST_OPTIONS ):
         return "localhost", list( LOCALHOST_OPTIONS )
     skip( "no machine with slurm on it",
-          "name one in errand.local.py:\n"
+          "name one in errand-envs.py:\n"
           "    slurm_host = 'login.hpc'\n"
           "  ( ssh_host is tried first, so nothing to add if that machine has slurm )" )
 

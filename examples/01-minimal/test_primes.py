@@ -1,6 +1,6 @@
 """Three kinds of work on the same code, in one file.
 
-Nothing else is needed: there is no errand.py in this example, no environment
+Nothing else is needed: there is no errand-*.py in this example, no environment
 to declare, no configuration at all. `errand` finds this file because it
 mentions `errand`, and runs whichever entry you name.
 """

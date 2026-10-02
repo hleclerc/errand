@@ -38,11 +38,11 @@ So a source file that happens to share its entry's name — `Cell.py` next to `t
 never mistaken for one. And neither is a file that merely mentions errand in a comment, which would
 otherwise be imported and executed on the strength of a word.
 
-A directory holding a config file of its own is **another project**, and is not walked into: its
+A directory holding an `errand-*.py` of its own is **another project**, and is not walked into: its
 entries would run with this project's `src`, providers and environments, which is to say wrongly.
 
 Directories you want skipped for other reasons — vendored code, fixtures, a copy of something that
-would be imported and should not be — go in `configure( exclude = [ … ] )`.
+would be imported and should not be — go in `errand.configure( exclude = [ … ] )`.
 
 ## A file that will not import
 

@@ -113,8 +113,11 @@ applies its own default — which stays correct when the cluster is rearranged, 
 of somebody else's script does not.
 
 ```python
-env( "cluster", [ Ssh( host = "login.hpc", root = "/home/me/proj" ),   # NOT /tmp
-                  Slurm( time = "2:00:00" ) ] )                        # the default partition
+# errand-envs.py
+import errand
+
+errand.envs[ "cluster" ] = errand.Env( [ errand.Ssh( host = "login.hpc", root = "/home/me/proj" ),   # NOT /tmp
+                                         errand.Slurm( time = "2:00:00" ) ] )                        # the default partition
 ```
 
 ::: danger The root must be on a shared filesystem

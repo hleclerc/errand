@@ -1,10 +1,10 @@
 # 03 — a project that already has a suite
 
-A pytest suite, a Catch2 suite and a cargo one, none of them modified. Three lines in `errandfile.py`
+A pytest suite, a Catch2 suite and a cargo one, none of them modified. Three lines in `errand-project.py`
 put all three under `errand`.
 
 ```
-errandfile.py            three providers, and nothing else
+errand-project.py        three providers, and nothing else
 tests/test_api.py        ordinary pytest, still runs under `pytest`
 cpp/test_geometry.cpp    ordinary Catch2, still runs on its own
 cpp/Makefile             whatever you already build with
@@ -51,16 +51,16 @@ and the numbers accumulate per machine and per date, next to the Python ones, in
 
 ## Guessing, and writing the guess down
 
-Run `errand` in a project with no `errandfile.py` at all and it will find these suites by itself — and
+Run `errand` in a project with no `errand-*.py` at all and it will find these suites by itself — and
 say so before running anything:
 
 ```
-  no errandfile.py; guessed:  pytest (tests/)  ·  catch2 (cpp/)  ·  cargo (rust/)
-  write them down to stop guessing:  errand --write-config
+  no errand-*.py; guessed:  pytest (tests/)  ·  catch2 (cpp/)  ·  cargo (rust/)
+  ( errand --init writes it down )
 ```
 
 Every framework locates its tests by assuming something about your layout, so there is no version of
-this that does not guess. What `errandfile.py` changes is that the assumption is visible, versioned, and
+this that does not guess. What `errand-project.py` changes is that the assumption is visible, versioned, and
 arguable — `Pytest( dirs = [ "tests" ] )` says exactly what will be looked at, and takes arguments
 to say something else.
 
@@ -70,8 +70,9 @@ errand compiles nothing itself. It runs the command you already build with, once
 the binaries where you say they land:
 
 ```python
-provider( Catch2( dir = "cpp", build = "make -C cpp" ) )
-provider( Catch2( dir = "cpp", build = "cmake --build build", binary = "build/{stem}" ) )
+import errand
+errand.provider( errand.Catch2( dir = "cpp", build = "make -C cpp" ) )
+errand.provider( errand.Catch2( dir = "cpp", build = "cmake --build build", binary = "build/{stem}" ) )
 ```
 
 `build` runs **once before any entry of that provider** — not once per file, and not once per

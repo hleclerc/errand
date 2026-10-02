@@ -138,13 +138,13 @@ if test( "a submission can be dropped from the list", tags = [ "slow" ] ):
 # --- over there -------------------------------------------------------------
 
 REMOTE = '''
-from errand import configure, env, Ssh, Vars
+import errand
 
-configure( exclude = [ "_lib" ] )
+errand.configure( exclude = [ "_lib" ] )
 
-env( "over-there",
-     [ Ssh( host = {host!r}, root = {root!r}, options = {options!r} ),
-       Vars( {{ "PYTHONPATH": "{root}/_lib" }} ) ],
+errand.envs[ "over-there" ] = errand.Env(
+     [ errand.Ssh( host = {host!r}, root = {root!r}, options = {options!r} ),
+       errand.Vars( {{ "PYTHONPATH": "{root}/_lib" }} ) ],
      where = "remote" )
 '''
 

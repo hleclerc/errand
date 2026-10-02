@@ -52,7 +52,7 @@ there, and comparison between dates, machines and parameter sets falls out of th
 ## Your tools, as they are
 
 `errand` runs what you already have. With no configuration it looks at the directory and says what
-it found; `errand --init` writes that down as an `errandfile.py`.
+it found; `errand --init` writes that down as an `errand-project.py`.
 
 | you have | errand uses |
 |---|---|
@@ -99,11 +99,11 @@ tests/test_api.py      the work: a pytest suite, untouched
 src/…                  the code
 ```
 
-Once you want to say *where* things run, one file at the root says it:
+Once you want to say *where* things run, files at the root say it — errand reads every `errand-*.py`:
 
 ```
-errandfile.py          environments, providers, project settings    ← errand --init
-errand.local.py        what only this machine can supply — untracked
+errand-project.py      providers, project settings                  ← errand --init
+errand-envs.py         environments, and what only this machine can supply — untracked
 runs/                  the output tree, which errand writes and you read
 ```
 

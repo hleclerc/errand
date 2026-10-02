@@ -4,23 +4,25 @@ An environment is a stack of **layers** describing how to get from "run this pro
 subprocess, plus **[tags](./tags)** saying what it is. There is always a current interpreter; most
 layers are a way to override it.
 
-Environments are declared in [`errandfile.py`](./configuration), once, at the root of the project:
+Environments are declared in [`errand-envs.py`](./configuration), at the root of the project — they
+depend on who runs, and on what machine, so that file is not versioned:
 
 ```python
-from errand import env, Micromamba, Apptainer, Ssh, Slurm
+# errand-envs.py
+import errand
 
-env( "local", [ Micromamba( "myenv", python = "3.13", requirements = "requirements.txt" ) ],
-     driver = "jax" )
+errand.envs[ "local" ] = errand.Env( [ errand.Micromamba( "myenv", python = "3.13", requirements = "requirements.txt" ) ],
+                                     driver = "jax" )
 
-env( "gpu", [ Apptainer( image = "containers/cuda.sif", recipe = "containers/cuda.def",
-                         pip = [ "jax[cuda13]" ] ) ],
-     driver = "jax", cuda = True )
+errand.envs[ "gpu" ] = errand.Env( [ errand.Apptainer( image = "containers/cuda.sif", recipe = "containers/cuda.def",
+                                                       pip = [ "jax[cuda13]" ] ) ],
+                                   driver = "jax", cuda = True )
 
-env( "cluster", [ Ssh( host = "gpu-box", root = "/home/me/proj" ),
-                  Slurm( partition = "gpu", gpus = 1, time = "2:00:00" ),
-                  Apptainer( image = "containers/cuda.sif", recipe = "containers/cuda.def",
-                             pip = [ "jax[cuda13]" ] ) ],
-     driver = "jax", cuda = True )
+errand.envs[ "cluster" ] = errand.Env( [ errand.Ssh( host = "gpu-box", root = "/home/me/proj" ),
+                                         errand.Slurm( partition = "gpu", gpus = 1, time = "2:00:00" ),
+                                         errand.Apptainer( image = "containers/cuda.sif", recipe = "containers/cuda.def",
+                                                           pip = [ "jax[cuda13]" ] ) ],
+                                       driver = "jax", cuda = True )
 ```
 
 <Term scene="stack" caption="The cluster environment above, crossed by one run." />
@@ -60,14 +62,17 @@ one layer of it.
 
 ## Share pieces with plain Python
 
-`errandfile.py` is ordinary Python. A layer stack is an ordinary list:
+Project files are ordinary Python. A layer stack is an ordinary list:
 
 ```python
-CUDA = [ Apptainer( image = "containers/cuda.sif", recipe = "containers/cuda.def",
-                    flags = [ "--nvccli" ], pip = [ "jax[cuda13]" ] ) ]
+# errand-envs.py
+import errand
 
-env( "gpu",     CUDA,                                          driver = "jax", cuda = True )
-env( "cluster", [ Ssh( host = "gpu-box", root = "…" ) ] + CUDA, driver = "jax", cuda = True )
+CUDA = [ errand.Apptainer( image = "containers/cuda.sif", recipe = "containers/cuda.def",
+                           flags = [ "--nvccli" ], pip = [ "jax[cuda13]" ] ) ]
+
+errand.envs[ "gpu" ]     = errand.Env( CUDA,                                                    driver = "jax", cuda = True )
+errand.envs[ "cluster" ] = errand.Env( [ errand.Ssh( host = "gpu-box", root = "…" ) ] + CUDA, driver = "jax", cuda = True )
 ```
 
 That `cluster` is `gpu` *plus a machine in front of it* is visible in the file, and the two cannot
@@ -108,8 +113,8 @@ errand -k bench --env gpu,cluster    # both: a comma is a matrix here too
 
 Use `--env NAME` when you want exactly one and mean it. Everything else is in [Tags](./tags).
 
-With nothing asked for, `configure( default = … )` decides; with no default declared, errand runs in
-the interpreter you started it with.
+With nothing asked for, `errand.default_env = "name"` decides; with none, the first one declared is used;
+with no environment declared at all, errand runs in the interpreter you started it with.
 
 ## Next
 

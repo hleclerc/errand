@@ -76,7 +76,7 @@ if test( "a fingerprint follows the CONTENTS of what a layer names" ):
         reqs = root / "requirements.txt"
         reqs.write_text( "numpy\n" )
 
-        e = Env( "x", [ L.Micromamba( "demo", requirements = "requirements.txt" ) ] )
+        e = Env.make( "x", [ L.Micromamba( "demo", requirements = "requirements.txt" ) ] )
         c = L.Context( root = root )
 
         before = setup.wanted( e, c )
@@ -92,7 +92,7 @@ if test( "a fingerprint follows the CONTENTS of what a layer names" ):
 if test( "a missing file is a fingerprint too, not a crash" ):
     with tempfile.TemporaryDirectory() as tmp:
         root = Path( tmp )
-        e = Env( "x", [ L.Micromamba( "demo", requirements = "absent.txt" ) ] )
+        e = Env.make( "x", [ L.Micromamba( "demo", requirements = "absent.txt" ) ] )
         got = setup.wanted( e, L.Context( root = root ) )
         assert got and all( isinstance( v, str ) for v in got.values() )
 
@@ -101,15 +101,15 @@ if test( "changing a pip spec is a reason to install again" ):
     with tempfile.TemporaryDirectory() as tmp:
         root = Path( tmp )
         c = L.Context( root = root )
-        a = setup.wanted( Env( "x", [ L.Apptainer( image = "i.sif", pip = [ "jax" ] ) ] ), c )
-        b = setup.wanted( Env( "x", [ L.Apptainer( image = "i.sif", pip = [ "jax[cuda]" ] ) ] ), c )
+        a = setup.wanted( Env.make( "x", [ L.Apptainer( image = "i.sif", pip = [ "jax" ] ) ] ), c )
+        b = setup.wanted( Env.make( "x", [ L.Apptainer( image = "i.sif", pip = [ "jax[cuda]" ] ) ] ), c )
         assert a != b
 
 
 if test( "an environment that declares nothing is never stale" ):
     with tempfile.TemporaryDirectory() as tmp:
         root = Path( tmp )
-        e = Env( "x", [ L.Vars( { "A": "1" } ) ] )
+        e = Env.make( "x", [ L.Vars( { "A": "1" } ) ] )
         assert setup.status( root, e, L.Context( root = root ) ) == setup.OK
 
 
@@ -179,17 +179,17 @@ if test( "an environment that is already there is adopted, never recreated" ):
         c = L.Context( root = root )
 
         there = Fake( present = True )
-        assert setup.ensure( root, Env( "x", [ there ] ), c, echo = lambda s: None ) == 0
+        assert setup.ensure( root, Env.make( "x", [ there ] ), c, echo = lambda s: None ) == 0
         assert there.built == 0, "present and never seen before is not a reason to build"
         # ...and it is recorded, so it does not stay `stale` forever.
-        assert setup.recorded( root, Env( "x", [ there ] ) ) == setup.wanted( Env( "x", [ there ] ), c )
+        assert setup.recorded( root, Env.make( "x", [ there ] ) ) == setup.wanted( Env.make( "x", [ there ] ), c )
         # Saying it out loud still does it.
-        assert setup.ensure( root, Env( "x", [ there ] ), c, force = True,
+        assert setup.ensure( root, Env.make( "x", [ there ] ), c, force = True,
                              echo = lambda s: None ) == 0
         assert there.built == 1
 
         missing = Fake( present = False )
-        assert setup.ensure( root, Env( "y", [ missing ] ), c, echo = lambda s: None ) == 0
+        assert setup.ensure( root, Env.make( "y", [ missing ] ), c, echo = lambda s: None ) == 0
         assert missing.built == 1, "what is not there IS built, first sight or not"
 
 
@@ -220,7 +220,7 @@ if test( "what errand has never recorded is not announced as stale" ):
 
     with tempfile.TemporaryDirectory() as tmp:
         root, c = Path( tmp ), L.Context( root = Path( tmp ) )
-        e = Env( "x", [ There() ] )
+        e = Env.make( "x", [ There() ] )
         # It is going to be adopted, not rebuilt: saying `stale` would announce
         # work that is not about to happen.
         assert setup.status( root, e, c ) == setup.OK
@@ -303,14 +303,14 @@ if test( "over ssh, `is it there` is asked of the machine it would be built on" 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path( tmp )
             layer = Image( answer = 1 )
-            e = Env( "far", [ far, layer ] )
+            e = Env.make( "far", [ far, layer ] )
             setup._run = answering( 1 )               # not there
             setup.ensure( root, e, L.Context( root = root ), echo = lambda s: None )
             assert layer.built == 1, "absent over there: it gets built, first sight or not"
             assert ( "test -e i.sif", True ) in asked, asked
 
             layer = Image( answer = 0 )
-            e = Env( "far2", [ far, layer ] )
+            e = Env.make( "far2", [ far, layer ] )
             setup._run = answering( 0 )               # already there
             setup.ensure( root, e, L.Context( root = root ), echo = lambda s: None )
             assert layer.built == 0, "there already: adopted, like anywhere else"

@@ -1,11 +1,12 @@
 # Tags
 
 A tag says what an environment *is*. There is nothing to declare — a tag is a keyword argument on
-`env`, and every name used becomes a flag:
+`errand.Env`, and every name used becomes a flag:
 
 ```python
-env( "gpu", CUDA, driver = "jax", cuda = True )
-env( "cluster", [ Ssh( … ), Slurm( … ) ] + CUDA, driver = "jax", cuda = True, fp = "64" )
+# errand-envs.py
+errand.envs[ "gpu" ]     = errand.Env( CUDA, driver = "jax", cuda = True )
+errand.envs[ "cluster" ] = errand.Env( [ errand.Ssh( … ), errand.Slurm( … ) ] + CUDA, driver = "jax", cuda = True, fp = "64" )
 ```
 
 ```bash
@@ -29,8 +30,9 @@ What an environment then does to the child process is a `Vars` layer, like every
 — and that layer can read the selection back:
 
 ```python
-env( "gpu", CUDA + [ Vars( lambda t: { "MYPROJ_FTYPE": f"FP{ t.get( 'fp', '64' ) }" } ) ],
-     driver = "jax", cuda = True )
+# errand-envs.py
+errand.envs[ "gpu" ] = errand.Env( CUDA + [ errand.Vars( lambda t: { "MYPROJ_FTYPE": f"FP{ t.get( 'fp', '64' ) }" } ) ],
+                                   driver = "jax", cuda = True )
 ```
 
 Without that, a dimension an environment merely *parametrizes* would have to be split into one

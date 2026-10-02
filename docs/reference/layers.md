@@ -3,10 +3,13 @@
 A layer wraps the command that is about to run. A stack is read **outside in**:
 
 ```python
-env( "cluster", [ Ssh( host = "login.hpc", root = "/scratch/me/proj" ),   # that machine
-                  Slurm( time = "2:00:00" ),                              # an allocation on it
-                  Apptainer( image = "containers/cuda.sif" ),             # the container in it
-                  Vars( { "OMP_NUM_THREADS": "8" } ) ] )                  # …and the child's env
+# errand-envs.py
+import errand
+
+errand.envs[ "cluster" ] = errand.Env( [ errand.Ssh( host = "login.hpc", root = "/scratch/me/proj" ),   # that machine
+                                         errand.Slurm( time = "2:00:00" ),                              # an allocation on it
+                                         errand.Apptainer( image = "containers/cuda.sif" ),             # the container in it
+                                         errand.Vars( { "OMP_NUM_THREADS": "8" } ) ] )                  # …and the child's env
 ```
 
 There is always a current interpreter; most layers are a way to override it. A layer that selects an

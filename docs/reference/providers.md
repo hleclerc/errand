@@ -1,7 +1,7 @@
 # Providers
 
 A provider puts a suite that already exists under errand. One line in
-[`errandfile.py`](/guide/configuration) per suite — see [Other languages](/guide/providers) for what
+[`errand-project.py`](/guide/configuration) per suite — see [Other languages](/guide/providers) for what
 that buys and why the three behave differently.
 
 ## Pytest
@@ -57,8 +57,9 @@ reaches one case.
 | `args` | extra arguments passed to the binary |
 
 ```python
-provider( Catch2( dir = "cpp", build = "make -C cpp" ) )
-provider( Catch2( dir = "cpp", build = "cmake --build build", binary = "build/{stem}" ) )
+# errand-project.py
+errand.provider( errand.Catch2( dir = "cpp", build = "make -C cpp" ) )
+errand.provider( errand.Catch2( dir = "cpp", build = "cmake --build build", binary = "build/{stem}" ) )
 ```
 
 `build` runs **once before any entry of that provider** — not once per file, and not once per
@@ -82,9 +83,9 @@ test still works: the `::name` part becomes the filter `cargo test` takes after 
 A three-method protocol, plus an optional fourth:
 
 ```python
-from errand import Provider, Outcome
+import errand
 
-class Mine( Provider ):
+class Mine( errand.Provider ):
     name        = "mine"
     whole_files = False          # True when an entry IS a whole file
 

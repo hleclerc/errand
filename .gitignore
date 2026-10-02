@@ -3,7 +3,7 @@ __pycache__/
 *.pyc
 *.egg-info/
 dist/
-errand.local.py
+errand-envs.py
 .errand/
 
 # what the examples build when you run them
@@ -14,3 +14,6 @@ examples/*/rust/target/
 
 .venv*/
 dist/
+
+# ...except where it is the example
+!examples/*/errand-envs.py

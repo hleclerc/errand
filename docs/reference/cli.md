@@ -22,10 +22,10 @@ errand [PATTERN] [options] [-- COMMAND …]
 
 | flag | |
 |---|---|
-| `--init` | write an `errandfile.py` from what the directory holds — [what it looks for](/guide/start#what-it-looks-for) — and make `runs/`. Never overwrites |
+| `--init` | write an `errand-project.py` from what the directory holds — [what it looks for](/guide/start#what-it-looks-for) — and a commented `errand-envs.py`, and make `runs/`. Never overwrites |
 | `--init=force` | replace an existing one |
 
-With no `errandfile.py`, the same reading is done for the run itself, and announced.
+With no `errand-*.py`, the same reading is done for the run itself, and announced.
 
 ## Choosing where
 
@@ -33,7 +33,7 @@ With no `errandfile.py`, the same reading is done for the run itself, and announ
 |---|---|
 | `--env NAME[,NAME…]` | environment(s) by name. A comma is a matrix |
 | `-t`, `--env-tags` | an [expression](./expressions) over environment tags |
-| `--<tag> VALUE` | one flag per tag name used anywhere in `errandfile.py`. A comma is a matrix |
+| `--<tag> VALUE` | one flag per tag name used anywhere in the `errand-*.py` files. A comma is a matrix |
 | `--envs` | list the environments, their tags, their stacks and their state — then stop |
 
 ## Preparing environments
@@ -101,8 +101,8 @@ See [Any command, under the queue](/guide/machine#any-command-under-the-queue).
 
 | flag | |
 |---|---|
-| `--root PATH` | the project root. Default: found by walking up from the cwd for `errandfile.py` |
-| `--out PATH` | the output tree. Default: `configure( out = … )`, itself `runs` |
+| `--root PATH` | the project root. Default: found by walking up from the cwd for an `errand-*.py` |
+| `--out PATH` | the output tree. Default: `errand.configure( out = … )`, itself `runs` |
 | `--at FILE:LINE` | run exactly the entry at that call site. This is how errand's own child processes are started; you will not normally type it |
 
 ## Other

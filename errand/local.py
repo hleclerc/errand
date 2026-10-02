@@ -2,13 +2,16 @@
 
 Testing an ssh layer wants a host you can reach. Testing a Slurm layer wants a
 partition you are allowed to submit to. Neither can be committed, and neither
-can be invented -- so they live in an untracked file beside the project's
-`errand.py`:
+can be invented -- so they live in a file that is not versioned, beside the
+project's others: any `errand-*.py`, conventionally `errand-envs.py`:
 
-    # errand.local.py -- not tracked
+    # errand-envs.py -- not tracked
     ssh_host  = "gpu-box"
     ssh_root  = "/home/me/scratch/errand"
     slurm     = { "partition": "gpu", "time": "00:10:00" }
+
+Every plain value a project file defines ( not its imports, functions or
+classes ) is readable by the files read after it, and by entries.
 
 An entry asks for what it needs and is SKIPPED, loudly, when it is not there:
 
@@ -22,13 +25,13 @@ mistaken for a suite that passed.
 """
 from __future__ import annotations
 
-import importlib.util
+import inspect
 from pathlib import Path
 
-LOCAL_FILE = "errand.local.py"
+ENVS_FILE = "errand-envs.py"
 
 _cache: dict = { }
-_loaded_from: Path | None = None
+_files: list = [ ]
 _missing_root: Path | None = None
 
 
@@ -41,38 +44,20 @@ class Skipped( Exception ):
         self.hint   = hint
 
 
-def find( root: Path ):
-    """`errand.local.py` at `root` or above it.
-
-    Walking up matters: a suite often runs with its own subdirectory as the
-    root, while the file belongs to the checkout as a whole -- there is one per
-    machine, not one per directory.
-    """
-    for directory in [ root, *root.parents ]:
-        path = directory / LOCAL_FILE
-        if path.is_file():
-            return path
-    return None
-
-
-def load( root: Path ):
-    """Read `errand.local.py` at `root` or above. Never an error."""
-    global _loaded_from, _missing_root
+def reset( files = ( ), root: Path | None = None ):
+    """Forget everything, and note which files are about to be read."""
+    global _files, _missing_root
     _cache.clear()
-    _loaded_from = None
-    _missing_root = root
+    _files = list( files )
+    _missing_root = None if files else root
 
-    path = find( root )
-    if path is None:
-        return { }
 
-    spec = importlib.util.spec_from_file_location( "_errand_local", path )
-    module = importlib.util.module_from_spec( spec )
-    spec.loader.exec_module( module )
-    _cache.update( { k: v for k, v in vars( module ).items() if not k.startswith( "_" ) } )
-    _loaded_from = path
-    _missing_root = None
-    return dict( _cache )
+def offer( module ):
+    """Keep what a project file defined that is plain data."""
+    _cache.update( { k: v for k, v in vars( module ).items()
+                     if not k.startswith( "_" )
+                     and not inspect.ismodule( v ) and not inspect.isclass( v )
+                     and not inspect.isroutine( v ) } )
 
 
 def skip( reason, hint = None ):
@@ -102,17 +87,18 @@ def need( key: str, what: str = "", *, example = None ):
         return _cache[ key ]
 
     shown = f"{key} = {example!r}" if example is not None else f"{key} = ..."
-    where = _loaded_from or ( ( _missing_root or Path( "." ) ) / LOCAL_FILE )
-    hint = ( f"add it to {where}:\n"
-             f"    {shown}" )
-    if _loaded_from is None:
+    where = next( ( f for f in _files if f.name == ENVS_FILE ), None ) \
+        or ( _files[ 0 ].parent if _files else ( _missing_root or Path( "." ) ) ) / ENVS_FILE
+    if where.is_file():
+        hint = f"add it to {where}:\n    {shown}"
+    else:
         hint = ( f"{where} does not exist yet. Create it (it is not tracked) with:\n"
                  f"    {shown}" )
     raise Skipped( f"needs `{key}`" + ( f" -- {what}" if what else "" ), hint )
 
 
 def status( ) -> str:
-    """One line for the banner: where the local file is, or that there is none."""
-    if _loaded_from:
-        return f"{_loaded_from.name}: {', '.join( sorted( _cache ) ) or 'empty'}"
-    return f"no {LOCAL_FILE} (entries needing local settings will be skipped)"
+    """One line for the banner: which project files were read, and what they gave."""
+    if _files:
+        return f"{', '.join( f.name for f in _files )}: {', '.join( sorted( _cache ) ) or 'no values'}"
+    return "no errand-*.py (entries needing local settings will be skipped)"

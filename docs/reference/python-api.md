@@ -11,11 +11,10 @@ from errand import need, have, skip
 And everything a project file needs:
 
 ```python
-from errand import configure, env, provider
-from errand import Vars, Venv, Micromamba, Conda, Uv, Nix, Guix, Module
-from errand import Apptainer, Docker, Podman, Ssh, Slurm
-from errand import Provider, Pytest, Catch2, Cargo, Outcome, RunContext
-from errand.local import value
+import errand       # then errand.configure, errand.envs, errand.Env, errand.default_env,
+                    # errand.provider, errand.value, and the layers and providers by name:
+                    # Vars Venv Micromamba Conda Uv Nix Guix Module Apptainer Docker Podman
+                    # Ssh Slurm  --  Provider Pytest Catch2 Cargo Outcome RunContext
 ```
 
 ::: tip The import surface is deliberately cheap
@@ -136,7 +135,7 @@ ad-hoc run still has somewhere to put its files.
 
 ## What only this machine can supply
 
-These read an untracked `errand.local.py` beside the project file — see
+These read an untracked `errand-envs.py` beside the other project files — see
 [Configuration](/guide/configuration#what-only-this-machine-can-supply).
 
 ### need
@@ -170,22 +169,22 @@ look like a suite that passed.
 ### value
 
 ```python
-from errand.local import value
-value( key: str, default = None )
+errand.value( key: str, default = None )
 ```
 
-For the **project file**, which has not got the option of not running — it is read once, before
+For the **project files**, which have not got the option of not running — it is read once, before
 anything, and what it does not find it must do without. So this one takes a default rather than
 raising.
 
 ## Declaring a project
 
-Lives in [`errandfile.py`](/guide/configuration).
+Lives in the project's `errand-*.py` files — [`errand-project.py`](/guide/configuration) for what the
+project does, `errand-envs.py` for where it runs.
 
 ### configure
 
 ```python
-configure( out = "runs", src = [ ], exclude = [ ], default = None )
+errand.configure( out = "runs", src = [ ], exclude = [ ] )
 ```
 
 | | |
@@ -193,24 +192,27 @@ configure( out = "runs", src = [ ], exclude = [ ], default = None )
 | `out` | where the output tree goes |
 | `src` | paths prepended to every child's `PYTHONPATH` |
 | `exclude` | directories discovery must not walk into |
-| `default` | the environment used when nothing is asked for |
 
 An unknown setting is a `TypeError` listing the ones that exist.
 
-### env
+### envs and Env
 
 ```python
-env( name: str, stack = ( ), **tags ) -> Env
+errand.envs[ name: str ] = errand.Env( stack = ( ), **tags )
+errand.default_env = "name"          # optional; else the first one declared
 ```
 
-Declares an [environment](/guide/environments). The stack is a list of
-[layers](./layers), read outside in; `Ssh` must be the first of them, and `env` refuses a stack
-where it is not. Keyword arguments are its [tags](/guide/tags).
+Declares an [environment](/guide/environments): the key is its name. The stack is a list of
+[layers](./layers), read outside in; `Ssh` must be the first of them, and `errand.Env` refuses a
+stack where it is not. Keyword arguments are its [tags](/guide/tags). Only an `Env` can be stored.
+
+`errand.default_env` is what is used when nothing is asked for. Naming an environment that does
+not exist is an error.
 
 ### provider
 
 ```python
-provider( p ) -> p
+errand.provider( p ) -> p
 ```
 
 Adopts a suite that already exists — see the [provider reference](./providers).

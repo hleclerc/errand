@@ -22,12 +22,15 @@ from .entries import (          # noqa: F401  -- the public surface of a file of
     test,
     track,
 )
-from .local import Skipped, have, need, skip   # noqa: F401
+from .local import Skipped, have, need, skip, value   # noqa: F401
+
+# Read by errand when it needs a default: `errand.default_env = "gpu"` in an `errand-*.py`.
+default_env: str | None = None
 
 __all__ = [
     "Args", "Param", "Skipped", "bench", "entry", "experiment", "has_tag", "have",
     "need", "out_dir", "skip", "tag", "test", "track",
-    "configure", "env", "provider", "main",
+    "configure", "default_env", "Env", "envs", "provider", "main", "value",
     "Vars", "Venv", "Micromamba", "Conda", "Uv", "Nix", "Guix", "Module",
     "Apptainer", "Docker", "Podman", "Ssh", "Slurm",
     "Provider", "Outcome", "RunContext", "Pytest", "Catch2", "Cargo",
@@ -39,7 +42,8 @@ __all__ = [
 _LAZY = {
     "main"      : "errand.cli",
     "configure" : "errand.config",
-    "env"       : "errand.config",
+    "Env"       : "errand.config",
+    "envs"      : "errand.config",
     "provider"  : "errand.config",
     "Vars"      : "errand.layers",
     "Venv"      : "errand.layers",

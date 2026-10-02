@@ -13,10 +13,10 @@ from errand import config
 from _infra import write_project
 
 CONFIG = '''
-from errand import env, Vars
+import errand
 
-env( "plain", [ Vars( { "DEMO": "1" } ) ], fp = "32|64" )
-env( "other", [ Vars( { "DEMO": "2" } ) ], fp = "64" )
+errand.envs[ "plain" ] = errand.Env( [ errand.Vars( { "DEMO": "1" } ) ], fp = "32|64" )
+errand.envs[ "other" ] = errand.Env( [ errand.Vars( { "DEMO": "2" } ) ], fp = "64" )
 '''
 
 WORK = '''

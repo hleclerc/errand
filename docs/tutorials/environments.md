@@ -7,7 +7,8 @@ cd examples/02-environments
 ```
 
 ```
-errandfile.py          where and how things run
+errand-project.py      what the project does: where its code is
+errand-envs.py         where and how things run
 requirements.txt       what the local environment installs
 containers/cuda.def    what the image is built from
 src/solver.py          the work; knows nothing about errand
@@ -45,45 +46,57 @@ says what it *would* run.
 Shared pieces are shared with plain Python. There is no second mechanism for this, and none is
 wanted: a list is a list.
 
-```python
-# errandfile.py
-from errand import configure, env, Micromamba, Apptainer, Docker, Ssh, Slurm, Vars
+`errand-project.py` says what the project does — here, only where its code is:
 
-configure( src = [ "src" ] )          # prepended to every child's PYTHONPATH
+```python
+# errand-project.py
+import errand
+
+errand.configure( src = [ "src" ] )          # prepended to every child's PYTHONPATH
+```
+
+`errand-envs.py` says where it runs:
+
+```python
+# errand-envs.py
+import errand
 
 CUDA = [
-    Apptainer( image  = "containers/cuda.sif",
-               recipe = "containers/cuda.def",   # what to (re)build the image from
-               flags  = [ "--nv" ],
-               pip    = [ "jax[cuda13]" ] ),     # installed INTO the container
+    errand.Apptainer( image  = "containers/cuda.sif",
+                      recipe = "containers/cuda.def",   # what to (re)build the image from
+                      flags  = [ "--nv" ],
+                      pip    = [ "jax[cuda13]" ] ),     # installed INTO the container
 ]
 
-FTYPE = [ Vars( lambda t: { "DEMO_FTYPE": f"FP{ t.get( 'fp', '64' ) }" } ) ]
+FTYPE = [ errand.Vars( lambda t: { "DEMO_FTYPE": f"FP{ t.get( 'fp', '64' ) }" } ) ]
 ```
 
-Then five environments over the same pieces:
+Then five environments over the same pieces, in the same file:
 
 ```python
-env( "local",
-     [ Micromamba( "demo", python = "3.13", requirements = "requirements.txt" ) ] + FTYPE,
+# errand-envs.py, continued
+errand.envs[ "local" ] = errand.Env(
+     [ errand.Micromamba( "demo", python = "3.13", requirements = "requirements.txt" ) ] + FTYPE,
      driver = "cpu" )
 
-env( "gpu",   CUDA + FTYPE, driver = "cuda", cuda = True )
+errand.envs[ "gpu" ] = errand.Env( CUDA + FTYPE, driver = "cuda", cuda = True )
 
 # The same idea where apptainer does not exist -- a mac, a laptop without root.
-env( "boxed", [ Docker( image = "errand-demo:1", recipe = "containers/Dockerfile" ) ] + FTYPE,
-     driver = "cpu", boxed = True )
+errand.envs[ "boxed" ] = errand.Env( [ errand.Docker( image = "errand-demo:1", recipe = "containers/Dockerfile" ) ] + FTYPE,
+                                     driver = "cpu", boxed = True )
 
 # A remote machine is not a separate concept: Ssh first, then the same layers.
-env( "box",     [ Ssh( host = "gpu-box", root = "/home/me/demo" ) ] + CUDA + FTYPE,
-     driver = "cuda", cuda = True, remote = True )
+errand.envs[ "box" ] = errand.Env( [ errand.Ssh( host = "gpu-box", root = "/home/me/demo" ) ] + CUDA + FTYPE,
+                                   driver = "cuda", cuda = True, remote = True )
 
 # ...and a batch system is one more layer, not a separate mode.
-env( "cluster", [ Ssh( host = "login.hpc", root = "/scratch/me/demo" ),
-                  Slurm( partition = "gpu", gpus = 1, cpus = 16, time = "2:00:00" ) ]
-                + CUDA + FTYPE,
-     driver = "cuda", cuda = True, fp = "64", remote = True )
+errand.envs[ "cluster" ] = errand.Env( [ errand.Ssh( host = "login.hpc", root = "/scratch/me/demo" ),
+                                         errand.Slurm( partition = "gpu", gpus = 1, cpus = 16, time = "2:00:00" ) ]
+                                       + CUDA + FTYPE,
+                                       driver = "cuda", cuda = True, fp = "64", remote = True )
 ```
+
+The first one declared, `local`, is the default; `errand.default_env = "gpu"` would say otherwise.
 
 Read a stack outside in. `cluster` is: *that machine*, then *an allocation on it*, then *the
 container*, then your command.
@@ -118,7 +131,7 @@ errand -k bench --fp 32
 errand -k bench -t 'cuda & !remote' # by expression
 ```
 
-Tags are the keyword arguments on `env( … )`. Nothing declares them in advance, and an environment
+Tags are the keyword arguments on `errand.Env( … )`. Nothing declares them in advance, and an environment
 that omits a name matches **any** value of it.
 
 ## Running in several places at once

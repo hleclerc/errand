@@ -3,45 +3,58 @@
 None is needed. `errand` with no configuration at all finds your entries and runs them in the
 interpreter you started it with.
 
-You do not have to write the file from a blank page: **`errand --init`** reads the directory,
-writes the `errandfile.py` that says what errand would otherwise guess (see
-[Start from what you have](./start)), makes `runs/`, adds it to `.gitignore` if there is a git
-here, and leaves a commented stack of layers ready to adapt. It never overwrites.
+You do not have to write these files from a blank page: **`errand --init`** reads the directory,
+writes the `errand-project.py` that says what errand would otherwise guess (see
+[Start from what you have](./start)), and an `errand-envs.py` holding a commented stack of layers
+ready to adapt. It makes `runs/`, adds it and `errand-envs.py` to `.gitignore` if there is a git
+here, and never overwrites.
 
-To declare environments, tags and the rest, put an **`errandfile.py`** at the root of the project —
-the same idea as a Makefile or a Dockerfile. It is ordinary Python, loaded once by path and under a
-private name, with no entry point to call and nothing to return:
+To declare what the project does, and where it runs, put **`errand-*.py`** files at the root of the
+project. `errand` reads every one of them, in name order; what you call them beyond the prefix is up
+to you, and two names are the convention:
+
+| | |
+|---|---|
+| `errand-project.py` | what the **project** does: providers, compilation flags, `errand.configure`. Versioned |
+| `errand-envs.py` | where **you**, on **your machine**, run it: the environments. Not versioned — `errand --init` adds it to `.gitignore` |
+
+They are ordinary Python, loaded once by path and under a private name, with no entry point to call
+and nothing to return. `errand.envs` holds the environments by name, and the first one declared is
+the default unless `errand.default_env` names another:
 
 ```python
-from errand import configure, env, provider, Micromamba, Apptainer, Catch2
+# errand-project.py
+import errand
 
-configure( out = "runs", src = [ "core/src", "app/src" ] )
-
-env( "local", [ Micromamba( "myenv", python = "3.13", requirements = "requirements.txt" ) ],
-     driver = "jax" )
-env( "gpu", [ Apptainer( image = "containers/cuda.sif", recipe = "containers/cuda.def" ) ],
-     driver = "jax", cuda = True )
-
-provider( Catch2( dir = "tests/cpp" ) )
+errand.configure( out = "runs", src = [ "core/src", "app/src" ] )
+errand.provider( errand.Catch2( dir = "tests/cpp" ) )
 ```
 
-::: warning Do not call it `errand.py`
-A module of that name at the root of a project **shadows the package** wherever the root is on
-`sys.path`, which is to say for `python -m errand` and for any script started from there. `errand`
-says so out loud when it finds one. The `errandfile.py` spelling has no such problem.
-:::
+```python
+# errand-envs.py
+import errand
 
-The root is found by walking up from the current directory looking for an `errandfile.py`;
-`--root` overrides it.
+errand.envs[ "local" ] = errand.Env( [ errand.Micromamba( "myenv", python = "3.13", requirements = "requirements.txt" ) ],
+                                     driver = "jax" )
+errand.envs[ "gpu" ]   = errand.Env( [ errand.Apptainer( image = "containers/cuda.sif", recipe = "containers/cuda.def" ) ],
+                                     driver = "jax", cuda = True )
+
+errand.default_env = "local"
+```
+
+The root of the project is the nearest directory, walking up from the current one, that holds an
+`errand-*.py`; `--root` overrides it. None of these files is ever taken for a file of entries.
 
 ## configure
 
 ```python
-configure(
+# errand-project.py
+import errand
+
+errand.configure(
     out     = "runs",   # where the output tree goes
     src     = [ ],      # paths prepended to every child's PYTHONPATH
     exclude = [ ],      # directories discovery must not walk into
-    default = None,     # the environment used when nothing is asked for
 )
 ```
 
@@ -50,17 +63,19 @@ configure(
 | `out` | the one directory errand writes to. See [the output tree](./output) |
 | `src` | your package layout, so a child process can import your code without an install |
 | `exclude` | vendored code, fixtures, a copy of something that would be imported and should not be |
-| `default` | the name of an [environment](./environments). With none, errand runs in the interpreter you started it with |
 
 `--out` and `--root` override the first and the project root respectively, which is what the
 children errand starts for itself use.
 
-## env and provider
+The default environment is not a setting: it is `errand.default_env = "name"`, or the first one
+declared.
 
-`env( name, [ layers… ], **tags )` declares an [environment](./environments); its keyword arguments
-are its [tags](./tags). `Ssh` must be the first layer, and `env` refuses a stack where it is not.
+## envs and provider
 
-`provider( … )` adopts a suite that already exists — see [Other languages](./providers).
+`errand.envs[ name ] = errand.Env( [ layers… ], **tags )` declares an [environment](./environments); its keyword arguments
+are its [tags](./tags). `Ssh` must be the first layer, and `errand.Env` refuses a stack where it is not.
+
+`errand.provider( … )` adopts a suite that already exists — see [Other languages](./providers).
 
 ## Subcommands: there are none, on purpose
 
@@ -79,11 +94,12 @@ errand docs
 ## What only this machine can supply
 
 Reaching an ssh host, or a queue you are allowed to submit to, depends on who is running. None of it
-can be committed and none of it can be invented, so it goes in an untracked **`errand.local.py`**
-beside the errandfile:
+can be committed and none of it can be invented, so it goes in an untracked **`errand-envs.py`**
+beside the other project files — any `errand-*.py` will do, and the values it defines are read
+by the files after it:
 
 ```python
-# errand.local.py -- not tracked
+# errand-envs.py -- not tracked
 ssh_host = "gpu-box"
 ssh_root = "/home/me/scratch/errand"
 slurm    = { "partition": "gpu", "time": "00:10:00" }
@@ -104,7 +120,7 @@ what was missing and exactly what to write where:
 ```text
   3 skipped:
     it runs over there  (test_ssh.py:18)  needs `ssh_host` -- a machine you can ssh to without a password
-      errand.local.py does not exist yet. Create it (it is not tracked) with:
+      errand-envs.py does not exist yet. Create it (it is not tracked) with:
           ssh_host = 'gpu-box'
 ```
 
@@ -116,16 +132,17 @@ It is its own status, in the output and in `result.yaml`. A suite that quietly t
 not be able to look like a suite that passed.
 :::
 
-### The errandfile reads it with value
+### The project files read it with value
 
 An entry has the option of not running; a project file has not — it is read once, before anything,
 and what it does not find it must do without. So it asks with `value`, which takes a default:
 
 ```python
-from errand.local import value
+# errand-project.py  ( ssh_host and ssh_root come from errand-envs.py, which is read first )
+import errand
 
-env( "cluster", [ Ssh( host = value( "ssh_host", "gpu-box" ),
-                       root = value( "ssh_root", "/home/me/proj" ) ) ], cuda = True )
+errand.envs[ "cluster" ] = errand.Env( [ errand.Ssh( host = errand.value( "ssh_host", "gpu-box" ),
+                                                     root = errand.value( "ssh_root", "/home/me/proj" ) ) ], cuda = True )
 ```
 
 That is what lets a host name, a remote root or a scratch directory stay out of git while the
@@ -142,7 +159,7 @@ Use `need` only for what genuinely cannot be defaulted.
 
 ## Another project inside this one
 
-A directory holding a config file of its own is **another project**, and discovery does not walk into
+A directory holding an `errand-*.py` of its own is **another project**, and discovery does not walk into
 it: its entries would run with this project's `src`, providers and environments, which is to say
 wrongly.
 

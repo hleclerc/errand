@@ -39,11 +39,11 @@ TAGS   = "ERRAND_TAGS"
 
 
 def find_root( start: Path | None = None ) -> Path:
-    """The project root: the nearest ancestor holding an errand.py, else here.
+    """The project root: the nearest ancestor holding an errand-*.py, else here.
 
     Deliberately not the git root. Walking up to one means that running from a
     subdirectory of a large repository silently widens the search to the whole
-    of it -- and with no errand.py there is nothing that says where the project
+    of it -- and with no errand-*.py there is nothing that says where the project
     begins, so "here and below" is the answer least likely to surprise.
     """
     here = ( start or Path.cwd() ).resolve()
@@ -659,9 +659,9 @@ def print_envs( root ):
     print( head( "\nEnvironments" ) )
     if not config.envs:
         print( dim( "  none declared -- work runs in this interpreter" ) )
-        print( dim( f"  declare some in {config.CONFIG_FILE} at the project root" ) )
+        print( dim( f"  declare some in {config.ENVS_FILE} at the project root" ) )
         return 0
-    default = config.default_env()
+    default = config.default()
     width = max( len( n ) for n in config.envs )
     for name, e in config.envs.items():
         ctx = L.Context( root = root, tags = e.tags )
@@ -769,7 +769,7 @@ def build_parser( tag_names = ( ) ):
     p.add_argument( "-t", "--env-tags", default = None, help = "choose environments by tag expression" )
     p.add_argument( "--env", default = None, help = "environment(s) by name, comma-separated" )
     p.add_argument( "--init", nargs = "?", const = "yes", default = None,
-                    help = "write an errandfile.py from what this directory holds ( =force to replace )" )
+                    help = "write an errand-project.py from what this directory holds ( =force to replace )" )
     p.add_argument( "--envs", action = "store_true", help = "list environments and stop" )
     p.add_argument( "--setup", nargs = "?", const = "yes", default = None,
                     help = "build/update environments now ('force' to start over)" )
@@ -859,10 +859,6 @@ def main( argv = None ):
     pre, _ = build_parser().parse_known_args( argv )
     root = Path( pre.root ).resolve() if pre.root else find_root()
 
-    # The local file FIRST: the project file is allowed to read it ( a host
-    # name, a scratch directory -- what differs from machine to machine and
-    # has no business in git, while the declaration around it is committed ).
-    local.load( root )
     config.load( root, warn = lambda m: print( warn( f"  warning: {m}" ), file = sys.stderr ) )
 
     out_root = Path( pre.out or config.settings.out )
@@ -922,7 +918,7 @@ def main( argv = None ):
         inside = os.environ.get( IN_ENV )
         env_obj = ( config.envs.get( inside ) if inside
                     else config.envs.get( known.env ) if known.env
-                    else config.default_env() )
+                    else config.default() )
         _put_src_on_path( root )
         return run_one( known.at, root = root, out_root = out_root,
                         env_name = ( env_obj.name if env_obj else known.env or "default" ),
@@ -982,7 +978,7 @@ def main( argv = None ):
     # there is exactly one, already entered.
     inside = os.environ.get( IN_ENV )
     if inside is not None:
-        targets = [ ( config.envs.get( inside ) or config.Env( inside, [ ], { } ),
+        targets = [ ( config.envs.get( inside ) or config.Env.make( inside, [ ], { } ),
                       _tags_from_env() ) ]
     else:
         try:

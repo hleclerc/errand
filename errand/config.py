@@ -1,42 +1,63 @@
-"""`errand.py`: what a project declares, and how an environment is chosen.
+"""`errand-*.py`: what a project declares, and how an environment is chosen.
 
 Ordinary Python, loaded once BY PATH -- never as a module named `errand`, so a
 file sitting at the root of a project cannot shadow the package it imports
 from. There is no entry point to call and nothing to return: `configure`,
-`env` and `provider` register what they are given.
+`envs` and `provider` register what they are given.
 """
 from __future__ import annotations
 
 import importlib.util
+import re
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import layers as L
 from .expr import matches
 
-# `errandfile.py` first, in the spirit of Makefile / Dockerfile / Justfile: it
-# is visible, it is obviously the project's, and it cannot be mistaken for the
-# package. `errand.py` is accepted because it is the name everyone reaches for
-# first -- but it SHADOWS the package whenever the project root is on
-# sys.path, which is to say for `python -m errand` and for any script run from
-# the root. `load` says so out loud rather than letting that be discovered.
-CONFIG_NAMES = ( "errandfile.py", "errand.py" )
-CONFIG_FILE  = CONFIG_NAMES[ 0 ]
+# Every file matching this, at the root, is read. The root is the nearest directory that has one
+# -- which is also how a project nested inside a bigger repository says where it starts.
+CONFIG_GLOB = "errand-*.py"
+CONFIG_FILE = "errand-project.py"      # the name `--init` writes: the one that is versioned
+ENVS_FILE   = "errand-envs.py"      # the one that is not
+
+
+def config_files( directory: Path ) -> list:
+    """The project files in `directory`, in the order they are read."""
+    return sorted( p for p in directory.glob( CONFIG_GLOB ) if p.is_file() )
 
 
 def config_in( directory: Path ):
-    for name in CONFIG_NAMES:
-        path = directory / name
-        if path.is_file():
-            return path
-    return None
+    """The first project file in `directory`, or None: is this a project root?"""
+    files = config_files( directory )
+    return files[ 0 ] if files else None
 
 
-@dataclass
 class Env:
-    name  : str
-    stack : list
-    tags  : dict = field( default_factory = dict )
+    """Where work runs: a stack of layers, and the tags saying what it is.
+
+        errand.envs[ "gpu" ] = errand.Env( [ errand.Apptainer( ... ) ], driver = "cuda" )
+
+    The name is the key it is stored under; `Env` does not take one.
+    """
+
+    def __init__( self, stack = ( ), **tags ):
+        self.name  = ""
+        self.stack = list( stack )
+        self.tags  = dict( tags )
+        for i, layer in enumerate( self.stack ):
+            if isinstance( layer, L.Ssh ) and i:
+                raise ValueError( "Ssh must be the first layer" )
+
+    @classmethod
+    def make( cls, name: str, stack = ( ), tags = None ):
+        e = cls( stack, **( tags or { } ) )
+        e.name = name
+        return e
+
+    def __repr__( self ):
+        return f"Env( {self.name!r}, {self.describe()} )"
 
     @property
     def container( self ):
@@ -58,14 +79,23 @@ class Env:
 class Settings:
     out    : str = "runs"
     src    : list = field( default_factory = list )
-    default: str | None = None
     # Directories discovery must not walk into: vendored code, fixtures, a copy
     # of something that would be imported and should not be.
     exclude: list = field( default_factory = list )
 
 
+class Envs( dict ):
+    """`errand.envs[ "name" ] = errand.Env( ... )`: the key becomes the environment's name."""
+
+    def __setitem__( self, name, env ):
+        if not isinstance( env, Env ):
+            raise TypeError( f"envs[ {name!r} ] must be an errand.Env, not {type( env ).__name__}" )
+        env.name = name
+        super().__setitem__( name, env )
+
+
 settings  = Settings()
-envs      : dict = { }
+envs      = Envs()
 providers : list = [ ]
 # What was GUESSED for a project with no config file of its own: [ detect.Guess ].
 # Kept apart from `providers` so that it can be announced -- a guess is never silent.
@@ -81,16 +111,6 @@ def configure( **kw ):
         setattr( settings, k, v )
 
 
-def env( name: str, stack = ( ), **tags ):
-    """Declare an environment. Keyword arguments are its tags."""
-    stack = list( stack )
-    for i, layer in enumerate( stack ):
-        if isinstance( layer, L.Ssh ) and i:
-            raise ValueError( f"env( {name!r} ): Ssh must be the first layer" )
-    envs[ name ] = Env( name, stack, dict( tags ) )
-    return envs[ name ]
-
-
 def provider( p ):
     providers.append( p )
     return p
@@ -99,20 +119,26 @@ def provider( p ):
 def reset( ):
     global settings
     settings = Settings()
+    sys.modules[ "errand" ].default_env = None
     envs.clear()
     providers.clear()
     guessed.clear()
 
 
 def load( root: Path, warn = None ) -> bool:
-    """Read the project's config file if it is there. -> was there one?
+    """Read the project's `errand-*.py` files if there are any. -> were there?
 
-    Always by path, and under a private module name, so that loading it can
-    never be what shadows the package.
+    Always by path, and under private module names, so that loading one can
+    never be what shadows the package. Each file's plain values ( strings,
+    numbers, lists... ) are offered to the files after it, and to entries, as
+    `errand.value` / `errand.need`.
     """
+    from . import local
+
     reset()
-    path = config_in( root )
-    if path is None:
+    files = config_files( root )
+    local.reset( files, root )
+    if not files:
         # No declaration: look at what is there. Existing suites are adopted for
         # this run only, and `cli` says so; `errand --init` writes the guess down.
         from . import detect
@@ -120,13 +146,12 @@ def load( root: Path, warn = None ) -> bool:
             guessed.append( g )
             providers.append( g.make() )
         return False
-    if path.name == "errand.py" and warn:
-        warn( f"{path} shadows the errand package: `python -m errand` and any script "
-              f"started from {root} will import this file instead.\n"
-              f"  rename it to {CONFIG_FILE} -- the `errand` command works either way." )
-    spec = importlib.util.spec_from_file_location( "_errand_config", path )
-    module = importlib.util.module_from_spec( spec )
-    spec.loader.exec_module( module )
+    for path in files:
+        spec = importlib.util.spec_from_file_location(
+            "_errand_" + re.sub( r"\W", "_", path.stem ), path )
+        module = importlib.util.module_from_spec( spec )
+        spec.loader.exec_module( module )
+        local.offer( module )
     return True
 
 
@@ -141,15 +166,17 @@ def tag_names( ) -> list:
     return sorted( seen )
 
 
-def default_env( ) -> Env:
-    """The one named `default`, the one `configure` named, or the first."""
-    if settings.default and settings.default in envs:
-        return envs[ settings.default ]
-    if "default" in envs:
-        return envs[ "default" ]
+def default( ) -> Env:
+    """The one `errand.default_env` names, else the first declared, else this interpreter."""
+    named = sys.modules[ "errand" ].default_env
+    if named is not None:
+        if named not in envs:
+            raise ValueError( f"errand.default_env = {named!r}, but no environment has that name; "
+                              f"declared: { ', '.join( envs ) or 'none' }" )
+        return envs[ named ]
     if envs:
         return next( iter( envs.values() ) )
-    return Env( "default", [ ], { } )
+    return Env.make( "default", [ ], { } )
 
 
 def select( names = None, expression = None, wanted_tags = None ):
@@ -187,7 +214,7 @@ def select( names = None, expression = None, wanted_tags = None ):
             raise ValueError( f"no environment matches '{asked}'; "
                               f"declared: { ', '.join( envs ) or 'none' }" )
     else:
-        chosen = [ default_env() ]
+        chosen = [ default() ]
 
     return [ ( e, { **e.tags, **wanted_tags } ) for e in chosen ]
 

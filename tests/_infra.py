@@ -5,7 +5,7 @@ is concerned: it is a real ssh, a real rsync, a real remote shell, a real
 round trip through a directory that is not the project's. Only the hardware is
 shared, and the hardware is not what is being tested.
 
-So the order is: whatever `errand.local.py` names, else localhost when it
+So the order is: whatever `errand-envs.py` names, else localhost when it
 answers, else skip saying what to do about it. A suite that exercises the ssh
 path on any developer's machine is worth more than one that waits for a
 cluster.
@@ -43,7 +43,7 @@ def ssh_target( ):
         host = need( "ssh_host" )
         options = need( "ssh_options" ) if have( "ssh_options" ) else [ ]
         if not _reaches( host, options ):
-            skip( f"errand.local.py names ssh_host = {host!r}, but `ssh {host} true` fails",
+            skip( f"errand-envs.py names ssh_host = {host!r}, but `ssh {host} true` fails",
                   "a named host that cannot be reached is a broken setup, not a missing one" )
         root = need( "ssh_root" ) if have( "ssh_root" ) else None
         return host, options, ( lambda: root ) if root else _tmp_root
@@ -52,7 +52,7 @@ def ssh_target( ):
         return "localhost", list( LOCALHOST_OPTIONS ), _tmp_root
 
     skip( "no machine to reach: `ssh localhost true` does not answer",
-          "either enable ssh to localhost, or name one in errand.local.py:\n"
+          "either enable ssh to localhost, or name one in errand-envs.py:\n"
           "    ssh_host = 'some-host'\n"
           "    ssh_root = '/home/me/scratch/errand-test'   # optional; a temp dir otherwise" )
 
@@ -120,7 +120,7 @@ def container_engine( only = None ):
           "  nothing here needs a GPU or a private registry, only " + BASE_IMAGE )
 
 
-def write_project( directory: Path, errandfile: str, files: dict, vendor = False ):
+def write_project( directory: Path, config: str, files: dict, vendor = False ):
     """A whole little project on disk, for an end-to-end run.
 
     `vendor` puts a copy of errand itself inside the project, under `_lib`.
@@ -130,7 +130,7 @@ def write_project( directory: Path, errandfile: str, files: dict, vendor = False
     that runs on a machine somebody prepared.
     """
     directory.mkdir( parents = True, exist_ok = True )
-    ( directory / "errandfile.py" ).write_text( errandfile )
+    ( directory / "errand-project.py" ).write_text( config )
     for name, text in files.items():
         path = directory / name
         path.parent.mkdir( parents = True, exist_ok = True )

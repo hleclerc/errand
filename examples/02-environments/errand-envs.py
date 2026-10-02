@@ -1,19 +1,16 @@
-"""Where and how this project's work runs.
+"""Where this project runs, for whoever runs it. Not versioned in a real project -- the
+environments depend on the user and the machine -- but committed here, because they ARE the example.
 
-Ordinary Python, loaded once. There is no entry point to call and nothing to
-return -- `env`, `configure` and `provider` register what you give them.
+Ordinary Python, loaded once, with every other `errand-*.py`. There is no entry point to call and
+nothing to return: `errand.envs` holds what you put in it.
 """
-from errand import configure, env, Micromamba, Apptainer, Docker, Ssh, Slurm, Vars
-
-configure(
-    src = [ "src" ],           # prepended to every child's PYTHONPATH
-)
+import errand
 
 # Shared pieces are shared with plain Python. There is no second mechanism for
 # this, and none is wanted: a list is a list.
 
 CUDA = [
-    Apptainer(
+    errand.Apptainer(
         image  = "containers/cuda.sif",
         recipe = "containers/cuda.def",   # what to (re)build the image from
         flags  = [ "--nv" ],
@@ -27,10 +24,12 @@ CUDA = [
 # written twice in each -- once to be matched by `--fp`, once to be handed to
 # the child process.
 
-FTYPE = [ Vars( lambda t: { "DEMO_FTYPE": f"FP{ t.get( 'fp', '64' ) }" } ) ]
+FTYPE = [ errand.Vars( lambda t: { "DEMO_FTYPE": f"FP{ t.get( 'fp', '64' ) }" } ) ]
 
 
 # --- the environments -------------------------------------------------------
+#
+# The first one declared is the default; `errand.default_env = "gpu"` says otherwise.
 #
 # Keyword arguments are TAGS: what this environment is. Nothing declares them
 # in advance -- every name used here becomes a flag of its own (--driver,
@@ -40,32 +39,32 @@ FTYPE = [ Vars( lambda t: { "DEMO_FTYPE": f"FP{ t.get( 'fp', '64' ) }" } ) ]
 # covers every value of it, so `--fp 32,64` is two runs in ONE environment.
 # `cluster` pins it, and is therefore not selected by `--fp 32`.
 
-env( "local",
-     [ Micromamba( "demo", python = "3.13", requirements = "requirements.txt" ) ] + FTYPE,
+errand.envs[ "local" ] = errand.Env(
+     [ errand.Micromamba( "demo", python = "3.13", requirements = "requirements.txt" ) ] + FTYPE,
      driver = "cpu" )
 
-env( "gpu",
+errand.envs[ "gpu" ] = errand.Env(
      CUDA + FTYPE,
      driver = "cuda", cuda = True )
 
 # The same idea where apptainer does not exist -- a mac, a laptop without root.
 # Only the layer changes: same tags, same fingerprint, same output paths.
 
-env( "boxed",
-     [ Docker( image = "errand-demo:1", recipe = "containers/Dockerfile" ) ] + FTYPE,
+errand.envs[ "boxed" ] = errand.Env(
+     [ errand.Docker( image = "errand-demo:1", recipe = "containers/Dockerfile" ) ] + FTYPE,
      driver = "cpu", boxed = True )
 
 # A remote machine is not a separate concept. `Ssh` first, then the same
 # layers as anywhere else -- they run over there instead of here.
 
-env( "box",
-     [ Ssh( host = "gpu-box", root = "/home/me/demo" ) ] + CUDA + FTYPE,
+errand.envs[ "box" ] = errand.Env(
+     [ errand.Ssh( host = "gpu-box", root = "/home/me/demo" ) ] + CUDA + FTYPE,
      driver = "cuda", cuda = True, remote = True )
 
 # ...and a batch system is one more layer, not a separate mode. `--batch`
 # turns the `srun` below into an `sbatch`; everything else is unchanged.
 
-env( "cluster",
-     [ Ssh( host = "login.hpc", root = "/scratch/me/demo" ),
-       Slurm( partition = "gpu", gpus = 1, cpus = 16, time = "2:00:00" ) ] + CUDA + FTYPE,
+errand.envs[ "cluster" ] = errand.Env(
+     [ errand.Ssh( host = "login.hpc", root = "/scratch/me/demo" ),
+       errand.Slurm( partition = "gpu", gpus = 1, cpus = 16, time = "2:00:00" ) ] + CUDA + FTYPE,
      driver = "cuda", cuda = True, fp = "64", remote = True )

@@ -1,13 +1,16 @@
 # Running elsewhere
 
-`Ssh` must be the **first** layer — `env()` refuses a stack where it is not. It resolves the rest of
+`Ssh` must be the **first** layer — `errand.Env()` refuses a stack where it is not. It resolves the rest of
 the stack against the remote root, serializes it to a shell string and runs it over ssh, with an
 rsync push before and a targeted rsync pull after:
 
 ```python
-env( "box", [ Ssh( host = "gpu-box", root = "/home/me/proj" ),
-              Apptainer( image = "containers/cuda.sif", recipe = "containers/cuda.def" ) ],
-     cuda = True, remote = True )
+# errand-envs.py
+import errand
+
+errand.envs[ "box" ] = errand.Env( [ errand.Ssh( host = "gpu-box", root = "/home/me/proj" ),
+                                     errand.Apptainer( image = "containers/cuda.sif", recipe = "containers/cuda.def" ) ],
+                                   cuda = True, remote = True )
 ```
 
 ```bash
@@ -75,10 +78,11 @@ declared.
 that machine, an allocation on it, the container inside it.
 
 ```python
-env( "cluster", [ Ssh( host = "login.hpc", root = "/home/me/proj" ),
-                  Slurm( time = "2:00:00" ),
-                  Apptainer( image = "containers/cuda.sif" ) ],
-     cuda = True, remote = True )
+# errand-envs.py
+errand.envs[ "cluster" ] = errand.Env( [ errand.Ssh( host = "login.hpc", root = "/home/me/proj" ),
+                                         errand.Slurm( time = "2:00:00" ),
+                                         errand.Apptainer( image = "containers/cuda.sif" ) ],
+                                       cuda = True, remote = True )
 ```
 
 What the entries ask for is handed to the scheduler rather than queued locally — see
@@ -94,13 +98,15 @@ are what collect it.
 ## What only this machine can supply
 
 A host name you can reach, a partition you are allowed to submit to — none of it can be committed
-and none of it can be invented. It goes in an untracked `errand.local.py`:
+and none of it can be invented. It goes in an untracked `errand-envs.py`, and the files read after it
+ask for it with `errand.value`, which takes a default:
 
 ```python
-from errand.local import value
+# errand-project.py  ( ssh_host and ssh_root come from errand-envs.py, which is read first )
+import errand
 
-env( "cluster", [ Ssh( host = value( "ssh_host", "gpu-box" ),
-                       root = value( "ssh_root", "/home/me/proj" ) ) ], cuda = True )
+errand.envs[ "cluster" ] = errand.Env( [ errand.Ssh( host = errand.value( "ssh_host", "gpu-box" ),
+                                                     root = errand.value( "ssh_root", "/home/me/proj" ) ) ], cuda = True )
 ```
 
 See [What only this machine can supply](./configuration#what-only-this-machine-can-supply).

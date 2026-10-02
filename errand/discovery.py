@@ -43,7 +43,7 @@ MARKER = re.compile( r"^[ \t]*(from[ \t]+errand(\.[\w.]+)?[ \t]+import|import[ \
 # The project's own files: they mention errand by nature, and re-executing one
 # as if it declared work would register everything it declares a SECOND time --
 # providers twice over, environments twice over, every entry duplicated.
-NOT_WORK = ( "errandfile.py", "errand.py", "errand.local.py" )
+NOT_WORK = "errand-*.py"
 
 # The package errand imports candidate files under. A synthetic root, so that a
 # file under tests/ is never confused with an installed package of the same
@@ -75,7 +75,7 @@ def candidates( root: Path, exclude = ( ) ) -> list[ Path ]:
     here = Path( __file__ ).resolve().parent      # errand's own sources mention the marker
     out = [ ]
     for p in iter_py_files( root, exclude ):
-        if here in p.resolve().parents or p.name in NOT_WORK:
+        if here in p.resolve().parents or fnmatch.fnmatchcase( p.name, NOT_WORK ):
             continue
         try:
             if MARKER.search( p.read_text( errors = "ignore" ) ):

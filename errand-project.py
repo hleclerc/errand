@@ -12,9 +12,9 @@ That boundary works both ways, and both are the rule doing its job:
 * run from here, `errand` is this project and stops at its edges;
 * run from the repository above, this directory is another project and is not walked into.
 """
-from errand import configure
+import errand
 
-configure(
+errand.configure(
     out = "runs",
     # The suite makes little projects in temporary directories; nothing here is vendored, and
     # `examples/` is example code that is MEANT to be found -- it is how the examples are tested.

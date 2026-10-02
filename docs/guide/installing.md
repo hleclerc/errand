@@ -37,13 +37,6 @@ cd errand
 python -m errand --help
 ```
 
-::: warning The name `errand.py` at a project root
-A module called `errand.py` at the root of a project **shadows the package** wherever that root is
-on `sys.path` — which is to say for `python -m errand`, and for any script started from there.
-`errand` says so out loud when it finds one. The configuration file's name is
-[`errandfile.py`](./configuration), which has no such problem.
-:::
-
 ## Working on errand itself
 
 ```bash

@@ -3,7 +3,7 @@
 `ssh localhost` stands in for a second machine: a real ssh, a real rsync, a
 real remote shell, a real round trip through a directory that is not the
 project's. Only the hardware is shared, and the hardware is not what is being
-tested. Name a real host in `errand.local.py` to use that instead:
+tested. Name a real host in `errand-envs.py` to use that instead:
 
     ssh_host    = "gpu-box"
     ssh_root    = "/home/me/scratch/errand-test"   # optional
@@ -20,16 +20,16 @@ from _infra import run_errand, ssh_target, write_project
 
 
 PROJECT = '''
-from errand import configure, env, Ssh, Vars
+import errand
 
 # `_lib` holds a copy of errand that travelled with the push, so the other side
 # needs nothing installed. Discovery must not walk into it: its files mention
 # `errand` and would be imported as if they declared work.
-configure( exclude = [ "_lib" ] )
+errand.configure( exclude = [ "_lib" ] )
 
-env( "over-there",
-     [ Ssh( host = {host!r}, root = {root!r}, options = {options!r} ),
-       Vars( {{ "PYTHONPATH": "{root}/_lib", "MARK": "crossed" }} ) ],
+errand.envs[ "over-there" ] = errand.Env(
+     [ errand.Ssh( host = {host!r}, root = {root!r}, options = {options!r} ),
+       errand.Vars( {{ "PYTHONPATH": "{root}/_lib", "MARK": "crossed" }} ) ],
      where = "remote" )
 '''
 

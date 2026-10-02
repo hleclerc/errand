@@ -37,33 +37,35 @@ errand --help "solvers::cost"
 ## The places
 
 ```python
-# errandfile.py
-from errand import configure, env, Venv, Ssh, Vars
-from errand.local import value
+# errand-envs.py
+import errand
 
-configure( out = "runs", src = [ "src" ], default = "here" )
+errand.default_env = "here"
 
-env( "here", [ Venv( python = ".venv/bin/python", requirements = "requirements.txt" ) ],
-     driver = "cpu" )
+errand.envs[ "here" ] = errand.Env( [ errand.Venv( python = ".venv/bin/python", requirements = "requirements.txt" ) ],
+                                    driver = "cpu" )
 
-env( "there", [ Ssh( host = value( "ssh_host", "gpu-box" ),
-                     root = value( "ssh_root", "/home/me/proj" ) ),
-                Venv( python = ".venv/bin/python", requirements = "requirements.txt",
-                      create = True ) ],
-     driver = "cpu", remote = True )
+errand.envs[ "there" ] = errand.Env( [ errand.Ssh( host = errand.value( "ssh_host", "gpu-box" ),
+                                                   root = errand.value( "ssh_root", "/home/me/proj" ) ),
+                                       errand.Venv( python = ".venv/bin/python", requirements = "requirements.txt",
+                                                    create = True ) ],
+                                     driver = "cpu", remote = True )
 ```
 
-Two things to notice in that file:
+The project's own settings — `errand.configure( out = …, src = [ "src" ] )` and the like — do not
+belong in that file: they go in `errand-project.py`, which is versioned, while this one is yours.
+
+Two things to notice in it:
 
 **`Ssh` is first**, and everything after it happens over there. The `Venv` layer is the same
 declaration in both environments — the difference between the two is one layer, not two
 configurations.
 
-**The host name is not committed.** `value( "ssh_host", "gpu-box" )` reads an untracked
-`errand.local.py` and falls back to a default that works for whoever wrote the file:
+**The host name is not committed.** `errand.value( "ssh_host", "gpu-box" )` reads a value another `errand-*.py`
+defined, and falls back to a default that works for whoever wrote the file:
 
 ```python
-# errand.local.py -- not tracked; add it to .gitignore
+# errand-0-hosts.py -- not tracked; add it to .gitignore ( the 0 makes it sort, and so be read, before errand-envs.py )
 ssh_host = "bigbox.lab.example"
 ssh_root = "/home/me/scratch/proj"
 ```

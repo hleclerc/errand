@@ -10,7 +10,7 @@ at once if you ask, and repatriates what it produced.
 
 What you run is yours: a pytest suite, a Catch2 binary, a cargo project, a Makefile target, a script.
 With no configuration `errand` looks at the directory and says what it found; `errand --init` writes
-that down as an `errandfile.py`. Declaring work with errand's own `if track( … ):` guard is one
+that down as an `errand-project.py`. Declaring work with errand's own `if track( … ):` guard is one
 more way to give it something to run, not the way in.
 
 It stands on three legs, and you want all three:
@@ -159,7 +159,7 @@ A file that declares work is **not a module to import from**. Importing one from
 everything in it twice, and errand says so rather than running the copies; put what is shared in a
 file that declares nothing.
 
-A directory holding a config file of its own is **another project**, and is not walked into: its
+A directory holding an `errand-*.py` of its own is **another project**, and is not walked into: its
 entries would run with this project's `src`, providers and environments, which is to say wrongly.
 
 A candidate that will not import — a missing dependency, an example nobody set up — **costs its own
@@ -207,18 +207,21 @@ subprocess, plus **tags** saying what it is. There is always a current interpret
 a way to override it.
 
 ```python
-env( "local", [ Micromamba( "myenv", python = "3.13", requirements = "requirements.txt" ) ],
-     driver = "jax" )
+# errand-envs.py
+import errand
 
-env( "gpu", [ Apptainer( image = "containers/cuda.sif", recipe = "containers/cuda.def",
-                         pip = [ "jax[cuda13]" ] ) ],
-     driver = "jax", cuda = True )
+errand.envs[ "local" ] = errand.Env( [ errand.Micromamba( "myenv", python = "3.13", requirements = "requirements.txt" ) ],
+                                     driver = "jax" )
 
-env( "cluster", [ Ssh( host = "gpu-box", root = "/home/me/proj" ),
-                  Slurm( partition = "gpu", gpus = 1, time = "2:00:00" ),
-                  Apptainer( image = "containers/cuda.sif", recipe = "containers/cuda.def",
-                             pip = [ "jax[cuda13]" ] ) ],
-     driver = "jax", cuda = True )
+errand.envs[ "gpu" ] = errand.Env( [ errand.Apptainer( image = "containers/cuda.sif", recipe = "containers/cuda.def",
+                                                       pip = [ "jax[cuda13]" ] ) ],
+                                   driver = "jax", cuda = True )
+
+errand.envs[ "cluster" ] = errand.Env( [ errand.Ssh( host = "gpu-box", root = "/home/me/proj" ),
+                                         errand.Slurm( partition = "gpu", gpus = 1, time = "2:00:00" ),
+                                         errand.Apptainer( image = "containers/cuda.sif", recipe = "containers/cuda.def",
+                                                           pip = [ "jax[cuda13]" ] ) ],
+                                       driver = "jax", cuda = True )
 ```
 
 | layer | what it does |
@@ -240,11 +243,14 @@ they change. Tags are keyword arguments, because they belong to the environment 
 pieces with plain Python:
 
 ```python
-CUDA = [ Apptainer( image = "containers/cuda.sif", recipe = "containers/cuda.def",
-                    flags = [ "--nvccli" ], pip = [ "jax[cuda13]" ] ) ]
+# errand-envs.py
+import errand
 
-env( "gpu",     CUDA,                                        driver = "jax", cuda = True )
-env( "cluster", [ Ssh( host = "gpu-box", root = "…" ) ] + CUDA, driver = "jax", cuda = True )
+CUDA = [ errand.Apptainer( image = "containers/cuda.sif", recipe = "containers/cuda.def",
+                           flags = [ "--nvccli" ], pip = [ "jax[cuda13]" ] ) ]
+
+errand.envs[ "gpu" ]     = errand.Env( CUDA,                                                    driver = "jax", cuda = True )
+errand.envs[ "cluster" ] = errand.Env( [ errand.Ssh( host = "gpu-box", root = "…" ) ] + CUDA, driver = "jax", cuda = True )
 ```
 
 ### Kept current by themselves
@@ -296,7 +302,7 @@ by the interpreter of the place; any other is a command in its own right and is 
 ## Tags
 
 A tag says what an environment *is*. There is nothing to declare — a tag is a keyword argument on
-`env`, and every name used becomes a flag:
+`errand.Env`, and every name used becomes a flag:
 
 ```bash
 errand --env cluster          # by name
@@ -313,8 +319,9 @@ Tags only *select*. What an environment then does to the child process is a `Var
 everything else it does — and that layer can read the selection back:
 
 ```python
-env( "gpu", CUDA + [ Vars( lambda t: { "MYPROJ_FTYPE": f"FP{ t.get( 'fp', '64' ) }" } ) ],
-     driver = "jax", cuda = True )
+# errand-envs.py
+errand.envs[ "gpu" ] = errand.Env( CUDA + [ errand.Vars( lambda t: { "MYPROJ_FTYPE": f"FP{ t.get( 'fp', '64' ) }" } ) ],
+                                   driver = "jax", cuda = True )
 ```
 
 Without that, a dimension an environment merely *parametrizes* would have to be split into one
@@ -430,8 +437,11 @@ stated is not passed, and the cluster applies its own default, which stays corre
 is rearranged and a name copied out of somebody else's script does not.
 
 ```python
-env( "cluster", [ Ssh( host = "login.hpc", root = "/home/me/proj" ),   # NOT /tmp
-                  Slurm( time = "2:00:00" ) ] )                        # the default partition
+# errand-envs.py
+import errand
+
+errand.envs[ "cluster" ] = errand.Env( [ errand.Ssh( host = "login.hpc", root = "/home/me/proj" ),   # NOT /tmp
+                                         errand.Slurm( time = "2:00:00" ) ] )                        # the default partition
 ```
 
 The root must be on a **shared filesystem**. A batch job runs on a compute node, and `/tmp` there
@@ -748,36 +758,50 @@ A run started from the screen belongs to the screen, so leaving is refused while
 None is needed. `errand` with no configuration at all finds your entries and runs them in the
 interpreter you started it with.
 
-To declare environments, tags and the rest, put an **`errandfile.py`** at the root of the project —
-the same idea as a Makefile or a Dockerfile. It is ordinary Python, loaded once by path and under a
-private name, with no entry point to call and nothing to return:
+To declare what the project does, and where it runs, put **`errand-*.py`** files at the root of the
+project. `errand` reads every one of them, in name order; what you call them beyond the prefix is up
+to you, and two names are the convention:
+
+| | |
+|---|---|
+| `errand-project.py` | what the **project** does: providers, compilation flags, `errand.configure`. Versioned |
+| `errand-envs.py` | where **you**, on **your machine**, run it: the environments. Not versioned — `errand --init` adds it to `.gitignore` |
+
+They are ordinary Python, loaded once by path and under a private name, with no entry point to call
+and nothing to return. `errand.envs` holds the environments by name, and the first one declared is
+the default unless `errand.default_env` names another:
 
 ```python
-from errand import configure, env, provider, Micromamba, Apptainer, Ssh
+# errand-project.py
+import errand
 
-configure( out = "runs", src = [ "core/src", "app/src" ] )
-
-env( "local", [ Micromamba( "myenv", python = "3.13", requirements = "requirements.txt" ) ],
-     driver = "jax" )
-env( "gpu", [ Apptainer( image = "containers/cuda.sif", recipe = "containers/cuda.def" ) ],
-     driver = "jax", cuda = True )
-
-provider( Catch2( dir = "tests/cpp" ) )
+errand.configure( out = "runs", src = [ "core/src", "app/src" ] )
+errand.provider( errand.Catch2( dir = "tests/cpp" ) )
 ```
 
-Calling it `errandfile.py` also works, and is a trap worth naming: a module of that name at the root of
-a project **shadows the package** wherever the root is on `sys.path`, which is to say for
-`python -m errand` and for any script started from there. `errand` says so out loud when it finds
-one. The `errandfile.py` spelling has no such problem.
+```python
+# errand-envs.py
+import errand
+
+errand.envs[ "local" ] = errand.Env( [ errand.Micromamba( "myenv", python = "3.13", requirements = "requirements.txt" ) ],
+                                     driver = "jax" )
+errand.envs[ "gpu" ]   = errand.Env( [ errand.Apptainer( image = "containers/cuda.sif", recipe = "containers/cuda.def" ) ],
+                                     driver = "jax", cuda = True )
+
+errand.default_env = "local"
+```
+
+The root of the project is the nearest directory, walking up from the current one, that holds an
+`errand-*.py`; `--root` overrides it. None of these files is ever taken for a file of entries.
 
 ```python
-configure(
-    root   = None,     # repo root; found by walking up from the cwd for errandfile.py
-    out    = "runs",   # where the output tree goes
-    layout = None,     # override the path scheme
-    src     = [ ],     # paths prepended to every child's PYTHONPATH
-    exclude = [ ],     # directories discovery must not walk into
-    default = None,    # the environment used when nothing is asked for
+# errand-project.py
+import errand
+
+errand.configure(
+    out     = "runs",   # where the output tree goes
+    src     = [ ],      # paths prepended to every child's PYTHONPATH
+    exclude = [ ],      # directories discovery must not walk into
 )
 ```
 
@@ -796,8 +820,8 @@ errand docs
 ### What only this machine can supply
 
 Reaching an ssh host, or a queue you are allowed to submit to, depends on who is running. None of it
-can be committed and none of it can be invented, so it goes in an untracked **`errand.local.py`**
-beside the errandfile, and an entry asks for what it needs by name:
+can be committed and none of it can be invented, so it goes in an untracked **`errand-envs.py`**
+beside the other project files, and an entry asks for what it needs by name:
 
 ```python
 from errand import test, need
@@ -812,7 +836,7 @@ what was missing and exactly what to write where:
 ```
   3 skipped:
     it runs over there  (test_ssh.py:18)  needs `ssh_host` -- a machine you can ssh to without a password
-      errand.local.py does not exist yet. Create it (it is not tracked) with:
+      errand-envs.py does not exist yet. Create it (it is not tracked) with:
           ssh_host = 'gpu-box'
 ```
 
@@ -825,16 +849,15 @@ A skip is its own status, in the output and in `result.yaml`. `skip( "reason" )`
 for anything else that makes an entry inapplicable today. A suite that quietly tested nothing must
 not be able to look like a suite that passed.
 
-**The errandfile may read it too**, with `value` rather than `need`: an entry has the option of not
+**The project files may read it too**, with `value` rather than `need`: an entry has the option of not
 running, a project file has not — it is read once, before anything, and what it does not find it
 must do without. That is what lets a host name, a remote root or a scratch directory stay out of
 git while the declaration that uses them is committed, with a default that works here:
 
 ```python
-from errand.local import value
-
-env( "cluster", [ Ssh( host = value( "ssh_host", "gpu-box" ),
-                       root = value( "ssh_root", "/home/me/proj" ) ) ], cuda = True )
+# errand-project.py  ( ssh_host and ssh_root are defined in errand-envs.py, which is read first )
+errand.envs[ "cluster" ] = errand.Env( [ errand.Ssh( host = errand.value( "ssh_host", "gpu-box" ),
+                                                     root = errand.value( "ssh_root", "/home/me/proj" ) ) ], cuda = True )
 ```
 
 ## Other languages
@@ -842,13 +865,14 @@ env( "cluster", [ Ssh( host = value( "ssh_host", "gpu-box" ),
 errand does not care what your tests are written in. An entry does not have to be a Python call
 site. Providers for C++ (Catch2, GoogleTest, doctest),
 Rust (`cargo test`, Criterion), JavaScript and plain executables come with `errand`, and one line
-in `errandfile.py` puts an existing suite under it — with an output directory, summaries, environment
+in `errand-project.py` puts an existing suite under it — with an output directory, summaries, environment
 matrices and remote repatriation, none of which it had before:
 
 ```python
-provider( Pytest( ) )
-provider( Catch2( dir = "tests/cpp" ) )
-provider( Cargo( ) )
+import errand
+errand.provider( errand.Pytest( ) )
+errand.provider( errand.Catch2( dir = "tests/cpp" ) )
+errand.provider( errand.Cargo( ) )
 ```
 
 A suite keeps everything that makes it itself, and its vocabulary is translated rather than
@@ -858,16 +882,16 @@ land in `result.yaml` beside everyone else's.
 
 A provider finds its own entries the way its ecosystem does — `pytest`'s collection rules, the
 `test_*.cpp` under a directory, `cargo`'s targets. That is a guess about your layout, so it is a
-guess you write down: a provider line in `errandfile.py` is the declaration of what will be looked for
-and where, and it takes the arguments to say something else. With no `errandfile.py` at all, `errand`
+guess you write down: a provider line in `errand-project.py` is the declaration of what will be looked for
+and where, and it takes the arguments to say something else. With no `errand-*.py` at all, `errand`
 reads the directory, guesses, and **tells you what it guessed** before running anything:
 
 ```text
-  no errandfile.py; guessed:  pytest (tests/)  ·  catch2 (cpp/)  ·  cargo (rust/)   ( errand --init writes it down )
+  no errand-*.py; guessed:  pytest (tests/)  ·  catch2 (cpp/)  ·  cargo (rust/)   ( errand --init writes it down )
 ```
 
 Convenient for a first look, never silent, and the cure is to write the line — which is what
-`errand --init` does, and makes `runs/` beside it. It never overwrites (`--init=force` does). Nothing
+`errand --init` does, making `runs/` and an `errand-envs.py` beside it. It never overwrites (`--init=force` does). Nothing
 is run to guess: it lists directories and reads a few files.
 
 Discovery over a large tree is not free, and will be cached against file mtimes. Later; it is an
@@ -877,8 +901,9 @@ optimization, not a design question.
 with, once, before any of its entries — not once per file, and not once per parallel process:
 
 ```python
-provider( Catch2( dir = "cpp", build = "make -C cpp" ) )
-provider( Catch2( dir = "cpp", build = "cmake --build build", binary = "build/{stem}" ) )
+import errand
+errand.provider( errand.Catch2( dir = "cpp", build = "make -C cpp" ) )
+errand.provider( errand.Catch2( dir = "cpp", build = "cmake --build build", binary = "build/{stem}" ) )
 ```
 
 `binary` says where a source's executable lands, defaulting to `<dir>/<stem>`. Leave `build` out if

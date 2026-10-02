@@ -1,14 +1,14 @@
 # 3 · Adopt an existing suite
 
 A pytest suite, a Catch2 suite and a cargo one, none of them modified. Three lines in
-`errandfile.py` put all three under `errand`.
+`errand-project.py` put all three under `errand`.
 
 ```bash
 cd examples/03-existing-suite
 ```
 
 ```
-errandfile.py            three providers, and nothing else
+errand-project.py        three providers, and nothing else
 tests/test_api.py        ordinary pytest, still runs under `pytest`
 cpp/test_geometry.cpp    ordinary Catch2, still runs on its own
 cpp/Makefile             whatever you already build with
@@ -22,14 +22,14 @@ would have running it build a micromamba environment on your machine. Environmen
 ## The three lines
 
 ```python
-# errandfile.py
-from errand import configure, provider, Pytest, Catch2, Cargo
+# errand-project.py
+import errand
 
-configure( src = [ "src" ] )
+errand.configure( src = [ "src" ] )
 
-provider( Pytest( dirs = [ "tests" ] ) )
-provider( Catch2( dir = "cpp", build = "make -C cpp" ) )
-provider( Cargo( manifest = "rust/Cargo.toml" ) )
+errand.provider( errand.Pytest( dirs = [ "tests" ] ) )
+errand.provider( errand.Catch2( dir = "cpp", build = "make -C cpp" ) )
+errand.provider( errand.Cargo( manifest = "rust/Cargo.toml" ) )
 ```
 
 That is the whole adoption. Nothing below it changes a single line of the existing tests.
@@ -68,15 +68,15 @@ and the numbers accumulate per machine and per date, next to the Python ones, in
 
 ## Guessing, and writing the guess down
 
-Run `errand` in a project with no `errandfile.py` at all and it will find these suites by itself —
+Run `errand` in a project with no `errand-*.py` at all and it will find these suites by itself —
 and say so before running anything:
 
 ```text
-  no errandfile.py; guessed:  pytest (tests/)  ·  catch2 (cpp/)  ·  cargo (rust/)   ( errand --init writes it down )
+  no errand-*.py; guessed:  pytest (tests/)  ·  catch2 (cpp/)  ·  cargo (rust/)   ( errand --init writes it down )
 ```
 
 Every framework locates its tests by assuming something about your layout, so there is no version of
-this that does not guess. What `errandfile.py` changes is that the assumption is **visible,
+this that does not guess. What `errand-project.py` changes is that the assumption is **visible,
 versioned, and arguable** — `Pytest( dirs = [ "tests" ] )` says exactly what will be looked at, and
 takes arguments to say something else.
 
@@ -84,12 +84,12 @@ Try it. Move the file aside, look at what errand makes of the bare directory, th
 file back:
 
 ```bash
-mv errandfile.py errandfile.bak
+mv errand-project.py errand-project.bak
 errand -h                  # the guess, announced; nothing run
-errand --init              # errandfile.py again, from what was found
+errand --init              # errand-project.py again, from what was found
 ```
 
-The `configure( src = … )` line is not in what `--init` writes — it is not a thing a directory can
+The `errand.configure( src = … )` line is not in what `--init` writes — it is not a thing a directory can
 tell: it is yours to add.
 
 ## Compiling, and finding the binary
@@ -98,8 +98,9 @@ errand compiles nothing itself. It runs the command you already build with, once
 the binaries where you say they land:
 
 ```python
-provider( Catch2( dir = "cpp", build = "make -C cpp" ) )
-provider( Catch2( dir = "cpp", build = "cmake --build build", binary = "build/{stem}" ) )
+# errand-project.py
+errand.provider( errand.Catch2( dir = "cpp", build = "make -C cpp" ) )
+errand.provider( errand.Catch2( dir = "cpp", build = "cmake --build build", binary = "build/{stem}" ) )
 ```
 
 `build` runs **once before any entry of that provider** — not once per file, and not once per

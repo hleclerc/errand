@@ -166,7 +166,7 @@ writing. `F8` hands what a run produced to the desktop, so `gaps.svg` is two key
 
 - **No `if __name__ == "__main__":`.** The guard is the entry, and there can be five in one file.
 - **The benchmark that also asserts.** Two numbers recorded, then one checked against the other.
-- **Nothing was configured.** No `errandfile.py` exists in this directory at all.
+- **Nothing was configured.** No `errand-*.py` exists in this directory at all.
 
 ## Next
 
