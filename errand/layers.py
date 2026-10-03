@@ -165,6 +165,7 @@ class Micromamba:
     packages    : list = field( default_factory = list )
     requirements: str | None = None
     pip         : list = field( default_factory = list )
+    root_prefix : str | None = None     # where `-n <name>` resolves; wins over MAMBA_ROOT_PREFIX and the guesses below
 
     def _exe( self, ctx ):
         """`micromamba`, pinned to the root prefix `-n <name>` must resolve against.
@@ -177,7 +178,7 @@ class Micromamba:
         """
         if ctx.remote:
             return [ "micromamba" ]     # the remote side goes through an interactive shell
-        root = os.environ.get( "MAMBA_ROOT_PREFIX" )
+        root = self.root_prefix or os.environ.get( "MAMBA_ROOT_PREFIX" )
         if not root:
             for candidate in ( Path.home() / ".mamba", Path.home() / "micromamba" ):
                 if ( candidate / "envs" ).is_dir():
