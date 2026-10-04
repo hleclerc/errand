@@ -37,6 +37,7 @@ from __future__ import annotations
 import contextlib
 import curses
 import os
+import re
 import time
 from pathlib import Path
 
@@ -46,16 +47,70 @@ from .session import Session
 LOOK  = 0.5          # seconds between askings of the output tree
 WHEEL = 3            # rows per notch
 
-# ncurses reports the wheel as buttons 4 and 5; the constant for the second is
-# missing from some builds of the module.
-WHEEL_UP   = curses.BUTTON4_PRESSED
-WHEEL_DOWN = getattr( curses, "BUTTON5_PRESSED", 0x200000 )
+# ncurses reports the wheel as buttons 4 and 5 -- when it is a build that HAS a button 5.
+# The one macOS ships ( ncurses 6.0, the 32-bit mouse mask ) has none: `BUTTON5_PRESSED` is
+# missing from the module, the bit that would stand for it is another button's double click,
+# and the wheel turned DOWN is simply never delivered. Clicks went astray along with it, because
+# the terminfo of that vintage names the old X10 form, which cannot say a column past 223.
+#
+# So there, errand asks the terminal for the SGR form itself ( 1006 ) and reads it off the keys
+# ncurses does not recognise -- an escape followed by `[<b;x;y` and `M` or `m` -- then hands the
+# rest of the screen the same ( y, x, state ) it would have got from `getmouse`, with flags of
+# its own. Everywhere else ncurses does it all, as it always did.
+OWN_MOUSE = not hasattr( curses, "BUTTON5_PRESSED" )
 
-# A press is an intention; a RELEASE is the end of one, and acting on both
-# would do everything twice -- and, worse, would make the release of a wheel
-# notch land as a click wherever the pointer happened to be.
-PRESSED = ( curses.BUTTON1_PRESSED | curses.BUTTON1_CLICKED
-            | curses.BUTTON1_DOUBLE_CLICKED | curses.BUTTON1_TRIPLE_CLICKED )
+if OWN_MOUSE:
+    WHEEL_UP, WHEEL_DOWN, PRESSED = 1 << 28, 1 << 29, 1 << 30
+else:
+    WHEEL_UP   = curses.BUTTON4_PRESSED
+    WHEEL_DOWN = curses.BUTTON5_PRESSED
+    # A press is an intention; a RELEASE is the end of one, and acting on both
+    # would do everything twice -- and, worse, would make the release of a wheel
+    # notch land as a click wherever the pointer happened to be.
+    PRESSED = ( curses.BUTTON1_PRESSED | curses.BUTTON1_CLICKED
+                | curses.BUTTON1_DOUBLE_CLICKED | curses.BUTTON1_TRIPLE_CLICKED )
+
+_SGR_MOUSE = re.compile( r"\[<(\d+);(\d+);(\d+)([Mm])$" )
+_own_event: tuple = ( 0, 0, 0, 0, 0 )
+
+
+def read_key( win ):
+    """`win.getch()`, with the mouse of a terminal ncurses cannot read turned into `KEY_MOUSE`."""
+    key = win.getch()
+    if key != 27 or not OWN_MOUSE:
+        return key
+    global _own_event
+    seen = [ ]
+    win.timeout( 15 )                      # what follows an escape is already in the buffer
+    try:
+        while len( seen ) < 24:
+            c = win.getch()
+            if c == -1:
+                break
+            seen.append( c )
+            if c in ( ord( "M" ), ord( "m" ) ):
+                break
+    finally:
+        win.timeout( 200 )
+    m = _SGR_MOUSE.match( "".join( chr( c ) for c in seen if 0 <= c < 256 ) )
+    if m is None:
+        for c in reversed( seen ):         # a lone escape, and keys typed after it
+            curses.ungetch( c )
+        return key
+    button, x, y = int( m.group( 1 ) ), int( m.group( 2 ) ) - 1, int( m.group( 3 ) ) - 1
+    if button & 64:                        # the wheel: 64 up, 65 down
+        state = WHEEL_DOWN if button & 1 else WHEEL_UP
+    elif button & 32 or m.group( 4 ) == "m" or button & 3:
+        return -1                          # drags, releases, the other buttons
+    else:
+        state = PRESSED
+    _own_event = ( 0, x, y, 0, state )
+    return curses.KEY_MOUSE
+
+
+def get_mouse( ):
+    return _own_event if OWN_MOUSE else curses.getmouse()
+
 
 C_TITLE, C_ACTIVE, C_DIM, C_OK, C_BAD, C_WARN = 1, 2, 3, 4, 5, 6
 
@@ -1076,7 +1131,10 @@ def loop( win, screen: Screen ):
                 curses.init_pair( pair, colour, -1 )
             except curses.error:
                 pass
-    curses.mousemask( curses.ALL_MOUSE_EVENTS | WHEEL_UP | WHEEL_DOWN )
+    if OWN_MOUSE:
+        os.write( 1, b"\x1b[?1000h\x1b[?1006h" )
+    else:
+        curses.mousemask( curses.ALL_MOUSE_EVENTS | WHEEL_UP | WHEEL_DOWN )
     curses.mouseinterval( 0 )            # a click is a click, not half a drag
     win.timeout( 200 )
 
@@ -1097,7 +1155,7 @@ def loop( win, screen: Screen ):
         screen.build_preview()
         draw( win, screen )
 
-        key = win.getch()
+        key = read_key( win )
         if TRACE and key != -1:
             open( TRACE, "a" ).write( f"key {key}\n" )
         if key == -1:
@@ -1129,7 +1187,7 @@ def _common( screen: Screen, key ):
     pane = screen.pane()
     if key == curses.KEY_MOUSE:
         try:
-            _, x, y, _, state = curses.getmouse()
+            _, x, y, _, state = get_mouse()
         except curses.error:
             return ""
         screen.mouse( y, x, state )
@@ -1219,7 +1277,7 @@ def _dialog_key( screen: Screen, key ):
         screen.launch( dialog.argv() )
     elif key == curses.KEY_MOUSE:
         try:
-            _, x, y, _, state = curses.getmouse()
+            _, x, y, _, state = get_mouse()
         except curses.error:
             return
         if state & PRESSED:
@@ -1248,4 +1306,8 @@ def main( root: Path, out_root: Path ):
     if not sys.stdout.isatty():
         print( "errand --tui needs a terminal", file = sys.stderr )
         return 2
-    return curses.wrapper( loop, Screen( Session( root, out_root ).discover() ) ) or 0
+    try:
+        return curses.wrapper( loop, Screen( Session( root, out_root ).discover() ) ) or 0
+    finally:
+        if OWN_MOUSE:                      # what `loop` switched on, whatever ended it
+            os.write( 1, b"\x1b[?1006l\x1b[?1000l" )

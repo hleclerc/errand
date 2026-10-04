@@ -174,6 +174,8 @@ def _sgr_mouse( term_name = "xterm-256color" ):
     a test that waited for one would sit there sending a form nothing reads.
     """
     import curses
+    if not hasattr( curses, "BUTTON5_PRESSED" ):
+        return True                  # the screen asks for SGR itself ( see `errand.tui.OWN_MOUSE` )
     try:
         fd = ( sys.__stdout__ or sys.stdout ).fileno()
     except Exception:

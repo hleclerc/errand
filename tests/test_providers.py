@@ -12,7 +12,7 @@ from pathlib import Path
 
 from errand import test, skip, yamlish
 from errand import providers as P
-from errand.providers import errand.Cargo, errand.Catch2, errand.Pytest, _from_cargo, _from_catch2, _from_junit
+from errand.providers import Cargo, Catch2, Pytest, _from_cargo, _from_catch2, _from_junit
 
 from _infra import run_errand, write_project
 
@@ -262,12 +262,12 @@ if test( "a pytest suite, collected by pytest itself", tags = [ "pytest", "slow"
 
 if test( "the system interpreter is not errand's to install into", tags = [ "pytest" ] ):
     # It is shared with everything else on the machine, and it may well refuse.
-    from errand.providers import errand.Pytest
+    from errand.providers import Pytest
 
-    errand.provider = errand.Pytest( dirs = [ "nowhere" ], python = "/usr/bin/python3" )
-    if errand.provider._has_pytest():
+    provider = Pytest( dirs = [ "nowhere" ], python = "/usr/bin/python3" )
+    if provider._has_pytest():
         skip( "the system interpreter here already has pytest" )
-    why = errand.provider.ensure_pytest( echo = None )
+    why = provider.ensure_pytest( echo = None )
     assert why and "not errand's to do" in why, why
     assert "Pytest( install = True )" in why, "it has to say what to do instead"
 
@@ -275,9 +275,9 @@ if test( "the system interpreter is not errand's to install into", tags = [ "pyt
 if test( "a build runs once, not once per entry" ):
     # Once per file would recompile for nothing; under -j it would have several
     # processes writing the same binary at the same time.
-    from errand.providers import errand.Catch2
+    from errand.providers import Catch2
 
-    class Counting( errand.Catch2 ):
+    class Counting( Catch2 ):
         runs = 0
 
         def shell( self, argv, ctx, **kw ):
@@ -296,10 +296,10 @@ if test( "a build runs once, not once per entry" ):
         here = os.getcwd()
         os.chdir( root )
         try:
-            errand.provider = Counting( dir = "cpp", build = "make -C cpp" )
-            entries = errand.provider.collect( [ ( errand.provider.files(), None ) ] )
+            provider = Counting( dir = "cpp", build = "make -C cpp" )
+            entries = provider.collect( [ ( provider.files(), None ) ] )
             assert len( entries ) == 2
-            errand.provider.prepare( entries, P.RunContext( root = root, out_dir = root ) )
+            provider.prepare( entries, P.RunContext( root = root, out_dir = root ) )
         finally:
             os.chdir( here )
 

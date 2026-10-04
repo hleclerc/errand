@@ -135,8 +135,8 @@ def import_file( path: Path, root: Path ):
     withdrew itself with `sys.exit` -- the way a file says it does not apply to
     this run, before importing what would fail.
     """
-    parts = path.resolve().relative_to( root ).with_suffix( "" ).parts
-    pkg, directory = SCAN_PKG, root
+    parts = path.resolve().relative_to( root.resolve() ).with_suffix( "" ).parts
+    pkg, directory = SCAN_PKG, root.resolve()
     for part in parts[ : -1 ]:
         pkg, directory = f"{pkg}.{part}", directory / part
         if pkg not in sys.modules:
