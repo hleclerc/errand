@@ -77,10 +77,13 @@ _own_event: tuple = ( 0, 0, 0, 0, 0 )
 def read_key( win ):
     """`win.getch()`, with the mouse of a terminal ncurses cannot read turned into `KEY_MOUSE`."""
     key = win.getch()
-    if key != 27 or not OWN_MOUSE:
+    if not OWN_MOUSE or key not in ( 27, curses.KEY_MOUSE ):
         return key
     global _own_event
-    seen = [ ]
+    # A terminfo that names `\E[<` as its mouse ( Ghostty's, xterm's ) makes ncurses swallow that
+    # much and hand back KEY_MOUSE -- with the rest of the report still to be read, as keys. We
+    # never ask ncurses for the mouse, so a KEY_MOUSE here can only be that.
+    seen = [ ord( "[" ), ord( "<" ) ] if key == curses.KEY_MOUSE else [ ]
     win.timeout( 15 )                      # what follows an escape is already in the buffer
     try:
         while len( seen ) < 24:
@@ -94,6 +97,8 @@ def read_key( win ):
         win.timeout( 200 )
     m = _SGR_MOUSE.match( "".join( chr( c ) for c in seen if 0 <= c < 256 ) )
     if m is None:
+        if key == curses.KEY_MOUSE:
+            return -1                      # a report cut short: nothing to act on
         for c in reversed( seen ):         # a lone escape, and keys typed after it
             curses.ungetch( c )
         return key

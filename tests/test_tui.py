@@ -293,3 +293,39 @@ if test( "a terminal whose terminfo has `rep` still gets whole borders" ):
             assert "─" * 10 in shown, shown
         finally:
             term.close()
+
+
+if test( "a terminfo that names `\\E[<` as its mouse still gets a wheel, and no stray typing" ):
+    # Ghostty's does: ncurses swallows the three bytes, returns KEY_MOUSE, and leaves `65;10;5M` to arrive
+    # as keys -- which is a search for "65;10;5M" the first time the wheel turns.
+    import shutil
+    import subprocess
+    import sys
+
+    if not ( shutil.which( "infocmp" ) and shutil.which( "tic" ) ):
+        skip( "no infocmp / tic to make a terminal with" )
+    with tempfile.TemporaryDirectory() as tmp:
+        dump = subprocess.run( [ "infocmp", "-x", "-1", "xterm-256color" ], capture_output = True,
+                               text = True, check = True ).stdout
+        lines = [ l for l in dump.splitlines() if not l.strip().startswith( "kmous=" ) ]
+        first = next( i for i, l in enumerate( lines ) if not l.startswith( "#" ) )
+        lines[ first ] = "xterm-sgrmouse|xterm with an SGR kmous,"
+        lines.insert( first + 1, "\tkmous=\\E[<," )
+        info = Path( tmp ) / "terminfo"
+        subprocess.run( [ "tic", "-x", "-o", str( info ), "-" ], input = "\n".join( lines ) + "\n",
+                        text = True, check = True, capture_output = True )
+
+        from _tty import Term, tui_env, mouse, WHEEL_DOWN
+        project = a_project( tmp, { "test_many.py": MANY } )
+        env = tui_env( project )
+        env[ "TERM" ], env[ "TERMINFO" ] = "xterm-sgrmouse", str( info )
+        term = Term( [ sys.executable, "-m", "errand", "--tui" ], project, env = env )
+        try:
+            until( term, "case_00" )
+            for _ in range( 5 ):
+                term.send( "\x1b[<65;10;6M" )          # what such a terminal sends for a wheel notch
+            after = term.frame()
+            assert "[ ] case_00" not in after, after
+            assert "find: a case" in after, "nothing was typed into the search\n" + after
+        finally:
+            term.close()
