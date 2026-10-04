@@ -74,8 +74,12 @@ _SGR_MOUSE = re.compile( r"\[<(\d+);(\d+);(\d+)([Mm])$" )
 _own_event: tuple = ( 0, 0, 0, 0, 0 )
 
 
-def read_key( win ):
-    """`win.getch()`, with the mouse of a terminal ncurses cannot read turned into `KEY_MOUSE`."""
+def read_key( win, wait = 200 ):
+    """`win.getch()`, with the mouse of a terminal ncurses cannot read turned into `KEY_MOUSE`.
+
+    `wait` is how long to wait for a key, in milliseconds; 0 is "only what is already there".
+    """
+    win.timeout( wait )
     key = win.getch()
     if not OWN_MOUSE or key not in ( 27, curses.KEY_MOUSE ):
         return key
@@ -94,7 +98,7 @@ def read_key( win ):
             if c in ( ord( "M" ), ord( "m" ) ):
                 break
     finally:
-        win.timeout( 200 )
+        win.timeout( wait )
     m = _SGR_MOUSE.match( "".join( chr( c ) for c in seen if 0 <= c < 256 ) )
     if m is None:
         if key == curses.KEY_MOUSE:
@@ -1161,30 +1165,51 @@ def loop( win, screen: Screen ):
         draw( win, screen )
 
         key = read_key( win )
-        if TRACE and key != -1:
-            open( TRACE, "a" ).write( f"key {key}\n" )
         if key == -1:
             continue
-        if screen.dialog is not None:
-            _dialog_key( screen, key )
-            continue
-        if screen.help:
-            screen.help = False
-            continue
-
-        screen.message = ""
-        screen.dirty   = True
-        answer = _common( screen, key )
-        if answer is None:
-            answer = _list_key( screen, key )
-        if answer == "quit":
-            # A run started here belongs here: leaving would break the pipe
-            # under it. Detaching is how work outlives a window.
-            if screen.session.running:
-                screen.message = ( "something is running: x interrupts it, "
-                                   "or tick `detach` next time" )
-            else:
+        # The mouse events already waiting are dealt with BEFORE the next picture: a turn of the
+        # wheel is dozens of events a second, and a picture per event is a screen that flickers
+        # through every intermediate scroll position, which is also what makes it lag behind the
+        # hand. Only the mouse: after any other key the lists are rebuilt before the next one.
+        for _ in range( 200 ):
+            if _handle( screen, key ) == "quit":
                 return 0
+            if key != curses.KEY_MOUSE:
+                break
+            key = read_key( win, 0 )
+            if key not in ( -1, curses.KEY_MOUSE ):
+                curses.ungetch( key )
+                break
+            if key == -1:
+                break
+        win.timeout( 200 )
+
+
+def _handle( screen: Screen, key ):
+    """One key, whatever the screen is showing. -> "quit" when it is time to leave."""
+    if TRACE:
+        open( TRACE, "a" ).write( f"key {key}\n" )
+    if screen.dialog is not None:
+        _dialog_key( screen, key )
+        return None
+    if screen.help:
+        screen.help = False
+        return None
+
+    screen.message = ""
+    screen.dirty   = True
+    answer = _common( screen, key )
+    if answer is None:
+        answer = _list_key( screen, key )
+    if answer == "quit":
+        # A run started here belongs here: leaving would break the pipe
+        # under it. Detaching is how work outlives a window.
+        if screen.session.running:
+            screen.message = ( "something is running: x interrupts it, "
+                               "or tick `detach` next time" )
+            return None
+        return "quit"
+    return None
 
 
 def _common( screen: Screen, key ):
