@@ -12,7 +12,7 @@ and where a click lands.
 import tempfile
 from pathlib import Path
 
-from errand import test
+from errand import skip, test
 
 from _demo import UNREADABLE, WORK, a_project
 from _infra import run_errand
@@ -258,5 +258,38 @@ if test( "the runs are searched too, by their command", tags = [ "slow" ] ):
             # And the search of one page is not the search of the other.
             term.send( fkey( 2 ) )
             assert "find: slo" not in term.frame(), term.frame()
+        finally:
+            term.close()
+
+
+if test( "a terminal whose terminfo has `rep` still gets whole borders" ):
+    # Ghostty's does, and the ncurses macOS ships answers a run of `─` with nothing at all: every box
+    # collapsed to its title. The terminfo is made here, so that it needs no Ghostty to be tested.
+    import shutil
+    import subprocess
+
+    if not ( shutil.which( "infocmp" ) and shutil.which( "tic" ) ):
+        skip( "no infocmp / tic to make a terminal with" )
+    with tempfile.TemporaryDirectory() as tmp:
+        dump = subprocess.run( [ "infocmp", "-x", "-1", "xterm-256color" ], capture_output = True,
+                               text = True, check = True ).stdout
+        lines = [ l for l in dump.splitlines() if not l.strip().startswith( "rep=" ) ]
+        first = next( i for i, l in enumerate( lines ) if not l.startswith( "#" ) )
+        lines[ first ] = "xterm-withrep|xterm with rep,"
+        lines.insert( first + 1, "\trep=%p1%c\\E[%p2%{1}%-%db," )
+        info = Path( tmp ) / "terminfo"
+        subprocess.run( [ "tic", "-x", "-o", str( info ), "-" ], input = "\n".join( lines ) + "\n",
+                        text = True, check = True, capture_output = True )
+
+        project = a_project( tmp )
+        from _tty import Term, tui_env
+        import sys
+        env = tui_env( project )
+        env[ "TERM" ], env[ "TERMINFO" ] = "xterm-withrep", str( info )
+        term = Term( [ sys.executable, "-m", "errand", "--tui" ], project, env = env )
+        try:
+            until( term, "test_demo.py" )
+            shown = term.frame()
+            assert "─" * 10 in shown, shown
         finally:
             term.close()

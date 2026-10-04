@@ -1300,12 +1300,55 @@ def _dialog_key( screen: Screen, key ):
         dialog.type( key )
 
 
+def without_rep( ):
+    """Hand ncurses a terminfo that does not know `rep`, when it is one that gets it wrong.
+
+    `rep` is "repeat the last character N times". The ncurses that macOS ships ( 6.0, from 2015 )
+    uses it for a run of a MULTIBYTE character as well, and then sends neither the characters nor
+    anything that repeats them: a border drawn as `╭ cases ──────╮` arrives as `╭ cases ╮`. Every
+    box in the screen collapses to its title. Which terminals are hit is down to their terminfo
+    -- Ghostty's has `rep`, Apple's own xterm-256color has not -- and a newer ncurses sends the
+    characters, so nothing is done there. Here the entry is dumped, `rep` dropped, and compiled
+    into a directory of our own; anything that goes wrong along the way leaves things as they were.
+    """
+    import subprocess
+    import tempfile
+
+    if tuple( curses.ncurses_version ) >= ( 6, 2, 0 ) or not os.environ.get( "TERM" ):
+        return
+    try:
+        curses.setupterm( os.environ[ "TERM" ], 1 )
+        if not curses.tigetstr( "rep" ):
+            return
+    except curses.error:
+        return
+    term = os.environ[ "TERM" ]
+    mine = f"{term}-norep"
+    where = Path( tempfile.gettempdir() ) / f"errand-terminfo-{os.getuid()}"
+    try:
+        if not any( where.glob( f"*/{mine}" ) ):
+            dump = subprocess.run( [ "infocmp", "-x", "-1", term ], capture_output = True,
+                                   text = True, check = True ).stdout
+            lines = [ l for l in dump.splitlines() if not l.strip().startswith( "rep=" ) ]
+            first = next( i for i, l in enumerate( lines ) if not l.startswith( "#" ) )
+            lines[ first ] = f"{mine}|{term} without rep,"      # a dump opens with comments, then its names
+            where.mkdir( exist_ok = True )
+            subprocess.run( [ "tic", "-x", "-o", str( where ), "-" ], input = "\n".join( lines ) + "\n",
+                            text = True, check = True, capture_output = True )
+        if any( where.glob( f"*/{mine}" ) ):
+            os.environ[ "TERMINFO" ] = str( where )
+            os.environ[ "TERM" ]     = mine
+    except ( OSError, subprocess.SubprocessError ):
+        pass
+
+
 def main( root: Path, out_root: Path ):
     import sys
 
     if not sys.stdout.isatty():
         print( "errand --tui needs a terminal", file = sys.stderr )
         return 2
+    without_rep()
     try:
         return curses.wrapper( loop, Screen( Session( root, out_root ).discover() ) ) or 0
     finally:
