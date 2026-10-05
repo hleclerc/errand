@@ -35,14 +35,14 @@ container*, then your command. There is no separate remote mode, no host file, n
 
 | layer | what it does |
 |---|---|
-| `Micromamba( name, python =, channels =, packages =, requirements =, pip = )` | wraps with `micromamba -n <name> run`; a no-op if that environment is already active |
+| `Micromamba( name, python =, channels =, packages =, requirements =, pip =, root_prefix =, executable = )` | wraps with `micromamba -n <name> run`; a no-op if that environment is already active |
 | `Conda( … )`, `Venv( python =, requirements =, pip = )`, `Uv( path =, python =, … )` | the same idea, other tools |
 | `Nix( flake =, shell = )`, `Guix( manifest =, packages = )` | `nix develop -c …`, `guix shell -- …` |
 | `Module( "gcc/13", "cuda/12" )` | Lmod / environment modules, the way a cluster picks a toolchain |
 | `Apptainer( image, recipe =, flags =, mounts =, pip =, fakeroot =, scratch =, build_flags = )` | wraps with `apptainer exec`, using the container's own interpreter. The last three are about *building* it rather than entering it |
 | `Docker( image, recipe =, flags =, mounts =, pip =, user = )`, `Podman( … )` | likewise |
 | `Ssh( host, root =, python =, options = )` | must be first; everything after it runs on that machine. `options` go to ssh *and* rsync — a port, an identity, a jump host |
-| `Slurm( partition =, nodes =, cpus =, gpus =, time =, account =, extra = )` | goes through `srun`, or `sbatch` in [batch mode](./detached) |
+| `Slurm( partition =, nodes =, cpus =, gpus =, time =, account =, nodelist =, extra = )` | goes through `srun`, or `sbatch` in [batch mode](./detached) |
 | `Vars( { … } )` | environment variables for the child process |
 
 Slurm is the only batch system with a layer of its own so far. errand does however *recognize*

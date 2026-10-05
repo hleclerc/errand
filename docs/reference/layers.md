@@ -52,10 +52,16 @@ A specific interpreter: a venv's python, or any installed one. `create = True` m
 
 ```python
 Micromamba( name, python = None, channels = [ "conda-forge" ],
-            packages = [ ], requirements = None, pip = [ ] )
+            packages = [ ], requirements = None, pip = [ ],
+            root_prefix = None, executable = None )
 ```
 
 Wraps with `micromamba -n <name> run`; a no-op if that environment is already active.
+
+`executable` is the micromamba binary to call, for a machine where it is not on `PATH`, and
+`root_prefix` the directory `-n <name>` resolves against. Over `Ssh` only what is declared is
+passed -- nothing is guessed from this machine's home -- and behind a `Slurm` layer the command
+runs on a compute node that reads no rc file at all: state both there.
 
 ::: info Why `micromamba` is pinned to a root prefix
 The shell hook exports `MAMBA_ROOT_PREFIX` from an rc file, which only *interactive* shells read.
@@ -168,7 +174,7 @@ See [Running elsewhere](/guide/remote) for what the push and the pull actually m
 
 ```python
 Slurm( partition = None, nodes = None, cpus = None, gpus = None,
-       time = None, account = None, extra = [ ] )
+       time = None, account = None, nodelist = None, extra = [ ] )
 ```
 
 `srun` while you wait, `sbatch` under [`--batch`](/guide/detached) — which *is* the detachment: it
@@ -194,6 +200,9 @@ What the entries ask for fills in the rest:
 **What the environment states explicitly wins**: whoever wrote `Slurm( cpus = 16 )` knew something
 about that partition an entry cannot. A dispatched command carries several entries, so the
 allocation is the largest of them, and exclusive if any one of them is.
+
+`nodelist` pins the allocation to named nodes ( `--nodelist` ): a string as Slurm reads it
+( `"node15"`, `"node[1-4]"` ) or a list of names.
 
 `extra` is appended verbatim, for whatever your site needs that nothing above covers.
 

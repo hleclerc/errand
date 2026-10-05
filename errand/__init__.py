@@ -66,6 +66,17 @@ _LAZY = {
     "Cargo"     : "errand.providers",
 }
 
+# The same names, spelled out for type checkers and editors, which cannot follow
+# `__getattr__`. Never executed, so the import above stays cheap.
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from .cli import main
+    from .config import Env, configure, envs, provider
+    from .layers import (
+        Apptainer, Conda, Docker, Guix, Micromamba, Module, Nix, Podman, Slurm, Ssh, Uv, Vars, Venv,
+    )
+    from .providers import Cargo, Catch2, Outcome, Provider, Pytest, RunContext
+
 
 def __getattr__( name ):
     if name in _LAZY:

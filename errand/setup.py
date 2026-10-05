@@ -73,16 +73,20 @@ def ensure( root: Path, env, ctx, *, force = False, echo = print, dry_run = Fals
     have = recorded( root, env )
     first = not have
 
+    # Asked of, and built on, the machine the environment lives on: a layer
+    # must not answer with what it finds here ( a root prefix, a binary ).
+    there = ( L.Context( root = env.ssh.remote_root( ctx ), tags = ctx.tags, remote = True )
+              if env.ssh is not None else ctx )
     steps = [ ]
     for i, layer in enumerate( env.stack ):
         if not hasattr( layer, "build" ):
             continue
         key = f"{i}:{layer.describe()}"
-        present = _present( layer, env.ssh, ctx )
+        present = _present( layer, env.ssh, there )
         if present and first and not force:
             continue                        # adopted: see above
         if force or not present or have.get( key ) != want.get( key ):
-            steps += [ ( layer, s ) for s in layer.build( ctx ) ]
+            steps += [ ( layer, s ) for s in layer.build( there ) ]
 
     if not steps:
         # Nothing to do, but what it declares may still differ from what was

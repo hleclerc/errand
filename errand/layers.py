@@ -166,6 +166,7 @@ class Micromamba:
     requirements: str | None = None
     pip         : list = field( default_factory = list )
     root_prefix : str | None = None     # where `-n <name>` resolves; wins over MAMBA_ROOT_PREFIX and the guesses below
+    executable  : str | None = None     # the micromamba binary, when it is not on PATH -- e.g. on a compute node
 
     def _exe( self, ctx ):
         """`micromamba`, pinned to the root prefix `-n <name>` must resolve against.
@@ -175,22 +176,27 @@ class Micromamba:
         from cron or from any plain subprocess, micromamba instead falls back to
         the envs directory beside its own binary -- so `-n x` silently names a
         different environment than the same command typed by hand.
+
+        Over there, only what was DECLARED is passed: the guesses below look at
+        this machine's home, which says nothing about the other one. A command
+        that reaches a compute node through `srun` has no rc file at all, so
+        that is where `executable` and `root_prefix` stop being optional.
         """
-        if ctx.remote:
-            return [ "micromamba" ]     # the remote side goes through an interactive shell
-        root = self.root_prefix or os.environ.get( "MAMBA_ROOT_PREFIX" )
-        if not root:
-            for candidate in ( Path.home() / ".mamba", Path.home() / "micromamba" ):
+        exe = self.executable or "micromamba"
+        root = self.root_prefix
+        if not ctx.remote and not root:
+            root = os.environ.get( "MAMBA_ROOT_PREFIX" )
+            for candidate in ( ( ) if root else ( Path.home() / ".mamba", Path.home() / "micromamba" ) ):
                 if ( candidate / "envs" ).is_dir():
                     root = str( candidate )
                     break
-        return [ "micromamba" ] + ( [ "--root-prefix", root ] if root else [ ] )
+        return [ exe ] + ( [ "--root-prefix", root ] if root else [ ] )
 
     def wrap( self, cmd: Command, ctx: Context ) -> Command:
         if not ctx.remote:
             if self.name == os.environ.get( "CONDA_DEFAULT_ENV" ):
                 return cmd                       # already active: nothing to wrap
-            if shutil.which( "micromamba" ) is None:
+            if shutil.which( self.executable or "micromamba" ) is None:
                 return cmd
         return Command( [ *self._exe( ctx ), "-n", self.name, "run",
                           *under( cmd.argv, "python" ) ], cmd.env )
@@ -206,7 +212,7 @@ class Micromamba:
         return _quiet( [ *self._exe( ctx ), "-n", self.name, "run", "true" ] )
 
     def probe_shell( self, ctx ):
-        return sh( [ "micromamba", "-n", self.name, "run", "true" ] )
+        return sh( [ *self._exe( ctx ), "-n", self.name, "run", "true" ] )
 
     def build( self, ctx ):
         """Create it when it is not there, install into it when it is.
@@ -220,12 +226,17 @@ class Micromamba:
         channels = [ f for c in self.channels for f in ( "-c", c ) ]
         spec = [ *( [ f"python={self.python}" ] if self.python else [ ] ), "pip",
                  *self.packages ]
-        if self.probe( ctx ):
-            steps = ( [ sh( [ *self._exe( ctx ), "install", "-y", "-n", self.name,
-                              *channels, *spec ] ) ] if self.packages or self.python else [ ] )
+        install = sh( [ *self._exe( ctx ), "install", "-y", "-n", self.name, *channels, *spec ] )
+        create  = sh( [ *self._exe( ctx ), "create" , "-y", "-n", self.name, *channels, *( spec or [ "python" ] ) ] )
+        if ctx.remote:
+            # Whether it exists is a question for the machine it lives on, and
+            # the step is run there: let that machine answer it.
+            steps = [ f"if {self.probe_shell( ctx )} >/dev/null 2>&1; then "
+                      f"{install if self.packages or self.python else 'true'}; else {create}; fi" ]
+        elif self.probe( ctx ):
+            steps = [ install ] if self.packages or self.python else [ ]
         else:
-            steps = [ sh( [ *self._exe( ctx ), "create", "-y", "-n", self.name,
-                            *channels, *( spec or [ "python" ] ) ] ) ]
+            steps = [ create ]
         steps += _install_steps( [ *self._exe( ctx ), "-n", self.name, "run",
                                    "python", "-m", "pip", "install" ], self, ctx )
         return steps
@@ -487,6 +498,7 @@ class Slurm:
     gpus     : int | None = None
     time     : str | None = None
     account  : str | None = None
+    nodelist : str | list | None = None   # `node15`, `node[1-4]` or [ "node15", "node16" ]
     extra    : list = field( default_factory = list )
 
     def flags( self, ctx: Context | None = None ):
@@ -505,7 +517,8 @@ class Slurm:
         out = [ ]
         for flag, value in ( ( "--partition", self.partition ), ( "--nodes", self.nodes ),
                              ( "--cpus-per-task", cpus ), ( "--gpus", gpus ),
-                             ( "--time", self.time ), ( "--account", self.account ) ):
+                             ( "--time", self.time ), ( "--account", self.account ),
+                             ( "--nodelist", self._nodelist() ) ):
             if value is not None:
                 out += [ flag, str( int( value ) if isinstance( value, float ) else value ) ]
         if ram:
@@ -513,6 +526,11 @@ class Slurm:
         if needs.get( "exclusive" ):
             out += [ "--exclusive" ]
         return out + list( self.extra )
+
+    def _nodelist( self ):
+        if isinstance( self.nodelist, ( list, tuple ) ):
+            return ",".join( self.nodelist ) or None
+        return self.nodelist
 
     def wrap( self, cmd: Command, ctx: Context ) -> Command:
         if ctx.batch:
@@ -523,7 +541,8 @@ class Slurm:
         return Command( [ "srun", *self.flags( ctx ), *cmd.argv ], cmd.env )
 
     def describe( self ):
-        return f"slurm:{self.partition or 'default partition'}"
+        nodes = self._nodelist()
+        return f"slurm:{self.partition or 'default partition'}" + ( f"@{nodes}" if nodes else "" )
 
 
 

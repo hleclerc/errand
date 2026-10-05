@@ -39,6 +39,13 @@ if test( "a stated partition is used, a missing one is left to slurm", tags = [ 
     assert L.Slurm( partition = "gpu" ).describe() == "slurm:gpu"
 
 
+if test( "a node list pins the allocation to named nodes", tags = [ "slurm" ] ):
+    assert flags( L.Slurm( nodelist = "node15" ) ) == [ "--nodelist", "node15" ]
+    assert flags( L.Slurm( nodelist = [ "node15", "node16" ] ) ) == [ "--nodelist", "node15,node16" ]
+    assert "--nodelist" not in flags( L.Slurm( nodelist = [ ] ) )
+    assert L.Slurm( nodelist = "node15" ).describe() == "slurm:default partition@node15"
+
+
 # --- a real submission ------------------------------------------------------
 
 PROJECT = '''

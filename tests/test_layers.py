@@ -211,6 +211,23 @@ if test( "micromamba installs into what exists and creates only what does not" )
         assert any( "install" in s for s in steps ), steps
 
 
+if test( "micromamba where it is not on PATH: the binary and the prefix are declared" ):
+    # A command sent to a compute node by `srun` reads no rc file: neither
+    # `micromamba` nor MAMBA_ROOT_PREFIX exist there unless they are spelled out.
+    there = L.Context( root = Path( "/there" ), remote = True )
+    m = L.Micromamba( "demo", executable = "/w/bin/micromamba", root_prefix = "/w/.mamba" )
+    made = m.wrap( L.Command( [ "python", "-c", "1" ] ), there )
+    assert made.argv[ : 5 ] == [ "/w/bin/micromamba", "--root-prefix", "/w/.mamba", "-n", "demo" ], made.argv
+    assert m.probe_shell( there ).startswith( "/w/bin/micromamba --root-prefix /w/.mamba" )
+
+    # Over there, nothing guessed from this machine's home leaks into the command.
+    assert L.Micromamba( "demo" ).wrap( L.Command( [ "python" ] ), there ).argv[ :3 ] == [ "micromamba", "-n", "demo" ]
+
+    # ...and whether to create or install is decided over there, not here.
+    steps = m.build( there )
+    assert steps[ 0 ].startswith( "if /w/bin/micromamba" ) and "create" in steps[ 0 ], steps
+
+
 if test( "what errand has never recorded is not announced as stale" ):
     class There:
         def describe( self ): return "there"
@@ -272,7 +289,8 @@ if test( "over ssh, `is it there` is asked of the machine it would be built on" 
     c = L.Context( root = Path( "/here" ) )
     assert L.Apptainer( image = "c/i.sif" ).probe_shell( c ) == "test -e c/i.sif", \
            L.Apptainer( image = "c/i.sif" ).probe_shell( c )
-    assert "micromamba -n demo run true" == L.Micromamba( "demo" ).probe_shell( c )
+    there = L.Context( root = Path( "/there" ), remote = True )
+    assert "micromamba -n demo run true" == L.Micromamba( "demo" ).probe_shell( there )
 
     asked = [ ]
 
