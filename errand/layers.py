@@ -312,8 +312,10 @@ class Apptainer:
         return f"apptainer:{self.container}"
 
     def spec( self, ctx ):
-        return [ self.recipe and ( ctx.root / self.recipe ), self.flags, self.pip,
-                 self.fakeroot, self.scratch, self.build_flags ]
+        # a recipe is a file of the project, or an image to convert ( `docker://...`, which needs
+        # no root where building from a recipe needs `--fakeroot` ): the URI then IS the recipe
+        recipe = self.recipe and ( self.recipe if "://" in self.recipe else ctx.root / self.recipe )
+        return [ recipe, self.flags, self.pip, self.fakeroot, self.scratch, self.build_flags ]
 
     def probe( self, ctx ):
         return ( ctx.root / self.image ).exists()
