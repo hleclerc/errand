@@ -211,6 +211,60 @@ A batch job runs on a compute node, and `/tmp` there is not the `/tmp` you pushe
 for this before submitting and tells you plainly.
 :::
 
+### Windows
+
+```python
+Windows( iso = None, key = None, index = 1, cpus = 4, ram = "8G", disk = "64G",
+         msvc = True, python = None, provision = [ ], fetch = [ ], keep = "15m", root = None )
+```
+
+**Must be the first layer.** A Windows virtual machine under QEMU, which errand installs, boots,
+reaches over ssh and stops. Everything is optional:
+
+```python
+errand.envs[ "win" ] = errand.Env( [ errand.Windows( fetch = [ "build" ] ) ] )
+```
+
+```bash
+errand --env win --setup                         # the install: once, 20 to 60 minutes
+errand --env win -- cmake -B build -G Ninja      # then: commands, through cmd.exe
+errand --env win -- cmake --build build
+errand --vm-stop                                 # let go of it now rather than in 15 minutes
+```
+
+With no `iso` and no `key` it is **Windows Server 2025, evaluation edition**: downloaded from
+Microsoft, no licence needed for 180 days, and reinstalled by errand before it runs out. Server Core
+by default — no desktop, which nothing run over ssh needs. `msvc` puts the Visual Studio build tools
+in it (cl, link, msbuild, cmake, ninja) and calls `vcvars64` before every command.
+
+| | |
+|---|---|
+| `iso`, `key`, `index` | another Windows: a path or a URL, its product key, which image of the ISO |
+| `cpus`, `ram` | the size of the machine — how it is *booted*, so changing it reinstalls nothing |
+| `python` | a python.org release, `"3.13.1"`, installed and on `PATH` |
+| `provision` | more to install: a `.ps1` of the project, or a line of PowerShell |
+| `fetch` | paths of the project brought back after each command — `build`, `dist` |
+| `keep` | how long a booted machine waits for the next command |
+| `root` | where the project goes over there; `C:/errand/<project name>` |
+
+What it costs, and when:
+
+- **The install** is a build like any other layer's: `--setup` does it, a changed declaration redoes
+  it, `--dry-run` says it would. The disk image goes to `~/.cache/errand/windows/`, named by what it
+  was installed from, so projects declaring the same Windows share one.
+- **A boot** starts from a fresh copy-on-write layer over that image — nothing a run left behind
+  survives a restart — and the machine then stays up `keep` after its last command. All that time
+  it holds its cores and memory, so it holds them **in the queue**, and shows in `errand --queue`.
+- **A command** costs a tar of the project in, and of `fetch` out. Commands on one machine take
+  turns.
+
+It needs `qemu-system-x86_64` and `qemu-img`, and an **x86-64 host**: KVM on Linux, HVF on an Intel
+Mac. Without hardware virtualization it works, in hours. Apple Silicon is not supported.
+`ERRAND_VM_VNC=1` shows the screen on `vnc://127.0.0.1:5901`, for watching an install go wrong.
+
+Not yet: entries ( `errand --env win` with a pattern ) and `--batch` — errand itself is a unix
+program. A command is what a virtual machine takes for now.
+
 ### Other batch systems
 
 Slurm is the only one with a layer so far. errand does however **recognize** being inside a PBS,

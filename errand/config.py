@@ -49,6 +49,10 @@ class Env:
         for i, layer in enumerate( self.stack ):
             if isinstance( layer, L.Ssh ) and i:
                 raise ValueError( "Ssh must be the first layer" )
+            # A machine errand boots is reached the way another machine is, and
+            # is first for the same reason. Not both: one way in.
+            if getattr( layer, "is_vm", False ) and i:
+                raise ValueError( f"{type( layer ).__name__} must be the first layer" )
 
     @classmethod
     def make( cls, name: str, stack = ( ), tags = None ):
@@ -66,6 +70,10 @@ class Env:
     @property
     def ssh( self ):
         return L.ssh_of( self.stack )
+
+    @property
+    def vm( self ):
+        return L.vm_of( self.stack )
 
     def describe( self ):
         return " -> ".join( l.describe() for l in self.stack ) or "this interpreter"

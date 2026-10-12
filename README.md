@@ -235,6 +235,7 @@ errand.envs[ "cluster" ] = errand.Env( [ errand.Ssh( host = "gpu-box", root = "/
 | `Ssh( host, root =, python =, options = )` | must be first; everything after it runs on that machine. `options` go to ssh *and* rsync — a port, an identity, a jump host |
 | `Slurm( partition =, nodes =, gpus =, time =, … )` | goes through `srun`, or `sbatch` in [batch mode](#detached-runs) |
 | `Oar( … )`, `Pbs( … )`, `Sge( … )`, `Lsf( … )` | the same, for the other batch systems |
+| `Windows( iso =, key =, cpus =, ram =, msvc =, python =, provision =, fetch =, keep = )` | must be first; a Windows VM under QEMU that errand installs and boots. Every argument is optional: with none it is a Server 2025 evaluation (no licence) with the MSVC build tools. See [below](#windows) |
 | `Vars( { … } )` | environment variables for the child process |
 
 Requirements belong to the layer that installs them — a `requirements.txt` for the conda
@@ -536,6 +537,31 @@ Matrices are expanded on this side, one plain run per combination, each value cr
 
 The remote command goes through an interactive shell, because ssh runs non-interactively and would
 otherwise never read the rc file that puts micromamba, cargo or nvm on `PATH`.
+
+## Windows
+
+```python
+# errand-envs.py
+errand.envs[ "win" ] = errand.Env( [ errand.Windows( fetch = [ "build" ] ) ] )
+```
+
+```bash
+errand --env win --setup                         # once: 20 to 60 minutes, unattended
+errand --env win -- cmake -B build -G Ninja
+errand --env win -- cmake --build build          # build/ comes back here
+```
+
+A Windows virtual machine is one more place to run: errand installs it from an ISO, boots it under
+QEMU, copies the project in, runs the command through `cmd.exe` and fetches what you named. With no
+arguments it is **Windows Server 2025 in its evaluation edition** — no licence for 180 days,
+reinstalled before it runs out — with the MSVC build tools on `PATH`. A `key` and an `iso` make it
+your own Windows instead.
+
+The install is a layer build like any other, kept in `~/.cache/errand/windows/` and shared by every
+project declaring the same thing. Each boot starts clean from it; a booted machine stays warm `keep`
+(15 minutes) after its last command, and holds its cores and memory in the queue all that time —
+`errand --vm-stop` lets go of it sooner. It needs QEMU and an x86-64 host with KVM (Linux) or HVF
+(Intel Mac). Commands only, for now: entries and `--batch` do not reach a virtual machine yet.
 
 ## Detached runs
 

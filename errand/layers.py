@@ -676,3 +676,9 @@ def container_of( stack ):
 
 def ssh_of( stack ):
     return stack[ 0 ] if stack and isinstance( stack[ 0 ], Ssh ) else None
+
+
+def vm_of( stack ):
+    """A machine errand boots ( `errand.Windows` ), recognized by what it says
+    of itself so that this module need not import the one that defines it."""
+    return stack[ 0 ] if stack and getattr( stack[ 0 ], "is_vm", False ) else None

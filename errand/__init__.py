@@ -32,7 +32,7 @@ __all__ = [
     "need", "out_dir", "skip", "tag", "test", "track",
     "configure", "default_env", "Env", "envs", "provider", "main", "value",
     "Vars", "Venv", "Micromamba", "Conda", "Uv", "Nix", "Guix", "Module",
-    "Apptainer", "Docker", "Podman", "Ssh", "Slurm",
+    "Apptainer", "Docker", "Podman", "Ssh", "Slurm", "Windows",
     "Provider", "Outcome", "RunContext", "Pytest", "Catch2", "Cargo",
 ]
 
@@ -58,6 +58,7 @@ _LAZY = {
     "Podman"    : "errand.layers",
     "Ssh"       : "errand.layers",
     "Slurm"     : "errand.layers",
+    "Windows"   : "errand.vm",
     "Provider"  : "errand.providers",
     "Outcome"   : "errand.providers",
     "RunContext": "errand.providers",
@@ -76,6 +77,7 @@ if TYPE_CHECKING:
         Apptainer, Conda, Docker, Guix, Micromamba, Module, Nix, Podman, Slurm, Ssh, Uv, Vars, Venv,
     )
     from .providers import Cargo, Catch2, Outcome, Provider, Pytest, RunContext
+    from .vm import Windows
 
 
 def __getattr__( name ):

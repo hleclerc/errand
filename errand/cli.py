@@ -389,6 +389,12 @@ def dispatch( env, tags, argv, *, root, out_root, entries, overrides_list ):
     and its resolved tags, NOT `--env`: re-selecting over there would send an
     ssh environment straight back out to the machine it is already on.
     """
+    if env.vm is not None:
+        # The child would be errand itself, over there -- and errand is a unix
+        # program. A command is what a virtual machine takes, for now.
+        print( bad( f"  {env.name} is a virtual machine: entries do not run in one yet -- "
+                    f"errand --env {env.name} -- <command>" ) )
+        return 1
     ctx = L.Context( root = root, tags = tags, needs = aggregate_needs( entries ) )
     child_env = {
         IN_ENV: env.name,
@@ -488,7 +494,10 @@ def run_there( known, command, *, root ):
                          { TAGS: ",".join( f"{k}={v}" for k, v in sorted( tags.items() ) ),
                            "PYTHONPATH": path.rstrip( os.pathsep ) } )
         print( dim( f"\n  -> {env.name}  {env.describe()}" ), flush = True )
-        if env.ssh is None:
+        if env.vm is not None:
+            rc |= env.vm.run( env.stack[ 1 : ], cmd, ctx,
+                              echo = lambda s: print( dim( s ), flush = True ) )
+        elif env.ssh is None:
             wrapped = L.compose( env.stack, cmd, ctx )
             print( dim( f"  $ {' '.join( str( a ) for a in wrapped.argv )}" ), flush = True )
             rc |= subprocess.run( wrapped.argv, env = { **os.environ, **wrapped.env },
@@ -785,6 +794,8 @@ def build_parser( tag_names = ( ) ):
                     help = "do not wait for the machine to be free" )
     p.add_argument( "--queue", action = "store_true", help = "what the host is busy with, and stop" )
     p.add_argument( "--claim-wait", dest = "wait", action = "store_true", help = "wait until nothing holds the machine, and stop" )
+    p.add_argument( "--vm-stop", action = "store_true",
+                    help = "stop the virtual machines kept warm between commands, and stop" )
     p.add_argument( "-x", "--claim-exclusive", dest = "exclusive", action = "store_true",
                     help = "with `-- cmd` and no --env: the machine to itself ( a benchmark )" )
     p.add_argument( "--claim-cpus", dest = "cpus", default = None, help = "with `-- cmd`: cores the command needs" )
@@ -908,6 +919,10 @@ def main( argv = None ):
 
     if known.queue:
         return print_queue()
+
+    if known.vm_stop:
+        from . import vm
+        return vm.stop_all( echo = lambda s: print( dim( s ) ) )
 
     if known.at:
         # A child running exactly one entry: no discovery over the tree, no

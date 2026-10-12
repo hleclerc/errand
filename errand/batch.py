@@ -84,6 +84,10 @@ def detach( env, tags, argv, *, root, log: Path, child_env: dict ) -> dict:
     ssh = env.ssh
     batch = L.batch_of( env.stack )
 
+    if L.vm_of( env.stack ) is not None:
+        return { "kind": "failed", "handle": "",
+                 "error": f"{env.name} is a virtual machine: `--batch` does not reach one yet" }
+
     if ssh is None and batch is None:
         wrapped = L.compose( env.stack, cmd, ctx )
         log.parent.mkdir( parents = True, exist_ok = True )
