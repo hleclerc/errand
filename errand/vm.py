@@ -12,27 +12,45 @@ on PATH ). A key, another ISO, a Python, more to install: each is one argument.
 
 The layer is a virtual machine under QEMU, reached through ssh -- so it is
 first in its stack, like `Ssh`, and for the same reason: getting there means
-copying the project in before and fetching what was asked for after.
+copying the project in before and fetching what was asked for after. Or it is
+right after an `Ssh`, and QEMU runs over there:
+
+    errand.envs[ "win" ] = errand.Env( [ errand.Ssh( host = "x86-box", root = … ),
+                                         errand.Windows() ] )
+
+which is how an ARM laptop gets a Windows at all.
+
+**The deciding is here, the doing is wherever QEMU is.** The layer is handed
+`ctx.host` -- this machine, or the one an `Ssh` leads to -- and everything it
+does there is a shell line run through it, whose answer is read back here:
+what that machine is, whether an image is installed, starting QEMU, copying the
+project in, running the command, bringing results back. Nothing of errand runs
+over there; all it needs there is QEMU, ssh and tar. The disks and the guest's
+key live in THAT machine's cache; the locks, the state and the keeper live in
+this one's.
 
 **Three moments, three costs.**
 
     install   once per declaration, 20 to 60 minutes. What comes out is a
-              disk image, kept in ~/.cache/errand/windows/<fingerprint>/ and
-              shared by every project that declares the same thing. It is a
-              build like any other layer's: `--setup` does it, a changed
-              declaration redoes it, `--dry-run` says so.
+              disk image, kept in ~/.cache/errand/windows/<fingerprint>/ on
+              the machine that runs QEMU, and shared by every project that
+              declares the same thing. It is a build like any other layer's:
+              `--setup` does it, a changed declaration redoes it, `--dry-run`
+              says so.
     boot      once per warm period, half a minute to a few. Every boot starts
               from a fresh copy-on-write layer over that image, so nothing a
               run left behind survives a restart.
     run       once per command: a tar of the project goes in, the command runs
               through cmd.exe, what `fetch` names comes back.
 
-**Kept warm, and counted while it is.** A booted machine stays up `keep` after
-its last command, so the next one does not pay for the boot. All that time it
-holds its cores and its memory -- whether it is compiling or idle -- so it
-holds them IN THE QUEUE, under a claim like any other work, and shows up in
-`errand --queue`. A small keeper process owns the machine and the claim: it
-starts QEMU once the queue has room, stops it once idle, and is what
+**Up for as long as somebody needs it, and counted while it is.** A booted
+machine stays up while an errand process that used it is alive -- so a run of
+several commands boots once -- and then `keep` more ( none by default: a boot
+is half a minute, and an idle machine holds what it holds for nothing ). All
+that time it holds its cores and its memory, so when it runs on this machine
+it holds them IN THE QUEUE, under a claim like any other work, and shows up in
+`errand --queue`. A small keeper process owns the machine ( and the claim ): it
+starts QEMU once there is room, stops it once nobody holds it, and is what
 `errand --vm-stop` stops. Commands on one machine take turns.
 
 Nothing here is Windows-specific but the recipe; another guest would be another
@@ -42,19 +60,14 @@ from __future__ import annotations
 
 import contextlib
 import fcntl
-import fnmatch
 import json
 import os
-import platform
-import shutil
+import random
+import re
 import signal
-import socket
 import subprocess
 import sys
-import tarfile
-import tempfile
 import time
-import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -91,7 +104,8 @@ class VmError( RuntimeError ):
 
 @dataclass
 class Windows:
-    """Must be the first layer. Everything after it runs on Windows.
+    """First, or right after the `Ssh` that leads to the machine that boots it.
+    Everything after it runs on Windows.
 
     Every argument has a default that covers the common case -- compiling and
     testing native code -- so most declarations name none of them.
@@ -106,7 +120,7 @@ class Windows:
     python   : str | None = None     # "3.13.1": that python.org release, on PATH
     provision: list = field( default_factory = list )   # PowerShell: a `.ps1` of the project, or a line
     fetch    : list = field( default_factory = list )   # what to bring back after each command
-    keep     : str = "15m"           # how long a booted machine waits for the next command
+    keep     : str = "0"             # how long it stays up once no errand process holds it any more
     root     : str | None = None     # where the project goes; C:/errand/<project name>
 
     # Not a field: what `layers.vm_of` recognizes, like `Ssh` is recognized by its class.
@@ -115,43 +129,42 @@ class Windows:
     def wrap( self, cmd: L.Command, ctx: L.Context ) -> L.Command:
         # Never folded: `run` takes over, as for Ssh -- getting there means
         # booting, copying in, and fetching afterwards.
-        raise RuntimeError( "Windows must be the first layer of an environment" )
+        raise RuntimeError( "Windows must be the first layer of an environment, or follow its Ssh" )
 
     def describe( self ):
         return "windows"
 
+    def declared( self ) -> dict:
+        """What is INSTALLED, as opposed to how it is booted."""
+        return { "iso": self.iso, "key": self.key, "index": self.index, "disk": self.disk,
+                 "msvc": self.msvc, "python": self.python, "provision": list( self.provision ) }
+
+    def booted( self ) -> dict:
+        return { "cpus": self.cpus, "ram": self.ram, "keep": self.keep }
+
     # -- kept current, like any other layer ----------------------------------
 
     def spec( self, ctx ) -> list:
-        # Flat: `fingerprint` reads the CONTENT of a path only at the top level,
-        # and a script edited is a script that must be run again.
-        return [ RECIPE, _iso_identity( self.iso, ctx.root ), self.key, self.index, self.disk,
-                 self.msvc, self.python, *[ _provision_part( p, ctx.root ) for p in self.provision ] ]
+        # Read from the project as this process sees it, wherever it runs.
+        return _spec( self.declared(), ctx.origin )
+
+    def image_name( self, ctx ) -> str:
+        """Named by what it was installed FROM, so two projects declaring the
+        same Windows share one image."""
+        return L.fingerprint( *self.spec( ctx ) )
 
     def image( self, ctx ) -> Path:
-        """Where the installed disk lives: named by what it was installed FROM,
-        so two projects declaring the same Windows share one."""
-        return images_dir() / L.fingerprint( *self.spec( ctx ) )
+        """Where the installed disk lives when QEMU runs on this machine."""
+        return images_dir() / self.image_name( ctx )
+
+    def probe_shell( self, ctx ) -> str:
+        return ready_line( self.image_name( ctx ), keyed = bool( self.key ) )
 
     def probe( self, ctx ) -> bool:
-        ready = self.image( ctx ) / "ready"
-        if not ready.exists():
-            return False
-        # An evaluation counts down from the day it was installed, and shuts
-        # itself down every hour once it has run out -- which would look like a
-        # flaky build rather than an expired licence. Rebuilt before that.
-        age = ( time.time() - ready.stat().st_mtime ) / 86400
-        return bool( self.key ) or age < REBUILD_AFTER
+        return ctx.host.shell( self.probe_shell( ctx ), quiet = True ).returncode == 0
 
     def build( self, ctx ) -> list:
-        recipe = {
-            "image": str( self.image( ctx ) ), "iso": self.iso or EVALUATION_ISO,
-            "root" : str( ctx.root ), "key": self.key, "index": self.index,
-            "cpus" : self.cpus, "ram": self.ram, "disk": self.disk, "msvc": self.msvc,
-            "python": self.python, "provision": [ _provision_part( p, ctx.root, as_path = True )
-                                                  for p in self.provision ],
-        }
-        return [ L.sh( [ sys.executable, "-m", "errand.vm", "build", json.dumps( recipe ) ] ) ]
+        return [ Install( self, ctx ) ]
 
     # -- being let in ---------------------------------------------------------
 
@@ -169,26 +182,27 @@ class Windows:
         return " && ".join( parts )
 
     def run( self, inner, cmd: L.Command, ctx: L.Context, pull = None, echo = print ):
-        image = self.image( ctx )
-        if not ( image / "ready" ).exists():
-            echo( "  windows is not installed yet -- errand --env <name> --setup" )
-            return 1
         there = self.guest_root( ctx )
         # PYTHONPATH as computed here names directories of THIS machine.
         env = { k: v for k, v in cmd.env.items() if k != "PYTHONPATH" }
         wrapped = L.compose( inner, L.Command( L.under( cmd.argv, "python" ), env ),
                              L.Context( root = Path( there ), tags = ctx.tags, remote = True ) )
+        name = self.image_name( ctx )
+        if ctx.host.shell( ready_line( name, keyed = True ), quiet = True ).returncode:
+            echo( f"  windows is not installed yet {where( ctx.host )} -- errand --env <name> --setup" )
+            return 1
         try:
-            with Machine( image ).using( self, echo ) as m:
+            m = Machine( ctx.host, Facts.of( ctx.host ), name )
+            with m.using( self.booted(), echo ):
                 echo( f"  copy in -> windows:{there}" )
-                m.push( ctx.root, there )
+                m.push( there )
                 line = self.line( wrapped, there )
                 echo( f"  > {line}" )
-                code = m.ssh( line ).returncode
+                code = m.guest( line ).returncode
                 wanted = [ *( pull or [ ] ), *self.fetch ]
                 if wanted:
                     echo( f"  fetch <- windows:{there} [{', '.join( wanted )}]" )
-                    m.fetch( wanted, there, ctx.root )
+                    m.fetch( wanted, there )
                 return code
         except VmError as err:
             echo( f"  {err}" )
@@ -196,6 +210,21 @@ class Windows:
         except subprocess.CalledProcessError as err:
             echo( f"  could not copy the project in: {err}" )
             return 1
+
+
+class Install:
+    """`--setup` for a `Windows` layer, as one step: what it says it would do,
+    and the doing -- many lines through `ctx.host`, decided here between them."""
+
+    def __init__( self, layer: Windows, ctx: L.Context ):
+        self.layer, self.ctx = layer, ctx
+
+    def __str__( self ):
+        return f"install windows {self.layer.image_name( self.ctx )[ : 8 ]} {where( self.ctx.host )}"
+
+    def __call__( self, echo = print ) -> int:
+        return install( self.ctx.host, self.layer.image_name( self.ctx ), self.layer.declared(),
+                        self.layer.booted(), echo )
 
 
 def _backslashed( path: str ) -> str:
@@ -235,6 +264,37 @@ def _seconds( text ) -> float:
     return float( text )
 
 
+
+def _spec( declared: dict, root: Path ) -> list:
+    # Flat: `fingerprint` reads the CONTENT of a path only at the top level,
+    # and a script edited is a script that must be run again.
+    return [ RECIPE, _iso_identity( declared[ "iso" ], root ), declared[ "key" ], declared[ "index" ],
+             declared[ "disk" ], declared[ "msvc" ], declared[ "python" ],
+             *[ _provision_part( p, root ) for p in declared[ "provision" ] ] ]
+
+
+def where( host ) -> str:
+    return "here" if not host.remote else f"on {host.describe()}"
+
+
+def _sh( script: str, *args ) -> str:
+    """A POSIX script as one line for `host.shell`: whatever the login shell
+    over there is ( zsh, fish ), the script is read by `sh`."""
+    return L.sh( [ "sh", "-c", script, "errand", *[ str( a ) for a in args ] ] )
+
+
+def ready_line( name: str, keyed: bool ) -> str:
+    """A line whose exit code says whether that image is installed -- and, for an
+    evaluation, not about to run out -- on the machine that runs it."""
+    script = f'r="${{XDG_CACHE_HOME:-$HOME/.cache}}/errand/windows/{name}/ready"; test -f "$r"'
+    if not keyed:
+        # An evaluation counts down from the day it was installed, and shuts
+        # itself down every hour once it has run out -- which would look like a
+        # flaky build rather than an expired licence. Rebuilt before that.
+        script += f' && test -n "$( find "$r" -mtime -{REBUILD_AFTER} )"'
+    return _sh( script )
+
+
 # ── where things live ────────────────────────────────────────────────────────
 
 def cache_dir( ) -> Path:
@@ -242,34 +302,112 @@ def cache_dir( ) -> Path:
 
 
 def images_dir( ) -> Path:
+    """The images, when QEMU runs on this machine. Over there, the same place in THAT cache."""
     return cache_dir() / "windows"
 
 
-# ── QEMU ─────────────────────────────────────────────────────────────────────
-
-QEMU_HINT = "apt install qemu-system-x86 qemu-utils  ·  dnf install qemu-kvm qemu-img  ·  brew install qemu"
-
-
-def _tool( name: str, hint: str ) -> str:
-    found = shutil.which( name )
-    if not found:
-        raise VmError( f"{name} is not installed -- {hint}" )
-    return found
+def live_dir( ) -> Path:
+    """The state, the locks and the keeper of every machine this one has
+    booted, here or elsewhere: on this machine, where the deciding is."""
+    return cache_dir() / "vm"
 
 
-def accel( ) -> tuple:
+# ── what the machine that runs QEMU is: asked once, read back here ──────────
+
+FACTS = r"""
+f() { echo "errand-fact $1=$2"; }
+f arch "$( uname -m )"
+f system "$( uname -s )"
+f user "$( id -un )"
+if [ -e /dev/kvm ]; then
+    if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then f kvm rw
+    else f kvm no; f kvm_group "$( stat -c %G /dev/kvm 2>/dev/null || stat -f %Sg /dev/kvm )"; fi
+else f kvm absent; fi
+f cache "${XDG_CACHE_HOME:-$HOME/.cache}"
+( . /etc/os-release 2>/dev/null && f os "$ID $ID_LIKE" )
+for t in qemu-system-x86_64 qemu-img ssh scp ssh-keygen tar curl wget; do
+    command -v "$t" >/dev/null 2>&1 && f tool "$t"
+done
+true
+"""
+
+
+@dataclass
+class Facts:
+    where    : str                   # "here", "on lmo": for what is said about it
+    arch     : str
+    system   : str                   # uname -s: Linux, Darwin
+    user     : str
+    kvm      : str                   # rw, no ( there but not ours ), absent
+    kvm_group: str
+    cache    : str                   # its ~/.cache, as an absolute path over there
+    os_ids   : set                   # ID and ID_LIKE of /etc/os-release: ubuntu, debian
+    tools    : set
+
+    @classmethod
+    def of( cls, host ) -> "Facts":
+        got = host.shell( _sh( FACTS ), capture = True )
+        found, tools = { }, set()
+        for line in ( got.stdout or "" ).splitlines():
+            # Only what was asked: an rc file over there may say things of its own.
+            if line.startswith( "errand-fact " ):
+                key, _, value = line[ len( "errand-fact " ) : ].partition( "=" )
+                if key == "tool":
+                    tools.add( value )
+                else:
+                    found[ key ] = value
+        if "arch" not in found:
+            raise VmError( f"could not ask {where( host ).replace( 'on ', '' )} what it is: "
+                           f"{( got.stderr or '' ).strip()[ -400 : ]}" )
+        return cls( where = where( host ), arch = found[ "arch" ].lower(), system = found.get( "system", "" ),
+                    user = found.get( "user", "" ), kvm = found.get( "kvm", "absent" ),
+                    kvm_group = found.get( "kvm_group", "kvm" ), cache = found.get( "cache", "" ),
+                    os_ids = set( found.get( "os", "" ).split() ), tools = tools )
+
+
+def qemu_hint( facts: Facts ) -> str:
+    """The command that installs QEMU on THAT machine: one command, not a menu,
+    and said plainly when the system is not one this knows."""
+    if facts.system == "Darwin":
+        return "brew install qemu"
+    ids = facts.os_ids
+    if ids & { "debian", "ubuntu" }:
+        return "sudo apt install qemu-system-x86 qemu-utils"
+    if ids & { "fedora", "rhel", "centos" }:
+        return "sudo dnf install qemu-kvm qemu-img"
+    if "arch" in ids:
+        return "sudo pacman -S qemu-full"
+    if ids & { "suse", "opensuse", "sles" }:
+        return "sudo zypper install qemu-x86 qemu-tools"
+    return "install QEMU ( qemu-system-x86 and qemu-img ) with its package manager"
+
+
+def need( facts: Facts, tools, hint: str ):
+    missing = [ t for t in tools if t not in facts.tools ]
+    if missing:
+        raise VmError( f"{', '.join( missing )} {'is' if len( missing ) == 1 else 'are'} not installed "
+                       f"{facts.where} -- {hint}" )
+
+
+def accel( facts: Facts ) -> tuple:
     """-> ( accelerator, cpu ). Windows here is x86-64, so the host must be too:
     emulating one on an ARM machine is measured in hours per boot."""
-    arch = platform.machine().lower()
-    if arch not in ( "x86_64", "amd64" ):
-        raise VmError( f"this machine is {arch}, and the Windows errand installs is x86-64: "
-                       f"it would be emulated instruction by instruction. Not supported" )
-    if sys.platform == "darwin":
+    if facts.arch not in ( "x86_64", "amd64" ):
+        raise VmError( f"the machine {facts.where} is {facts.arch}, and the Windows errand installs is "
+                       f"x86-64: it would be emulated instruction by instruction. Not supported -- "
+                       f"reach an x86-64 machine that can: [ errand.Ssh( host = … ), errand.Windows() ]" )
+    if facts.system == "Darwin":
         return "hvf", "host"
-    if os.access( "/dev/kvm", os.R_OK | os.W_OK ):
+    if facts.kvm == "rw":
         # The Hyper-V enlightenments: Windows asks for them, and without them
         # it spins on timers it believes are real hardware.
         return "kvm", "host,hv_relaxed,hv_vapic,hv_spinlocks=0x1fff,hv_time"
+    if facts.kvm == "no":
+        # There, but not for this user -- the usual case over ssh: a desktop
+        # session is granted it on the side, a login from elsewhere is not.
+        # Emulating instead would be hours per boot, for want of one command.
+        raise VmError( f"/dev/kvm is there {facts.where}, but {facts.user} may not use it -- "
+                       f"sudo usermod -aG {facts.kvm_group} {facts.user}, then log in again" )
     return "tcg", "max"
 
 
@@ -278,10 +416,11 @@ def _escaped( path ) -> str:
     return str( path ).replace( ",", ",," )
 
 
-def qemu_argv( disk: Path, *, port: int, cpus: int, ram, iso: Path | None = None,
-               media: Path | None = None, pidfile: Path | None = None ) -> list:
-    how, cpu = accel()
-    argv = [ _tool( "qemu-system-x86_64", QEMU_HINT ),
+def qemu_argv( disk: str, *, accel: tuple, port: int, cpus: int, ram, iso: str | None = None,
+               media: str | None = None ) -> list:
+    """The command line, for the machine that runs it: paths are ITS paths."""
+    how, cpu = accel
+    argv = [ "qemu-system-x86_64",
              "-machine", "q35", "-accel", how, "-cpu", cpu,
              "-smp", str( cpus ), "-m", f"{int( queue.parse_size( ram ) )}M",
              "-rtc", "base=utc",
@@ -293,7 +432,7 @@ def qemu_argv( disk: Path, *, port: int, cpus: int, ram, iso: Path | None = None
              "-device", "ide-hd,drive=system,bus=ide.0",
              "-nic", f"user,model=e1000e,hostfwd=tcp:127.0.0.1:{port}-:22" ]
     # Somebody debugging an install wants to SEE it: ERRAND_VM_VNC=1 puts the
-    # screen on vnc://127.0.0.1:5901.
+    # screen on vnc://127.0.0.1:5901, of the machine that runs it.
     vnc = os.environ.get( "ERRAND_VM_VNC" )
     argv += [ "-vnc", f"127.0.0.1:{vnc}" ] if vnc else [ "-display", "none" ]
     if iso is not None:
@@ -302,20 +441,21 @@ def qemu_argv( disk: Path, *, port: int, cpus: int, ram, iso: Path | None = None
         argv += [ "-drive", f"if=none,id=setup,file={_escaped( iso )},media=cdrom,readonly=on",
                   "-device", "ide-cd,drive=setup,bus=ide.1", "-boot", "once=d" ]
     if media is not None:
-        # A directory of this machine, seen by the guest as a USB stick. Setup
+        # A directory of that machine, seen by the guest as a USB stick. Setup
         # looks for `autounattend.xml` at the root of removable drives -- of
         # its own accord, which is the whole trick of an unattended install.
-        argv += [ "-drive", f"if=none,id=media,file=fat:{_escaped( media )},format=raw",
+        # Read-only, and said so: a USB disk over a read-only node is refused
+        # unless the drive declares it.
+        argv += [ "-drive", f"if=none,id=media,file=fat:{_escaped( media )},format=raw,readonly=on",
                   "-device", "qemu-xhci", "-device", "usb-storage,drive=media,removable=on" ]
-    if pidfile is not None:
-        argv += [ "-pidfile", str( pidfile ) ]
     return argv
 
 
-def free_port( ) -> int:
-    with socket.socket() as s:
-        s.bind( ( "127.0.0.1", 0 ) )
-        return s.getsockname()[ 1 ]
+def pack_line( archive: str ) -> str:
+    """The project, minus what rsync would leave out too, as one tar -- run from
+    its root on the machine that runs QEMU. No rsync on Windows, and one file
+    crosses far faster than ten thousand."""
+    return L.sh( [ "tar", "-c", "-h", "-f", archive, *[ f"--exclude={e}" for e in EXCLUDES ], "." ] )
 
 
 # ── one installed image, and the machine booted from it ─────────────────────
@@ -346,8 +486,17 @@ def _read( path: Path, default = "" ) -> str:
         return default
 
 
+GUEST_OPTIONS = [ "-o", "IdentitiesOnly=yes", "-o", "StrictHostKeyChecking=no",
+                  "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR",
+                  "-o", "BatchMode=yes", "-o", "ConnectTimeout=5" ]
+
+
 class Machine:
-    """The machine booted from one image, with its keeper.
+    """One installed image, and the machine booted from it.
+
+    Over there -- wherever `host` leads -- are the disks, the guest's key and
+    QEMU; they are only ever touched through `host`, a line at a time. Here are
+    the state, the locks and the keeper, under `live_dir()`.
 
     Two locks, always taken in this order:
 
@@ -359,15 +508,18 @@ class Machine:
                      nobody is about to
     """
 
-    def __init__( self, image: Path ):
-        self.image = image
-        self.live  = image / "live"
+    def __init__( self, host, facts: Facts, name: str ):
+        self.host, self.facts, self.name = host, facts, name
+        self.image = f"{facts.cache}/errand/windows/{name}"     # over there
+        self.spot  = f"{self.image}/live"                        # over there: overlay, tars, log
+        self.live  = live_dir() / f"{re.sub( r'[^A-Za-z0-9._-]', '_', host.describe() )}-{name}"
+        self._port = None
 
     # -- the caller's side ----------------------------------------------------
 
     @property
     def port( self ) -> int:
-        return int( _read( self.live / "port", "0" ) )
+        return self._port or int( _read( self.live / "port", "0" ) )
 
     def state( self ) -> str:
         return _read( self.live / "state", "stopped" )
@@ -376,13 +528,19 @@ class Machine:
         return _alive( _read( self.live / "keeper.pid" ) ) and self.state() not in ( "stopping", "stopped" )
 
     @contextlib.contextmanager
-    def using( self, layer: Windows, echo = print ):
+    def using( self, booted: dict, echo = print ):
+        """`booted`: { cpus, ram, keep }, as `Windows.booted` says it."""
         self.live.mkdir( parents = True, exist_ok = True )
-        start = _lock( self.image / "start.lock" )
+        start = _lock( self.live / "start.lock" )
         try:
             if not self.keeper_alive():
-                self._spawn( layer )
-            use = _lock( self.image / "use.lock" )
+                self._spawn( booted )
+            # This process holds the machine until it ends, not only for this
+            # command: the next one it sends must not pay for another boot.
+            # Never removed -- the keeper forgets a holder once its pid is gone.
+            ( self.live / "holders" ).mkdir( exist_ok = True )
+            ( self.live / "holders" / str( os.getpid() ) ).touch()
+            use = _lock( self.live / "use.lock" )
         finally:
             start.close()
         try:
@@ -393,13 +551,13 @@ class Machine:
             ( self.live / "used" ).touch()
             use.close()
 
-    def _spawn( self, layer: Windows ):
+    def _spawn( self, booted: dict ):
         # Said here, where somebody reads it, rather than in the keeper's log.
-        accel()
-        _tool( "qemu-system-x86_64", QEMU_HINT )
-        _tool( "qemu-img", QEMU_HINT )
+        accel( self.facts )
+        need( self.facts, ( "qemu-system-x86_64", "qemu-img" ), qemu_hint( self.facts ) )
         ( self.live / "config.json" ).write_text( json.dumps( {
-            "cpus": layer.cpus, "ram": layer.ram, "keep": _seconds( layer.keep ) } ) )
+            "host": self.host.spec(), "name": self.name, "cpus": booted[ "cpus" ], "ram": booted[ "ram" ],
+            "keep": _seconds( booted[ "keep" ] ) } ) )
         ( self.live / "state" ).write_text( "starting" )
         env = { k: v for k, v in os.environ.items() if k != queue.CLAIM }
         # Wherever this errand was imported from is where the keeper imports it
@@ -407,7 +565,7 @@ class Machine:
         package_parent = str( Path( __file__ ).resolve().parent.parent )
         env[ "PYTHONPATH" ] = os.pathsep.join( p for p in ( package_parent, env.get( "PYTHONPATH" ) ) if p )
         with open( self.live / "keeper.log", "w" ) as log:
-            child = subprocess.Popen( [ sys.executable, "-m", "errand.vm", "keep", str( self.image ) ],
+            child = subprocess.Popen( [ sys.executable, "-m", "errand.vm", "keep", str( self.live ) ],
                                       stdin = subprocess.DEVNULL, stdout = log, stderr = subprocess.STDOUT,
                                       env = env, start_new_session = True )
         ( self.live / "keeper.pid" ).write_text( str( child.pid ) )
@@ -424,226 +582,360 @@ class Machine:
             if state != said:
                 echo( { "starting": "  starting the windows machine",
                         "queued"  : "  waiting for the machine to have room for it ( errand --queue )",
-                        "booting" : "  booting windows" }.get( state, f"  windows: {state}" ) )
+                        "booting" : f"  booting windows {self.facts.where}" }.get( state, f"  windows: {state}" ) )
                 said, since = state, time.time()
             if state == "booting" and time.time() - since > BOOT_TIMEOUT:
                 raise VmError( f"windows did not answer within {BOOT_TIMEOUT // 60} minutes" )
             time.sleep( 1.0 )
 
-    # -- talking to it --------------------------------------------------------
+    # -- doing things over there ----------------------------------------------
 
-    def options( self ) -> list:
-        """What ssh and scp both need: the key, and no host key to remember --
-        every boot is a machine nobody has met, on a port that changes."""
-        return [ "-i", str( self.image / "key" ), "-o", "IdentitiesOnly=yes",
-                 "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
-                 "-o", "LogLevel=ERROR", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5" ]
+    def there( self, script: str, *args, what = "" ):
+        """A POSIX script over there, which must work: -> its output."""
+        got = self.host.shell( _sh( script, *args ), capture = True )
+        if got.returncode:
+            raise VmError( f"{what or 'a step'} failed {self.facts.where}: "
+                           f"{( got.stderr or got.stdout or '' ).strip()[ -600 : ]}" )
+        return got.stdout
 
-    def ssh( self, line: str, **kw ):
-        return subprocess.run( [ "ssh", "-p", str( self.port ), *self.options(),
-                                 f"{USER}@127.0.0.1", line ], **kw )
+    def write( self, path: str, text: str ):
+        got = self.host.shell( _sh( 'cat > "$1"', path ), input = text, capture = True )
+        if got.returncode:
+            raise VmError( f"could not write {path} {self.facts.where}: {got.stderr.strip()[ -300 : ]}" )
 
-    def scp( self, src: str, dst: str ):
-        subprocess.run( [ "scp", "-q", "-P", str( self.port ), *self.options(), src, dst ],
-                        check = True )
+    def start( self, disk: str, *, cpus, ram, iso = None, media = None, log: str ) -> tuple:
+        """QEMU started over there and let go of -> ( port, pid ). The port is
+        drawn at random and tried: only that machine knows which ones are free."""
+        how = accel( self.facts )
+        for _ in range( 5 ):
+            port = random.randint( 20000, 60000 )
+            argv = qemu_argv( disk, accel = how, port = port, cpus = cpus, ram = ram, iso = iso, media = media )
+            # nohup, all three streams elsewhere: it must outlive the ssh that
+            # started it, and that ssh must not wait for it.
+            out = self.there( f'nohup {L.sh( argv )} > "$1" 2>&1 < /dev/null & echo "errand-pid=$!"', log,
+                              what = "starting QEMU" )
+            found = re.search( r"errand-pid=(\d+)", out )
+            if not found:
+                raise VmError( f"QEMU did not start {self.facts.where}: {out.strip()[ -300 : ]}" )
+            pid = int( found.group( 1 ) )
+            time.sleep( 2.0 )
+            if self.alive_there( pid ) is not False:
+                self._port = port
+                return port, pid
+            tail = self.host.shell( L.sh( [ "tail", "-c", "800", log ] ), capture = True ).stdout or ""
+            if "hostfwd" not in tail and "host forwarding" not in tail:
+                raise VmError( f"QEMU stopped at once {self.facts.where}:\n{tail}" )
+        raise VmError( f"no free port for ssh into the machine {self.facts.where}, five tries" )
+
+    def alive_there( self, pid ):
+        """-> True, False, or None when the question could not be put ( ssh down )."""
+        got = self.host.shell( L.sh( [ "kill", "-0", str( pid ) ] ), quiet = True )
+        if got.returncode == 0:
+            return True
+        return None if self.host.remote and got.returncode == 255 else False
+
+    def stop_there( self, pid ):
+        """Thrown away rather than shut down: the next boot starts from the image
+        again, so there is nothing in this one worth a clean exit."""
+        self.host.shell( _sh( 'kill "$1" 2>/dev/null; i=0; '
+                              'while kill -0 "$1" 2>/dev/null && [ $i -lt 30 ]; do sleep 1; i=$(( i + 1 )); done; '
+                              'kill -9 "$1" 2>/dev/null; true', pid ), quiet = True )
+
+    # -- talking to the guest, from the machine that runs it ------------------
+
+    def _reach( self, tool: str, port_flag: str ) -> list:
+        return [ tool, port_flag, str( self.port ), "-i", f"{self.image}/key", *GUEST_OPTIONS ]
+
+    def guest( self, line: str, **kw ):
+        """`line`, run by cmd.exe in Windows."""
+        return self.host.shell( L.sh( [ *self._reach( "ssh", "-p" ), f"{USER}@127.0.0.1", line ] ), **kw )
+
+    def scp( self, src: str, dst: str ) -> int:
+        """Between the machine that runs QEMU and the guest; one side is `Administrator@127.0.0.1:…`."""
+        return self.host.shell( L.sh( [ *self._reach( "scp", "-P" ), "-q", src, dst ] ) ).returncode
 
     def answers( self ) -> bool:
         try:
-            got = self.ssh( "echo errand-ok", capture_output = True, text = True, timeout = 30 )
+            got = self.guest( "echo errand-ok", capture = True, timeout = 40 )
         except subprocess.TimeoutExpired:
             return False
-        return got.returncode == 0 and "errand-ok" in got.stdout
+        return got.returncode == 0 and "errand-ok" in ( got.stdout or "" )
 
-    def push( self, local_root: Path, there: str ):
-        """The project, minus what rsync would leave out too, as one tar: no
-        rsync on Windows, and one file crosses far faster than ten thousand."""
-        win = _backslashed( there )
-        with tempfile.TemporaryDirectory() as tmp:
-            archive = Path( tmp ) / "push.tar"
-            with tarfile.open( archive, "w", dereference = True ) as tar:
-                for path, rel in _walk( local_root ):
-                    tar.add( path, arcname = rel, recursive = False )
-            self.ssh( f'if not exist "{win}" mkdir "{win}"', check = True )
-            self.scp( str( archive ), f"{USER}@127.0.0.1:{there}.tar" )
-        self.ssh( f'tar -x -f "{there}.tar" -C "{there}" && del "{win}.tar"', check = True )
+    def wait_for( self, pid, timeout: float ) -> bool:
+        """Until sshd answers, QEMU dies, or `timeout`."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if self.alive_there( pid ) is False:
+                return False
+            if self.answers():
+                return True
+            time.sleep( 3.0 )
+        return False
 
-    def fetch( self, paths, there: str, local_root: Path ):
-        """Best effort, as over ssh: what the command never produced is nothing to bring back."""
+    def push( self, there: str ):
+        """The project as the machine that runs QEMU has it, into the guest."""
+        win, archive = _backslashed( there ), f"{self.spot}/push.tar"
+        self.there( 'mkdir -p "$1"', self.spot )
+        got = self.host.shell( pack_line( archive ), capture = True )
+        if got.returncode:
+            raise subprocess.CalledProcessError( got.returncode, "tar", stderr = got.stderr )
+        try:
+            for step in ( lambda: self.guest( f'if not exist "{win}" mkdir "{win}"' ).returncode,
+                          lambda: self.scp( archive, f"{USER}@127.0.0.1:{there}.tar" ),
+                          lambda: self.guest( f'tar -x -f "{there}.tar" -C "{there}" && del "{win}.tar"' ).returncode ):
+                code = step()
+                if code:
+                    raise subprocess.CalledProcessError( code, "copy into windows" )
+        finally:
+            self.host.shell( L.sh( [ "rm", "-f", archive ] ), quiet = True )
+
+    def fetch( self, paths, there: str ):
+        """Into the project as the machine that runs QEMU has it -- from where an
+        `Ssh` before it brings them back in turn. Best effort, as over ssh: what
+        the command never produced is nothing to bring back."""
+        win, archive = _backslashed( there ), f"{self.spot}/out.tar"
         for p in paths:
             p = str( p ).strip( "/" )
-            got = self.ssh( f'cd /d "{_backslashed( there )}" && if exist "{_backslashed( p )}" '
-                            f'tar -c -f "{there}.out.tar" "{p}"', capture_output = True )
-            if got.returncode:
+            # The old archive deleted first, and a missing path an error: never
+            # bring back what an earlier command left.
+            made = self.guest( f'del "{win}.out.tar" 2>nul & cd /d "{win}" && '
+                               f'if exist "{_backslashed( p )}" ( tar -c -f "{there}.out.tar" "{p}" ) else exit 1',
+                               quiet = True )
+            if made.returncode or self.scp( f"{USER}@127.0.0.1:{there}.out.tar", archive ):
                 continue
-            with tempfile.TemporaryDirectory() as tmp:
-                archive = Path( tmp ) / "out.tar"
-                try:
-                    self.scp( f"{USER}@127.0.0.1:{there}.out.tar", str( archive ) )
-                except subprocess.CalledProcessError:
-                    continue
-                with tarfile.open( archive ) as tar:
-                    if hasattr( tarfile, "data_filter" ):
-                        tar.extractall( local_root, filter = "data" )
-                    else:
-                        tar.extractall( local_root )
+            self.host.shell( L.sh( [ "tar", "-x", "-f", archive ] ) + " && " + L.sh( [ "rm", "-f", archive ] ) )
 
     # -- the keeper's side ----------------------------------------------------
 
-    def keep( self ) -> int:
-        """Hold a claim, boot, wait for idleness, stop. Run as its own process."""
-        config = json.loads( ( self.live / "config.json" ).read_text() )
+    def keep( self, config: dict ) -> int:
+        """Hold a claim, boot, wait for idleness, stop. Run as its own process,
+        here; QEMU runs wherever `host` leads."""
         ( self.live / "keeper.pid" ).write_text( str( os.getpid() ) )
         # A SIGTERM ( `--vm-stop` ) must unwind through the `finally` below, or
         # QEMU outlives its keeper and nobody counts what it holds.
         signal.signal( signal.SIGTERM, lambda *_: sys.exit( 0 ) )
         self._kill_leftover()
-        overlay, machine = self.live / "overlay.qcow2", None
+        overlay, pid = f"{self.spot}/overlay.qcow2", None
         try:
             ( self.live / "state" ).write_text( "queued" )
+            # The queue is this machine's: cores over there are counted only
+            # when over there is here.
             with queue.claim( { "cpus": config[ "cpus" ], "ram": config[ "ram" ] },
-                              label = f"windows vm {self.image.name[ : 8 ]}" ):
-                ( self.live / "port" ).write_text( str( free_port() ) )
-                overlay.unlink( missing_ok = True )
-                _overlay( self.image / "base.qcow2", overlay )
+                              label = f"windows vm {self.name[ : 8 ]}", enabled = not self.host.remote ):
+                self.there( 'mkdir -p "$1" && rm -f "$3" && qemu-img create -q -f qcow2 -b "$2" -F qcow2 "$3"',
+                            self.spot, f"{self.image}/base.qcow2", overlay, what = "the overlay" )
                 ( self.live / "state" ).write_text( "booting" )
-                machine = subprocess.Popen( qemu_argv( overlay, port = self.port, cpus = config[ "cpus" ],
-                                                       ram = config[ "ram" ], pidfile = self.live / "qemu.pid" ),
-                                            stdin = subprocess.DEVNULL )
-                if not _wait_for( self, machine, BOOT_TIMEOUT ):
+                port, pid = self.start( overlay, cpus = config[ "cpus" ], ram = config[ "ram" ],
+                                        log = f"{self.spot}/qemu.log" )
+                ( self.live / "port" ).write_text( str( port ) )
+                ( self.live / "qemu.pid" ).write_text( str( pid ) )
+                if not self.wait_for( pid, BOOT_TIMEOUT ):
                     ( self.live / "state" ).write_text( "failed" )
                     return 1
                 ( self.live / "state" ).write_text( "ready" )
-                held = None          # the locks, kept until this process is gone
-                while machine.poll() is None and held is None:
+                held, ticks = None, 0     # the locks, kept until this process is gone
+                while held is None:
                     time.sleep( 2.0 )
+                    ticks += 1
+                    # Asked rarely: over ssh every question is a connection.
+                    if ticks % 15 == 0 and self.alive_there( pid ) is False:
+                        break
                     held = self._idle( config[ "keep" ] )
         finally:
             ( self.live / "state" ).write_text( "stopping" )
-            # Thrown away rather than shut down: the next boot starts from the
-            # image again, so there is nothing in this one worth a clean exit.
-            if machine is not None and machine.poll() is None:
-                machine.terminate()
-                try:
-                    machine.wait( timeout = 30 )
-                except subprocess.TimeoutExpired:
-                    machine.kill()
-            overlay.unlink( missing_ok = True )
+            if pid is not None:
+                self.stop_there( pid )
+            self.host.shell( L.sh( [ "rm", "-f", overlay ] ), quiet = True )
+            ( self.live / "qemu.pid" ).unlink( missing_ok = True )
             ( self.live / "keeper.pid" ).unlink( missing_ok = True )
             ( self.live / "state" ).write_text( "stopped" )
         return 0
 
     def _idle( self, keep: float ):
-        """Long enough since the last command, and nobody about to send one?
-        -> the locks, to be held until this process exits; or None."""
+        """Long enough since the last command, no errand process still holding
+        the machine, and nobody about to send one? -> the locks, to be held until
+        this process exits; or None."""
         try:
             since = time.time() - ( self.live / "used" ).stat().st_mtime
         except OSError:
             since = keep + 1
-        if since <= keep:
+        if since <= keep or self.holders():
             return None
-        start = _lock( self.image / "start.lock", block = False )
+        start = _lock( self.live / "start.lock", block = False )
         if start is None:
             return None
-        use = _lock( self.image / "use.lock", block = False )
-        if use is None:
-            start.close()
+        use = _lock( self.live / "use.lock", block = False )
+        if use is None or self.holders():
+            # Asked again under the locks: a process registers itself under
+            # start.lock, so one that came in meanwhile is seen now.
+            for lock in ( start, use ):
+                if lock is not None:
+                    lock.close()
             return None
         ( self.live / "state" ).write_text( "stopping" )
         return ( start, use )
+
+    def holders( self ) -> list:
+        """The errand processes that used the machine and are still alive: it
+        is theirs until they end. Those that ended are forgotten here."""
+        alive = [ ]
+        for f in ( self.live / "holders" ).glob( "*" ):
+            if _alive( f.name ):
+                alive.append( f.name )
+            else:
+                f.unlink( missing_ok = True )
+        return alive
 
     def _kill_leftover( self ):
         """A keeper killed outright leaves its QEMU running, holding a port and
         memory nobody counts any more. The next keeper finishes the job."""
         pid = _read( self.live / "qemu.pid" )
-        if pid and _alive( pid ):
-            with contextlib.suppress( OSError ):
-                os.kill( int( pid ), signal.SIGTERM )
+        if pid:
+            self.stop_there( pid )
         ( self.live / "qemu.pid" ).unlink( missing_ok = True )
 
+    # -- installing -----------------------------------------------------------
 
-def _overlay( base: Path, overlay: Path ):
-    subprocess.run( [ _tool( "qemu-img", QEMU_HINT ), "create", "-q", "-f", "qcow2",
-                      "-b", str( base ), "-F", "qcow2", str( overlay ) ], check = True )
-
-
-def _wait_for( machine: Machine, process, timeout: float ) -> bool:
-    """Until sshd answers, QEMU dies, or `timeout`."""
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if process.poll() is not None:
-            return False
-        if machine.answers():
-            return True
-        time.sleep( 3.0 )
-    return False
-
-
-def _walk( root: Path ):
-    """( path, relative name ) of everything worth copying in."""
-    def excluded( name ):
-        return any( fnmatch.fnmatch( name, e ) for e in EXCLUDES )
-    for here, dirs, files in os.walk( root ):
-        dirs[ : ] = [ d for d in dirs if not excluded( d ) ]
-        for name in dirs + files:
-            if excluded( name ):
-                continue
-            path = Path( here ) / name
-            if path.is_symlink() and not path.exists():
-                continue                # dangling: nothing to copy
-            yield path, path.relative_to( root ).as_posix()
+    def obtain_iso( self, iso: str, echo = print ) -> str:
+        """-> the ISO as the machine that runs QEMU names it: a path of the
+        project over there, or a download into its cache, made by it."""
+        if "://" not in iso:
+            out = self.host.shell( _sh( 'cd "$( dirname "$1" )" 2>/dev/null && test -f "$( basename "$1" )" '
+                                        '&& echo "errand-path=$( pwd )/$( basename "$1" )"', iso ),
+                                   capture = True ).stdout or ""
+            found = re.search( r"errand-path=(.*)", out )
+            if not found:
+                raise VmError( f"no ISO at {iso} {self.facts.where}" )
+            return found.group( 1 ).strip()
+        target = f"{self.facts.cache}/errand/iso/{L.fingerprint( iso )}.iso"
+        if self.host.shell( L.sh( [ "test", "-f", target ] ), quiet = True ).returncode == 0:
+            return target
+        if "curl" in self.facts.tools:
+            fetch = 'curl -fL --retry 3 --progress-bar -o "$2.part" "$1"'
+        elif "wget" in self.facts.tools:
+            fetch = 'wget -q --show-progress -O "$2.part" "$1"'
+        else:
+            raise VmError( f"neither curl nor wget {self.facts.where} to download the ISO with" )
+        echo( f"  downloading {iso} {self.facts.where}" )
+        got = self.host.shell( _sh( f'mkdir -p "$( dirname "$2" )" && {fetch} && mv "$2.part" "$2"', iso, target ) )
+        if got.returncode:
+            raise VmError( f"could not download the ISO {self.facts.where} -- download it by hand and "
+                           f"declare it: errand.Windows( iso = 'path/to/windows.iso' )" )
+        return target
 
 
 def running( ) -> list:
-    """-> [ Machine ] whose keeper is alive."""
-    if not images_dir().is_dir():
+    """-> [ live directory ] whose keeper is alive."""
+    if not live_dir().is_dir():
         return [ ]
-    return [ m for m in ( Machine( d ) for d in sorted( images_dir().iterdir() ) if d.is_dir() )
-             if _alive( _read( m.live / "keeper.pid" ) ) ]
+    return [ d for d in sorted( live_dir().iterdir() )
+             if d.is_dir() and _alive( _read( d / "keeper.pid" ) ) ]
 
 
 def stop_all( echo = print ) -> int:
-    """`errand --vm-stop`: every warm machine, now."""
+    """`errand --vm-stop`: every warm machine, now -- here or elsewhere, since
+    every keeper is here."""
     machines = running()
-    for m in machines:
-        echo( f"  stopping windows vm {m.image.name[ : 8 ]}" )
+    for live in machines:
+        echo( f"  stopping windows vm {live.name}" )
         with contextlib.suppress( OSError, ValueError ):
-            os.kill( int( _read( m.live / "keeper.pid" ) ), signal.SIGTERM )
+            os.kill( int( _read( live / "keeper.pid" ) ), signal.SIGTERM )
     if not machines:
         echo( "  no virtual machine is running" )
     return 0
 
 
-# ── installing ───────────────────────────────────────────────────────────────
-
-def obtain_iso( where: str, root: Path, echo = print ) -> Path:
-    if "://" not in where:
-        path = Path( where ).expanduser()
-        path = path if path.is_absolute() else root / path
-        if not path.exists():
-            raise VmError( f"no ISO at {path}" )
-        return path
-    target = cache_dir() / "iso" / f"{L.fingerprint( where )}.iso"
-    if target.exists():
-        return target
-    target.parent.mkdir( parents = True, exist_ok = True )
-    partial = target.with_suffix( ".part" )
-    echo( f"  downloading {where}" )
+def install( host, name: str, declared: dict, booted: dict, echo = print ) -> int:
+    """`--setup` for a `Windows` layer: install from the ISO, check it answers,
+    and only then call it ready -- decided here, done through `host`."""
     try:
-        with urllib.request.urlopen( where, timeout = 60 ) as got, open( partial, "wb" ) as out:
-            total = int( got.headers.get( "Content-Length" ) or 0 )
-            done, told = 0, -1
-            while chunk := got.read( 1 << 20 ):
-                out.write( chunk )
-                done += len( chunk )
-                if total and ( tenth := done * 10 // total ) != told:
-                    echo( f"    {done >> 20} / {total >> 20} MB" )
-                    told = tenth
-    except OSError as err:
-        raise VmError( f"could not download the ISO ( {err} ) -- download it by hand and "
-                       f"declare it: errand.Windows( iso = 'path/to/windows.iso' )" ) from err
-    os.replace( partial, target )
-    return target
+        facts = Facts.of( host )
+        need( facts, ( "ssh", "scp", "ssh-keygen", "tar" ), "they come with OpenSSH and tar" )
+        need( facts, ( "qemu-system-x86_64", "qemu-img" ), qemu_hint( facts ) )
+        how, _ = accel( facts )
+        if how == "tcg":
+            echo( f"  no hardware virtualization {facts.where} ( /dev/kvm ): this will take HOURS" )
+        m = Machine( host, facts, name )
+        iso = m.obtain_iso( declared[ "iso" ] or EVALUATION_ISO, echo )
 
+        work = f"{m.image}/build"
+        media, disk = f"{work}/media", f"{work}/disk.qcow2"
+        m.there( 'rm -rf "$2" && mkdir -p "$3" && '
+                 '( test -f "$1/key" || ssh-keygen -q -t ed25519 -N "" -C errand-vm -f "$1/key" ) && '
+                 'cp "$1/key.pub" "$3/errand_key.pub"', m.image, work, media, what = "preparing the install" )
+        m.write( f"{media}/autounattend.xml", autounattend( key = declared[ "key" ], index = declared[ "index" ] ) )
+        provision = [ ]
+        for i, p in enumerate( declared[ "provision" ] ):
+            if str( p ).endswith( ".ps1" ):
+                # From the project as that machine has it: `--setup` pushed it there first.
+                m.there( 'cp "$1" "$2"', p, f"{media}/errand-provision-{i}.ps1", what = f"copying {p}" )
+                provision.append( p )
+            else:
+                provision.append( { "line": p } )
+        m.write( f"{media}/errand-setup.ps1",
+                 setup_script( msvc = declared[ "msvc" ], python = declared[ "python" ], provision = provision ) )
+        m.there( 'qemu-img create -q -f qcow2 "$1" "$2"', disk, declared[ "disk" ], what = "the disk" )
+    except VmError as err:
+        echo( f"  {err}" )
+        return 1
+
+    with queue.claim( { "cpus": booted[ "cpus" ], "ram": booted[ "ram" ] },
+                      label = "installing windows", echo = echo, enabled = not host.remote ):
+        echo( f"  installing windows {facts.where} -- 20 to 60 minutes, with nothing to watch "
+              f"( ERRAND_VM_VNC=1 to watch on vnc://127.0.0.1:5901 {facts.where} )" )
+        started, pid = time.time(), None
+        try:
+            _, pid = m.start( disk, cpus = booted[ "cpus" ], ram = booted[ "ram" ], iso = iso, media = media,
+                              log = f"{work}/qemu.log" )
+            report = started + 600
+            # Setup powers the machine off when it is done: that is the signal.
+            while m.alive_there( pid ) is not False:
+                time.sleep( 10.0 )
+                if time.time() > report:
+                    echo( f"    still installing, {( time.time() - started ) / 60:.0f} min" )
+                    report += 600
+                if time.time() - started > INSTALL_TIMEOUT:
+                    echo( f"  the install did not finish in {INSTALL_TIMEOUT // 3600} hours" )
+                    return 1
+            pid = None
+            m.there( 'mv "$1" "$2"', disk, f"{m.image}/base.qcow2", what = "keeping the disk" )
+            echo( f"  installed in {( time.time() - started ) / 60:.0f} min; checking that it answers" )
+            if not _check( m, booted, work, echo ):
+                return 1
+        except VmError as err:
+            echo( f"  {err}" )
+            return 1
+        finally:
+            if pid is not None:
+                m.stop_there( pid )
+
+    m.there( 'date > "$1/ready" && rm -rf "$2"', m.image, work, what = "marking it ready" )
+    echo( f"  windows is ready {facts.where}: {m.image}" )
+    return 0
+
+
+def _check( m: Machine, booted: dict, work: str, echo ) -> bool:
+    """Boot it once, the way every run will, and read back how setup went."""
+    overlay = f"{work}/check.qcow2"
+    m.there( 'qemu-img create -q -f qcow2 -b "$1" -F qcow2 "$2"', f"{m.image}/base.qcow2", overlay,
+             what = "the overlay" )
+    _, pid = m.start( overlay, cpus = booted[ "cpus" ], ram = booted[ "ram" ], log = f"{work}/check.log" )
+    try:
+        if not m.wait_for( pid, BOOT_TIMEOUT ):
+            echo( "  installed, but sshd never answered: the first logon script did not run, "
+                  "or failed before sshd -- ERRAND_VM_VNC=1 and --setup=force to watch it" )
+            return False
+        status = ( m.guest( r"type C:\errand\setup.status", capture = True ).stdout or "" ).strip()
+        if status != "ok":
+            log = m.guest( r"type C:\errand-setup.log", capture = True ).stdout or ""
+            echo( f"  the setup inside windows went wrong: {status or 'no status'}\n{log[ -1500 : ]}" )
+            return False
+        return True
+    finally:
+        m.stop_there( pid )
+
+
+# ── what the guest is given ──────────────────────────────────────────────────
 
 def autounattend( *, key = None, index = 1 ) -> str:
     """What Windows Setup reads instead of asking: one partition, the image at
@@ -755,11 +1047,14 @@ def setup_script( *, msvc = True, python = None, provision = ( ) ) -> str:
         '/quiet', 'InstallAllUsers=1', 'PrependPath=1', 'Include_test=0' )
     if ( $p.ExitCode -ne 0 ) {{ throw "python: exit $( $p.ExitCode )" }}
     Remove-Item C:\\python-setup.exe""" )
+    # A label is a PowerShell string: a quote of the line it names would end it,
+    # and the whole script with it. Doubled, it is a quote.
+    label = lambda text: "'" + str( text ).replace( "'", "''" ) + "'"
     for i, p in enumerate( provision ):
         if isinstance( p, dict ):
-            steps.append( f"\n    Step 'provision: {p[ 'line' ][ : 40 ]}'\n    {p[ 'line' ]}" )
+            steps.append( f"\n    Step {label( 'provision: ' + p[ 'line' ][ : 40 ] )}\n    {p[ 'line' ]}" )
         else:
-            steps.append( f"\n    Step '{Path( p ).name}'\n    & ( Join-Path $media 'errand-provision-{i}.ps1' )" )
+            steps.append( f"\n    Step {label( Path( p ).name )}\n    & ( Join-Path $media 'errand-provision-{i}.ps1' )" )
     return f"""$ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 Start-Transcript -Path C:\\errand-setup.log
@@ -799,116 +1094,20 @@ try {{
 """
 
 
-def build( recipe: dict, echo = print ) -> int:
-    """`--setup` for a `Windows` layer: install from the ISO, check it answers,
-    and only then call it ready."""
-    image = Path( recipe[ "image" ] )
-    root  = Path( recipe[ "root" ] )
-    try:
-        for tool in ( "ssh", "scp", "ssh-keygen" ):
-            _tool( tool, "it comes with OpenSSH" )
-        _tool( "qemu-img", QEMU_HINT )
-        how, _ = accel()
-        if how == "tcg":
-            echo( "  no hardware virtualization here ( /dev/kvm ): this will take HOURS" )
-        iso = obtain_iso( recipe[ "iso" ], root, echo )
-    except VmError as err:
-        echo( f"  {err}" )
-        return 1
-
-    image.mkdir( parents = True, exist_ok = True )
-    work = image / "build"
-    shutil.rmtree( work, ignore_errors = True )
-    media = work / "media"
-    media.mkdir( parents = True )
-    key = image / "key"
-    if not key.exists():
-        subprocess.run( [ "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "errand-vm",
-                          "-f", str( key ) ], check = True )
-    shutil.copy( f"{key}.pub", media / "errand_key.pub" )
-    ( media / "autounattend.xml" ).write_text( autounattend( key = recipe[ "key" ], index = recipe[ "index" ] ) )
-    for i, p in enumerate( recipe[ "provision" ] ):
-        if not isinstance( p, dict ):
-            shutil.copy( p, media / f"errand-provision-{i}.ps1" )
-    ( media / "errand-setup.ps1" ).write_text( setup_script( msvc = recipe[ "msvc" ], python = recipe[ "python" ],
-                                                             provision = recipe[ "provision" ] ) )
-    disk = work / "disk.qcow2"
-    subprocess.run( [ "qemu-img", "create", "-q", "-f", "qcow2", str( disk ), recipe[ "disk" ] ], check = True )
-
-    with queue.claim( { "cpus": recipe[ "cpus" ], "ram": recipe[ "ram" ] },
-                      label = "installing windows", echo = echo ):
-        echo( "  installing windows -- 20 to 60 minutes, with nothing to watch "
-              "( ERRAND_VM_VNC=1 to watch on vnc://127.0.0.1:5901 )" )
-        started = time.time()
-        with open( work / "qemu.log", "w" ) as log:
-            process = subprocess.Popen( qemu_argv( disk, port = free_port(), cpus = recipe[ "cpus" ],
-                                                   ram = recipe[ "ram" ], iso = iso, media = media ),
-                                        stdin = subprocess.DEVNULL, stdout = log, stderr = subprocess.STDOUT )
-            report = started + 600
-            while process.poll() is None:
-                time.sleep( 10.0 )
-                if time.time() > report:
-                    echo( f"    still installing, {( time.time() - started ) / 60:.0f} min" )
-                    report += 600
-                if time.time() - started > INSTALL_TIMEOUT:
-                    process.kill()
-                    echo( f"  the install did not finish in {INSTALL_TIMEOUT // 3600} hours" )
-                    return 1
-        if process.returncode:
-            echo( f"  qemu stopped with code {process.returncode}:\n{_read( work / 'qemu.log' )[ -800 : ]}" )
-            return 1
-        os.replace( disk, image / "base.qcow2" )
-
-        echo( f"  installed in {( time.time() - started ) / 60:.0f} min; checking that it answers" )
-        if not _check( image, recipe, echo ):
-            return 1
-
-    ( image / "ready" ).write_text( time.strftime( "%Y-%m-%dT%H:%M:%S%z" ) + "\n" )
-    shutil.rmtree( work, ignore_errors = True )
-    echo( f"  windows is ready: {image}" )
-    return 0
 
 
-def _check( image: Path, recipe: dict, echo ) -> bool:
-    """Boot it once, the way every run will, and read back how setup went."""
-    machine = Machine( image )
-    machine.live.mkdir( parents = True, exist_ok = True )
-    ( machine.live / "port" ).write_text( str( free_port() ) )
-    overlay = image / "build" / "check.qcow2"
-    _overlay( image / "base.qcow2", overlay )
-    process = subprocess.Popen( qemu_argv( overlay, port = machine.port, cpus = recipe[ "cpus" ],
-                                           ram = recipe[ "ram" ] ), stdin = subprocess.DEVNULL )
-    try:
-        if not _wait_for( machine, process, BOOT_TIMEOUT ):
-            echo( "  installed, but sshd never answered: the first logon script did not run, "
-                  "or failed before sshd -- ERRAND_VM_VNC=1 and --setup=force to watch it" )
-            return False
-        got = machine.ssh( r"type C:\errand\setup.status", capture_output = True, text = True )
-        status = ( got.stdout or "" ).strip()
-        if status != "ok":
-            log = machine.ssh( r"type C:\errand-setup.log", capture_output = True, text = True ).stdout or ""
-            echo( f"  the setup inside windows went wrong: {status or 'no status'}\n{log[ -1500 : ]}" )
-            return False
-        return True
-    finally:
-        process.terminate()
-        with contextlib.suppress( subprocess.TimeoutExpired ):
-            process.wait( timeout = 30 )
-        if process.poll() is None:
-            process.kill()
-
-
-# ── `python -m errand.vm …`: what setup and the keeper run ─────────────────
+# ── `python -m errand.vm …`: the keeper, a process of its own, here ─────────
 
 def main( argv = None ) -> int:
     argv = list( sys.argv[ 1 : ] if argv is None else argv )
-    if argv[ : 1 ] == [ "build" ] and len( argv ) == 2:
-        return build( json.loads( argv[ 1 ] ), echo = lambda s: print( s, flush = True ) )
     if argv[ : 1 ] == [ "keep" ] and len( argv ) == 2:
-        return Machine( Path( argv[ 1 ] ) ).keep()
+        live = Path( argv[ 1 ] )
+        config = json.loads( ( live / "config.json" ).read_text() )
+        host = L.host_of( config[ "host" ] )
+        return Machine( host, Facts.of( host ), config[ "name" ] ).keep( config )
     if argv[ : 1 ] == [ "stop" ]:
         return stop_all()
-    print( "usage: python -m errand.vm build RECIPE | keep IMAGE | stop", file = sys.stderr )
+    print( "usage: python -m errand.vm keep LIVE_DIR | stop", file = sys.stderr )
     return 2
 
 

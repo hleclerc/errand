@@ -494,17 +494,17 @@ def run_there( known, command, *, root ):
                          { TAGS: ",".join( f"{k}={v}" for k, v in sorted( tags.items() ) ),
                            "PYTHONPATH": path.rstrip( os.pathsep ) } )
         print( dim( f"\n  -> {env.name}  {env.describe()}" ), flush = True )
-        if env.vm is not None:
-            rc |= env.vm.run( env.stack[ 1 : ], cmd, ctx,
-                              echo = lambda s: print( dim( s ), flush = True ) )
-        elif env.ssh is None:
+        # The first layer leads somewhere -- another machine, a machine to
+        # boot -- and takes over; it hands whatever follows it on itself.
+        lead = env.stack[ 0 ] if env.stack and hasattr( env.stack[ 0 ], "run" ) else None
+        if lead is not None:
+            rc |= lead.run( env.stack[ 1 : ], cmd, ctx,
+                            echo = lambda s: print( dim( s ), flush = True ) )
+        else:
             wrapped = L.compose( env.stack, cmd, ctx )
             print( dim( f"  $ {' '.join( str( a ) for a in wrapped.argv )}" ), flush = True )
             rc |= subprocess.run( wrapped.argv, env = { **os.environ, **wrapped.env },
                                   cwd = root ).returncode
-        else:
-            rc |= env.ssh.run( env.stack[ 1 : ], cmd, ctx,
-                               echo = lambda s: print( dim( s ), flush = True ) )
     return rc
 
 
@@ -922,6 +922,7 @@ def main( argv = None ):
 
     if known.vm_stop:
         from . import vm
+        # Every keeper is here, wherever its machine runs: stopping it stops that.
         return vm.stop_all( echo = lambda s: print( dim( s ) ) )
 
     if known.at:

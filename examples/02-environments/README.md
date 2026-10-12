@@ -26,7 +26,11 @@ errand --envs
   boxed    boxed  driver=cpu             docker:errand-demo:1 -> vars                not built
   box      cuda  driver=cuda  remote     ssh:gpu-box -> apptainer:cuda.sif -> vars   unknown
   cluster  cuda  driver=cuda  fp=64  remote  ssh:login.hpc -> slurm:gpu -> …         unknown
+  windows  driver=msvc  remote             ssh:lmo -> windows                          unknown
 ```
+
+`windows` is a virtual machine booted on another machine — QEMU wants x86-64 — and takes commands
+rather than entries: `errand --env windows -- cmake -B build -G Ninja`.
 
 `unknown` is honest rather than optimistic: only the other machine can say what it has.
 

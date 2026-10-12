@@ -235,7 +235,7 @@ errand.envs[ "cluster" ] = errand.Env( [ errand.Ssh( host = "gpu-box", root = "/
 | `Ssh( host, root =, python =, options = )` | must be first; everything after it runs on that machine. `options` go to ssh *and* rsync — a port, an identity, a jump host |
 | `Slurm( partition =, nodes =, gpus =, time =, … )` | goes through `srun`, or `sbatch` in [batch mode](#detached-runs) |
 | `Oar( … )`, `Pbs( … )`, `Sge( … )`, `Lsf( … )` | the same, for the other batch systems |
-| `Windows( iso =, key =, cpus =, ram =, msvc =, python =, provision =, fetch =, keep = )` | must be first; a Windows VM under QEMU that errand installs and boots. Every argument is optional: with none it is a Server 2025 evaluation (no licence) with the MSVC build tools. See [below](#windows) |
+| `Windows( iso =, key =, cpus =, ram =, msvc =, python =, provision =, fetch =, keep = )` | first, or right after the `Ssh` of the machine that boots it; a Windows VM under QEMU that errand installs and boots. Every argument is optional: with none it is a Server 2025 evaluation (no licence) with the MSVC build tools. See [below](#windows) |
 | `Vars( { … } )` | environment variables for the child process |
 
 Requirements belong to the layer that installs them — a `requirements.txt` for the conda
@@ -558,10 +558,26 @@ reinstalled before it runs out — with the MSVC build tools on `PATH`. A `key` 
 your own Windows instead.
 
 The install is a layer build like any other, kept in `~/.cache/errand/windows/` and shared by every
-project declaring the same thing. Each boot starts clean from it; a booted machine stays warm `keep`
-(15 minutes) after its last command, and holds its cores and memory in the queue all that time —
+project declaring the same thing. Each boot starts clean from it (about half a minute); a booted
+machine stays up while the errand process that booted it — or any other that used it — is alive,
+then `keep` more (none by default), and holds its cores and memory in the queue all that time —
 `errand --vm-stop` lets go of it sooner. It needs QEMU and an x86-64 host with KVM (Linux) or HVF
-(Intel Mac). Commands only, for now: entries and `--batch` do not reach a virtual machine yet.
+(Intel Mac); when one is missing, errand says which command installs it there. Commands only, for
+now: entries and `--batch` do not reach a virtual machine yet.
+
+From a machine that cannot run it — a Mac on ARM — put an `Ssh` in front, and QEMU runs over there:
+
+```python
+errand.envs[ "win" ] = errand.Env( [ errand.Ssh( host = "x86-box", root = "/home/me/proj" ),
+                                     errand.Windows( fetch = [ "build" ] ) ] )
+```
+
+`Ssh` hands the layer after it a way to run a line on the machine it leads to, and `Windows` does
+its own work through it: what that machine is, whether an image is installed, starting QEMU,
+copying in, running, bringing back — each a line over there, its answer read back here. The
+deciding, the locks and the keeper stay on this machine; over there it needs QEMU, ssh and tar, and
+keeps the disks in its own cache. What `fetch` names comes back to the project's copy over there,
+and from there to here.
 
 ## Detached runs
 

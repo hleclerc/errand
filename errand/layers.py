@@ -49,6 +49,20 @@ class Context:
     # `--batch`: let go rather than wait. Only a layer that has two ways of
     # starting something -- a batch system -- has anything to do with it.
     batch : bool = False
+    # Where a layer's OWN work runs -- booting a machine, copying into it --
+    # as opposed to the command it wraps: whatever the layers before it lead
+    # to. `Here` for the first layer; `Ssh` hands the next ones `Over`.
+    host  : object = None
+    # The project as THIS process sees it, wherever `root` is: what a layer
+    # reads to know what it was declared with ( a script, a recipe ), since the
+    # reading is done here even when the doing is not.
+    origin: Path | None = None
+
+    def __post_init__( self ):
+        if self.host is None:
+            self.host = Here( self.root )
+        if self.origin is None:
+            self.origin = self.root
 
 
 def compose( stack, cmd: Command, ctx: Context ) -> Command:
@@ -576,21 +590,28 @@ class Ssh:
     def remote_root( self, ctx ):
         return Path( self.root or ctx.root )
 
+    def place( self, ctx ) -> "Over":
+        """What the layers after this one are handed as `ctx.host`."""
+        return Over( self, self.remote_root( ctx ) )
+
     def run( self, inner, cmd: Command, ctx: Context, pull = None, echo = print ):
-        remote_ctx = Context( root = self.remote_root( ctx ), tags = ctx.tags, remote = True )
-        wrapped = compose( inner, Command( under( cmd.argv, self.python ), cmd.env ),
-                           remote_ctx )
+        there = self.place( ctx )
+        remote_ctx = Context( root = there.root, tags = ctx.tags, remote = True, host = there,
+                              origin = ctx.origin )
 
         echo( f"  rsync push -> {self.host}:{remote_ctx.root}" )
         push( ctx.root, self.host, remote_ctx.root, self.options )
 
-        line = f"mkdir -p {shlex.quote( str( remote_ctx.root ) )} && " \
-               f"cd {shlex.quote( str( remote_ctx.root ) )} && {wrapped.shell()}"
-        # ssh runs non-interactively, so the remote shell never reads the rc
-        # file that puts micromamba, cargo or nvm on PATH. Force an interactive
-        # one, through the user's own $SHELL rather than a hard-coded bash.
-        code = subprocess.run( [ "ssh", *self.options, self.host,
-                                 f"$SHELL -ic {shlex.quote( line )}" ] ).returncode
+        if inner and hasattr( inner[ 0 ], "run" ):
+            # A layer that leads somewhere again -- a machine to boot over
+            # there. It does its own work through `there`, and what it brings
+            # back into the project's copy over there comes back here in turn.
+            code = inner[ 0 ].run( inner[ 1 : ], cmd, remote_ctx, pull = pull, echo = echo )
+            pull = [ *( pull or [ ] ), *getattr( inner[ 0 ], "fetch", [ ] ) ]
+        else:
+            wrapped = compose( inner, Command( under( cmd.argv, self.python ), cmd.env ),
+                               remote_ctx )
+            code = there.shell( wrapped.shell() ).returncode
 
         if pull:
             echo( f"  rsync pull  <- {self.host}:{remote_ctx.root} [{', '.join( pull )}]" )
@@ -620,6 +641,90 @@ def fetch( paths, host: str, remote_root: Path, local_root: Path, options = ( ) 
         # directory INSIDE the local one whenever the latter already exists.
         subprocess.run( [ "rsync", "-a", *_rsh( options ),
                           f"{host}:{remote_root}/{p}/", f"{target}/" ] )
+
+
+# ── where a layer's own work runs ────────────────────────────────────────────
+#
+# Most layers only rewrite the command. A few must DO something before it can
+# run -- build an image, boot a machine, copy the project into it -- and where
+# that happens is not their business: it is wherever the layers before them
+# lead. So it is handed down, as `ctx.host`: a way to run a shell line THERE
+# and read what it answered. The deciding stays in this process; only the
+# doing goes over there, one line at a time, as many as it takes.
+#
+#     shell( line, capture =, quiet =, input =, timeout =, tty = )
+#                     -> a CompletedProcess, from the project root of that place
+
+def _how( quiet, capture, input ) -> dict:
+    how = { }
+    if capture:
+        how.update( capture_output = True, text = True )
+    elif quiet:
+        how.update( stdout = subprocess.DEVNULL, stderr = subprocess.DEVNULL )
+    if input is not None:
+        how.update( input = input, text = True )
+    elif capture or quiet:
+        # Asked, not watched: it must not read the terminal's keystrokes --
+        # ssh would, and swallow what was typed for something else.
+        how.update( stdin = subprocess.DEVNULL )
+    return how
+
+
+class Here:
+    """This machine, from the project root: what the first layer is handed."""
+    remote = False
+
+    def __init__( self, root ):
+        self.root = Path( root )
+
+    def shell( self, line: str, *, quiet = False, tty = False, capture = False, input = None,
+               timeout = None ):
+        return subprocess.run( [ "sh", "-c", line ], cwd = str( self.root ), timeout = timeout,
+                               **_how( quiet, capture, input ) )
+
+    def describe( self ):
+        return "here"
+
+    def spec( self ) -> dict:
+        return { "here": str( self.root ) }
+
+
+class Over:
+    """Another machine, through `Ssh`, from the project's copy over there:
+    what the layers after an `Ssh` are handed."""
+    remote = True
+
+    def __init__( self, ssh: Ssh, root = None ):
+        self.ssh  = ssh
+        self.root = Path( root ) if root is not None else None
+
+    def shell( self, line: str, *, quiet = False, tty = False, capture = False, input = None,
+               timeout = None ):
+        if self.root is not None:
+            line = f"cd {shlex.quote( str( self.root ) )} && {line}"
+        # ssh runs non-interactively, so the remote shell never reads the rc
+        # file that puts micromamba, cargo or nvm on PATH. Force an interactive
+        # one, through the user's own $SHELL rather than a hard-coded bash.
+        # `-t` when somebody watches: a build can ask for a password, and draws
+        # a progress bar nobody sees without a terminal.
+        return subprocess.run( [ "ssh", *( [ "-t" ] if tty else [ ] ), *self.ssh.options, self.ssh.host,
+                                 f"$SHELL -ic {shlex.quote( line )}" ], timeout = timeout,
+                               **_how( quiet, capture, input ) )
+
+    def describe( self ):
+        return self.ssh.host
+
+    def spec( self ) -> dict:
+        return { "ssh": { "host": self.ssh.host, "options": list( self.ssh.options ),
+                          "python": self.ssh.python },
+                 "root": None if self.root is None else str( self.root ) }
+
+
+def host_of( spec: dict ):
+    """`spec` the other way round: for another process that must reach the same place."""
+    if "here" in spec:
+        return Here( spec[ "here" ] )
+    return Over( Ssh( **spec[ "ssh" ] ), spec.get( "root" ) )
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -680,5 +785,6 @@ def ssh_of( stack ):
 
 def vm_of( stack ):
     """A machine errand boots ( `errand.Windows` ), recognized by what it says
-    of itself so that this module need not import the one that defines it."""
-    return stack[ 0 ] if stack and getattr( stack[ 0 ], "is_vm", False ) else None
+    of itself so that this module need not import the one that defines it.
+    First, or right after the `Ssh` that leads to the machine it runs on."""
+    return next( ( l for l in stack if getattr( l, "is_vm", False ) ), None )

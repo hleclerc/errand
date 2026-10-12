@@ -1,4 +1,5 @@
 """Layers: folding a command, and noticing an environment has drifted."""
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -310,27 +311,27 @@ if test( "over ssh, `is it there` is asked of the machine it would be built on" 
             return [ "true" ]
 
     def answering( code ):
-        def _run( step, ssh, ctx, quiet = False ):
-            asked.append( ( step, quiet ) )
-            return code if step == "test -e i.sif" else 0
-        return _run
+        def shell( self, line, *, quiet = False, tty = False, capture = False ):
+            asked.append( ( line, quiet ) )
+            return subprocess.CompletedProcess( line, code if line == "test -e i.sif" else 0 )
+        return shell
 
-    kept, pushed = setup._run, L.push
+    kept, pushed = L.Over.shell, L.push
     L.push = lambda *a, **kw: None          # no rsync to a host that does not exist
     try:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path( tmp )
             layer = Image( answer = 1 )
             e = Env.make( "far", [ far, layer ] )
-            setup._run = answering( 1 )               # not there
+            L.Over.shell = answering( 1 )               # not there
             setup.ensure( root, e, L.Context( root = root ), echo = lambda s: None )
             assert layer.built == 1, "absent over there: it gets built, first sight or not"
             assert ( "test -e i.sif", True ) in asked, asked
 
             layer = Image( answer = 0 )
             e = Env.make( "far2", [ far, layer ] )
-            setup._run = answering( 0 )               # already there
+            L.Over.shell = answering( 0 )               # already there
             setup.ensure( root, e, L.Context( root = root ), echo = lambda s: None )
             assert layer.built == 0, "there already: adopted, like anywhere else"
     finally:
-        setup._run, L.push = kept, pushed
+        L.Over.shell, L.push = kept, pushed

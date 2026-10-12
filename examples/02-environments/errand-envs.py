@@ -68,3 +68,20 @@ errand.envs[ "cluster" ] = errand.Env(
      [ errand.Ssh( host = "login.hpc", root = "/scratch/me/demo" ),
        errand.Slurm( partition = "gpu", gpus = 1, cpus = 16, time = "2:00:00" ) ] + CUDA + FTYPE,
      driver = "cuda", cuda = True, fp = "64", remote = True )
+
+# A machine errand installs and boots is one more layer too. Windows wants an
+# x86-64 host with QEMU, which a mac on ARM is not: an `Ssh` in front of it
+# boots it over there instead, and the layers keep their order -- ssh around
+# the virtual machine around the command. Everything is decided here and done
+# over there through ssh; `build` comes back all the way here.
+#
+#     errand --env windows --setup                   # once, over there: 20 to 60 minutes
+#     errand --env windows -- cmake -B build -G Ninja
+#
+# A driver of its own, so that `--driver cpu` does not sweep it into a
+# benchmark: a virtual machine takes commands, not entries, for now.
+
+errand.envs[ "windows" ] = errand.Env(
+     [ errand.Ssh( host = "lmo", root = "/home/leclerc/errand-demo" ),
+       errand.Windows( fetch = [ "build" ] ) ],
+     driver = "msvc", remote = True )

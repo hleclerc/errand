@@ -50,9 +50,10 @@ class Env:
             if isinstance( layer, L.Ssh ) and i:
                 raise ValueError( "Ssh must be the first layer" )
             # A machine errand boots is reached the way another machine is, and
-            # is first for the same reason. Not both: one way in.
-            if getattr( layer, "is_vm", False ) and i:
-                raise ValueError( f"{type( layer ).__name__} must be the first layer" )
+            # is first for the same reason -- or right after the `Ssh` that
+            # leads to the machine that boots it.
+            if getattr( layer, "is_vm", False ) and i and not ( i == 1 and isinstance( self.stack[ 0 ], L.Ssh ) ):
+                raise ValueError( f"{type( layer ).__name__} must be the first layer, or follow its Ssh" )
 
     @classmethod
     def make( cls, name: str, stack = ( ), tags = None ):
