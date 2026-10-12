@@ -4,7 +4,7 @@ layout: home
 hero:
   name: "errand"
   text: "Run it somewhere, get everything back"
-  tagline: "Say once how to reach the places your code can run — a conda environment, a container, another machine over ssh, a Slurm allocation, any stack of them. errand builds them, goes in, runs your command or your tests there, and brings back what they produced into a path you can predict."
+  tagline: "Run tests, experiments and benchmarks in complex layered environments : conda, containers, another machine over ssh, modules, slurm, any stack of them...Errand builds the places, goes in, runs, and brings it all back."
   actions:
     - theme: brand
       text: "Get started"
@@ -19,7 +19,7 @@ hero:
 features:
   - icon: 🧭
     title: Layers, so you never write the ssh-slurm-apptainer script again
-    details: "An environment is a stack of layers — micromamba, conda, uv, a venv, Nix, Guix, module load, Docker, Podman, Apptainer, ssh or Slurm — in any combination. Apptainer inside Slurm inside ssh is three lines, built from what they say they need, checked before every run, with the results brought back."
+    details: "An environment is a stack of layers — micromamba, conda, uv, a venv, Nix, Guix, module load, Docker, Podman, Apptainer, ssh, Slurm... — in any combination. Apptainer inside Slurm inside ssh is three lines, built from what they say they need, checked before every run, with the results brought back."
     link: /guide/environments
     linkText: Environments
   - icon: 🧩

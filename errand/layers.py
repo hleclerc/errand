@@ -548,7 +548,7 @@ class Slurm:
 
 RSYNC_EXCLUDES = [
     ".git", "runs", "build", "dist", "__pycache__", "*.pyc", "*.so", "*.o",
-    "node_modules", ".venv", "*.sif", "*.egg-info", ".mypy_cache", ".pytest_cache",
+    "node_modules", "target", ".venv", "*.sif", "*.egg-info", ".mypy_cache", ".pytest_cache",
 ]
 
 

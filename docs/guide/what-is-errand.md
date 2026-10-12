@@ -11,6 +11,21 @@ in several places at once if you ask, and repatriates what it produced.
 What you run is **yours**. A pytest suite, a Catch2 binary, a cargo project, a Makefile target, a
 script: `errand` starts it, and does not need to know what language it is in.
 
+## Not just a way to launch commands
+
+An environment manager gets you *into* a place; a launcher runs a command *in* it. Neither remembers
+what happened. errand is about the other half of the sentence: the run is **tested, experimented
+with and measured**, and the outcome is kept — status, numbers, files — under a path computed from
+what was run, where and when.
+
+That is why environments and entries live in the same tool. A number means nothing without the place
+it was taken in — the same code on a laptop and on a GPU node gives two different numbers — and a
+place is only worth declaring once, carefully, if what comes out of it is recorded against its name.
+So errand holds both ends: the *where* (layers, built and checked before each run, the queue that
+keeps the machine to yourself) and the *what came of it* (the output tree, `result.yaml`, the
+summaries above them). Take either away and you are back to a shell script and a folder of files
+named `results_final2`.
+
 ## The three legs
 
 It stands on three, and you want all three.
