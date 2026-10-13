@@ -1,5 +1,5 @@
 # Ordinary pytest. Untouched, and it stays runnable with `pytest` alone --
-# errand collects it through the Pytest provider, it does not convert it.
+# errand run collects it through the Pytest runner, it does not convert it.
 import pytest
 
 from geometry import area, perimeter

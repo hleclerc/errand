@@ -7,17 +7,20 @@ from errand import results as R
 from errand.entries import Entry, Param, TRAITS
 
 
+ROOT = Path( "/proj" )
+
+
 def an_entry( name = "cost", file = "bench/solvers.py", line = 42 ):
     return Entry( name, [ ], { "n": Param( 1000 ) }, dict( TRAITS ), { }, file, line, "m" )
 
 
 if test( "the path is a function of the run, not of an invocation" ):
     e = an_entry()
-    a, root_a = R.dirs_for( Path( "/out" ), e, { "n": 1000 }, "host" )
-    b, root_b = R.dirs_for( Path( "/out" ), e, { "n": 1000 }, "host" )
+    a, root_a = R.dirs_for( Path( "/out" ), e, { "n": 1000 }, "host", ROOT )
+    b, root_b = R.dirs_for( Path( "/out" ), e, { "n": 1000 }, "host", ROOT )
     assert a == b and root_a == root_b
     # ...which is what lets the local side work out where a remote run will write
-    assert str( root_a ) == "/out/solvers/cost", root_a
+    assert str( root_a ) == "/out/bench/solvers.py/cost", root_a
     # The run's own directory says when, where, and with what -- in that order,
     # and in words rather than in a hash.
     assert a.name == f"{R.stamp()}-host-n=1000", a.name
@@ -25,18 +28,18 @@ if test( "the path is a function of the run, not of an invocation" ):
 
 if test( "different parameters, different directory" ):
     e = an_entry()
-    a, _ = R.dirs_for( Path( "/out" ), e, { "n": 1000 }, "host" )
-    b, _ = R.dirs_for( Path( "/out" ), e, { "n": 2000 }, "host" )
+    a, _ = R.dirs_for( Path( "/out" ), e, { "n": 1000 }, "host", ROOT )
+    b, _ = R.dirs_for( Path( "/out" ), e, { "n": 2000 }, "host", ROOT )
     assert a != b
 
 
 if test( "one flat list of runs under the case, however many dimensions" ):
     e = an_entry()
-    leaf, root = R.dirs_for( Path( "/out" ), e, { }, "host" )
+    leaf, root = R.dirs_for( Path( "/out" ), e, { }, "host", ROOT )
     assert leaf.parent == root            # the run is straight under the case
     assert leaf.name == f"{R.stamp()}-host", leaf.name
     # A matrix is more NAMES, never more levels: `cd` to a run, not through one.
-    deep, _ = R.dirs_for( Path( "/out" ), e, { "n": 5000, "method": "newton" }, "gpu@box" )
+    deep, _ = R.dirs_for( Path( "/out" ), e, { "n": 5000, "method": "newton" }, "gpu@box", ROOT )
     assert deep.parent == root
     assert deep.name.endswith( "-gpu@box-method=newton,n=5000" ), deep.name
 
@@ -69,9 +72,16 @@ if test( "the order of parameters does not change the hash" ):
 
 
 if test( "two entries of the same name in different files do not collide" ):
-    a = R.label( an_entry( file = "one/solvers.py" ) )
-    b = R.label( an_entry( file = "two/others.py" ) )
+    a = R.label( an_entry( file = "one/solvers.py" ), ROOT )
+    b = R.label( an_entry( file = "two/others.py" ), ROOT )
     assert a != b
+    # Nor do two files of the same name in two directories, nor one name with
+    # two extensions: the path is the whole path, as it was typed.
+    assert R.label( an_entry( file = "one/solvers.py" ), ROOT ) != \
+           R.label( an_entry( file = "two/solvers.py" ), ROOT )
+    assert R.label( an_entry( file = "solvers.py" ), ROOT ) != \
+           R.label( an_entry( file = "solvers.cpp" ), ROOT )
+    assert R.label( an_entry( file = "/proj/one/solvers.py" ), ROOT ) == "one/solvers.py/cost"
 
 
 if test( "a container is part of where it ran" ):
@@ -88,7 +98,7 @@ if test( "summaries are rebuilt from the tree, at every level" ):
         e = an_entry()
 
         for n, seconds in ( ( 1000, 1.0 ), ( 2000, 4.0 ) ):
-            leaf, entry_root = R.dirs_for( out, e, { "n": n }, "host" )
+            leaf, entry_root = R.dirs_for( out, e, { "n": n }, "host", ROOT )
             leaf.mkdir( parents = True )
             R.write_result( leaf, entry = e, root = out, env_name = "default",
                             where = "host", tags = { }, status = "PASS", error = None,
@@ -108,7 +118,7 @@ if test( "a single value does not read as a spread" ):
     with tempfile.TemporaryDirectory() as tmp:
         out = Path( tmp )
         e = an_entry()
-        leaf, entry_root = R.dirs_for( out, e, { "n": 1 }, "host" )
+        leaf, entry_root = R.dirs_for( out, e, { "n": 1 }, "host", ROOT )
         leaf.mkdir( parents = True )
         R.write_result( leaf, entry = e, root = out, env_name = "default", where = "host",
                         tags = { }, status = "PASS", error = None, duration_s = 2.0,
@@ -123,7 +133,7 @@ if test( "a failure is counted, not lost" ):
         out = Path( tmp )
         e = an_entry()
         for n, status in ( ( 1, "PASS" ), ( 2, "FAIL" ) ):
-            leaf, entry_root = R.dirs_for( out, e, { "n": n }, "host" )
+            leaf, entry_root = R.dirs_for( out, e, { "n": n }, "host", ROOT )
             leaf.mkdir( parents = True )
             R.write_result( leaf, entry = e, root = out, env_name = "default", where = "host",
                             tags = { }, status = status, error = None, duration_s = 1.0,
@@ -147,7 +157,7 @@ if test( "the record says when, and not only which day" ):
     with tempfile.TemporaryDirectory() as tmp:
         out = Path( tmp )
         e = an_entry()
-        leaf, _ = R.dirs_for( out, e, { }, "host" )
+        leaf, _ = R.dirs_for( out, e, { }, "host", ROOT )
         leaf.mkdir( parents = True )
         data = R.write_result( leaf, entry = e, root = out, env_name = "default",
                                where = "host", tags = { }, status = "PASS", error = None,

@@ -247,8 +247,8 @@ if test( "what errand has never recorded is not announced as stale" ):
 
 
 if test( "the interpreter is substituted; anything else is a command of its own" ):
-    # `errand --env gpu -- python -m loom.toolchain` has to run the venv's
-    # python; `errand --env gpu -- nvidia-smi` must NOT become `python
+    # `errand shell --env gpu -- python -m loom.toolchain` has to run the venv's
+    # python; `errand shell --env gpu -- nvidia-smi` must NOT become `python
     # nvidia-smi`, which is what replacing the first word blindly did.
     assert L.under( [ "python", "-c", "1" ], "/opt/py" ) == [ "/opt/py", "-c", "1" ]
     assert L.under( [ "/usr/bin/python3", "-m", "x" ], "/opt/py" ) == [ "/opt/py", "-m", "x" ]

@@ -1,4 +1,4 @@
-"""`errand --tui`: a screen for choosing what to run, and watching it happen.
+"""`errand tui`: a screen for choosing what to run, and watching it happen.
 
 Drawn with the curses of the standard library, so errand still installs with
 nothing at all. Everything that is not drawing is in `session.py`, which has no
@@ -1376,7 +1376,7 @@ def main( root: Path, out_root: Path ):
     import sys
 
     if not sys.stdout.isatty():
-        print( "errand --tui needs a terminal", file = sys.stderr )
+        print( "errand tui needs a terminal", file = sys.stderr )
         return 2
     without_rep()
     try:

@@ -18,7 +18,7 @@ the first three ship with errand, in [`examples/`](https://github.com/hleclerc/e
 
 The first and the third need nothing but their own toolchain. Examples two and four name micromamba environments, Apptainer images, ssh
 hosts and a Slurm partition that do not exist on your machine — they are there to be read and
-adapted, and `errand --envs` will tell you honestly that none of them is built.
+adapted, and `errand envs` will tell you honestly that none of them is built.
 
 ::: tip Reading order, if you are in a hurry
 Read [Start from what you have](/guide/start). Then [Environments](/guide/environments) and

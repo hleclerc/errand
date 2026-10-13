@@ -32,7 +32,7 @@ if test( "one file that will not import costs its own row, and nothing else" ):
             put_back( kept )
 
         # Tolerant, not silent: the runner says so, and fails over it.
-        code, output = run_errand( project )
+        code, output = run_errand( project, "run" )
         assert code == 1, output
         assert "could not be read" in output and "test_absent.py" in output, output
         assert "PASS quick" in output, "the readable file still ran"
@@ -41,7 +41,7 @@ if test( "one file that will not import costs its own row, and nothing else" ):
 if test( "a directory with a config file of its own is another project" ):
     with tempfile.TemporaryDirectory() as tmp:
         project = a_project( tmp )
-        # Its entries would run with OUR src, OUR providers and OUR
+        # Its entries would run with OUR src, OUR runners and OUR
         # environments, which is to say wrongly.
         write_project( project / "vendored", CONFIG, { "test_theirs.py": WORK } )
         session, kept = a_session( project )
@@ -64,7 +64,7 @@ if test( "a file that declares work can import its neighbours" ):
         # Work is declared NEXT TO the code it exercises, so this is the
         # ordinary case -- and it must not depend on which directory errand was
         # started from. Here it is started two levels above `helper.py`.
-        code, output = run_errand( project )
+        code, output = run_errand( project, "run" )
         assert code == 0, output
         assert "PASS the neighbour" in output, output
 
@@ -84,9 +84,9 @@ if test( "what was ticked becomes a command line" ):
     with tempfile.TemporaryDirectory() as tmp:
         session, kept = a_session( a_project( tmp ) )
         try:
-            assert session.command() == [ ]
+            assert session.command() == [ "run" ]
             assert session.command( entries = [ named( session, "slow" ) ] ) == \
-                   [ "test_demo::slow" ]
+                   [ "run", "test_demo.py::slow" ]
 
             # A comma is a matrix, and a second tick is a comma: two
             # environments, two values of a tag and two of a parameter are
@@ -95,8 +95,10 @@ if test( "what was ticked becomes a command line" ):
                 entries = [ named( session, "slow" ) ], envs = [ "plain", "other" ],
                 tags = { "fp": [ "32", "64" ] }, params = { "method": [ "cg", "direct" ] },
                 jobs = 4 )
-            assert argv == [ "test_demo::slow", "--env", "plain,other", "--fp", "32,64",
-                             "--method", "cg,direct", "-j", "4" ], argv
+            assert argv == [ "run", "--env", "plain,other", "--fp", "32,64", "-j", "4",
+                             "test_demo.py::slow", "--method", "cg,direct" ], argv
+            # Parameters with no case ticked still need a target to belong to.
+            assert session.command( params = { "n": [ "3" ] } ) == [ "run", ".", "--n", "3" ]
         finally:
             put_back( kept )
 
@@ -106,7 +108,7 @@ if test( "every case of a file is the file" ):
         session, kept = a_session( a_project( tmp ) )
         try:
             # Shorter, and it stays true when a case is added tomorrow.
-            assert session.pattern_for( session.entries ) == "test_demo"
+            assert session.pattern_for( session.entries ) == "test_demo.py"
         finally:
             put_back( kept )
 
@@ -123,23 +125,23 @@ if test( "a tag that says nothing offers every value it could have" ):
 
 # ── where it will land, and what came back ───────────────────────────────────
 
-if test( "the session knows where every run will write, before it runs" ):
+if test( "the session watches what each place said it would write" ):
+    import time
     with tempfile.TemporaryDirectory() as tmp:
         project = a_project( tmp )
         session, kept = a_session( project )
         try:
-            plan = session.predict( [ "test_demo::slow", "--env", "plain,other", "--n", "1,2" ] )
-            assert len( plan ) == 4, plan
-            assert { row[ "place" ] for row in plan } == { R.place( "plain" ), R.place( "other" ) }
-
-            code, output = run_errand( project, "test_demo::slow", "--env", "plain,other",
-                                       "--n", "1,2" )
-            assert code == 0, output
-
-            states = session.states_of( plan )
-            assert [ s[ "status" ] for s in states ] == [ "PASS" ] * 4, states
-            # Predicted before, found after -- and with it the file the case
-            # wrote, which is what a pane can face.
+            # Nothing is predicted here: the command writes its plan wherever it
+            # runs, before running anything, and that is what is watched.
+            assert session.launch( [ "run", "--env", "plain,other", "test_demo.py::slow",
+                                     "--n", "1,2" ] ) is None
+            while session.running:
+                time.sleep( 0.1 )
+            states = session.look()
+            assert len( session.plan ) == 4, session.plan
+            assert { row[ "place" ] for row in session.plan } == { R.place( "plain" ), R.place( "other" ) }
+            assert [ s[ "status" ] for s in states ] == [ "PASS" ] * 4, ( states, list( session.log ) )
+            # ...and with it the file the case wrote, which is what a pane can face.
             for state in states:
                 assert state[ "output" ].exists()
                 assert "turns of cg" in "\n".join( session.tail( state[ "output" ] ) )
@@ -154,7 +156,7 @@ if test( "a command cannot be read is still a command worth running" ):
         try:
             # No panes for it, and it says so by having no rows -- rather than
             # refusing, or worse, watching the wrong files.
-            assert session.predict( [ "--nonsense" ] ) == [ ]
+            assert session.predict( [ "run", "--nonsense" ] ) == [ ]
         finally:
             put_back( kept )
 
@@ -162,11 +164,11 @@ if test( "a command cannot be read is still a command worth running" ):
 if test( "the history holds commands, and gives them back as they were typed" ):
     with tempfile.TemporaryDirectory() as tmp:
         project = a_project( tmp )
-        run_errand( project, "test_demo::quick", "--env", "other" )
+        run_errand( project, "run", "--env", "other", "test_demo.py::quick" )
         session, kept = a_session( project )
         try:
-            assert session.history()[ 0 ] == "test_demo::quick --env other"
-            assert session.args_of( "errand test_demo::quick --env other" ) == \
-                   [ "test_demo::quick", "--env", "other" ]
+            assert session.history()[ 0 ] == "run --env other test_demo.py::quick"
+            assert session.args_of( "errand run --env other test_demo.py::quick" ) == \
+                   [ "run", "--env", "other", "test_demo.py::quick" ]
         finally:
             put_back( kept )

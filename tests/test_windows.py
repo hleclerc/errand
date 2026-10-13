@@ -1,6 +1,8 @@
 """A Windows machine as an environment: everything that can be checked without booting one."""
 import contextlib
 import os
+import shlex
+import shutil
 import subprocess
 import tempfile
 import xml.dom.minidom
@@ -155,6 +157,10 @@ if test( "no image, no command -- and said so" ):
         here = L.Context( root = Path( tmp ) )
         assert vm.Windows().run( [ ], L.Command( [ "dir" ] ), here, echo = said.append ) == 1
         assert "not installed yet here" in said[ 0 ], said
+        said.clear()
+        assert vm.Windows().run( [ ], L.Command( [ "python", "-c", "a = 1\nprint( a )" ] ), here,
+                                 echo = said.append ) == 1
+        assert "one line" in said[ 0 ], "a newline is refused, not silently cut by cmd.exe"
 
 
 if test( "windows refuses to be folded like the others" ):
@@ -180,9 +186,22 @@ if test( "without msvc, no vcvars" ):
     assert "vcvars" not in line and line.endswith( "dir" )
 
 
-if test( "the project lands under C:/errand, named after it, unless told otherwise" ):
-    assert vm.Windows().guest_root( ctx() ) == "C:/errand/project"
+if test( "the project lands on the disk that is kept, named after it, unless told otherwise" ):
+    assert vm.Windows().guest_root( ctx() ) == "E:/project"
+    assert vm.Windows( data = None ).guest_root( ctx() ) == "C:/errand/project", "no kept disk: reset with C:"
     assert vm.Windows( root = "D:/w" ).guest_root( ctx() ) == "D:/w"
+
+
+if test( "the disk that is kept is attached as it is, and made usable in the guest by a script cmd.exe cannot break" ):
+    argv = " ".join( vm.qemu_argv( "/s.qcow2", accel = ( "kvm", "host" ), port = 1, cpus = 1, ram = "1G",
+                                   data = "/img/data.qcow2" ) )
+    assert "file=/img/data.qcow2,format=qcow2" in argv and "drive=data,bus=ide.2" in argv
+    assert "drive=data" not in " ".join( vm.qemu_argv( "/s.qcow2", accel = ( "kvm", "host" ), port = 1,
+                                                       cpus = 1, ram = "1G" ) )
+    assert "data" in vm.Windows().booted() and vm.Windows().booted()[ "data" ] == "32G"
+    line = vm.powershell( vm.DATA_SCRIPT )
+    assert line.startswith( "powershell -NoProfile" ) and "\n" not in line and '"' not in line
+    assert "-DriveLetter E" in vm.DATA_SCRIPT and "IsOffline" in vm.DATA_SCRIPT
 
 
 if test( "what it is installed from decides which image, and nothing else does" ):
@@ -276,17 +295,45 @@ if test( "qemu is asked for inbox hardware only, and a port on localhost" ):
     assert "format=raw,readonly=on" in joined, "QEMU refuses a USB disk over a read-only node otherwise"
 
 
-if test( "what is copied in leaves out what rsync would" ):
+if test( "the project goes in by rsync, to the path the guest's rsync reads" ):
+    assert vm.msys_path( "E:/proj" ) == "/e/proj" and vm.msys_path( "C:\\errand\\p y\\" ) == "/c/errand/p y"
+    argv = shlex.split( vm.rsync_line( [ "ssh", "-p", "2222", "-i", "/c/k ey" ], "E:/proj" ) )
+    assert argv[ 0 ] == "rsync" and argv[ -2 : ] == [ "./", "Administrator@127.0.0.1:/e/proj/" ], argv
+    assert shlex.split( argv[ argv.index( "-e" ) + 1 ] ) == [ "ssh", "-p", "2222", "-i", "/c/k ey" ]
+    assert argv[ argv.index( "--rsync-path" ) + 1 ] == vm.GUEST_RSYNC
+    assert "--delete" not in argv, "what a command built over there must stay"
+
+
+if shutil.which( "rsync" ) and test( "what is copied in leaves out what an Ssh push would" ):
     with tempfile.TemporaryDirectory() as tmp:
-        root = Path( tmp )
+        root, out = Path( tmp ) / "p", Path( tmp ) / "out"
         for p in ( "src/a.cpp", "runs/x/result.yaml", ".git/HEAD", "build/a.o", ".errand/env-w.yaml" ):
             ( root / p ).parent.mkdir( parents = True, exist_ok = True )
             ( root / p ).write_text( "x" )
-        archive = Path( tmp ) / "out" / "push.tar"
-        archive.parent.mkdir()
-        # The line as the machine that runs QEMU would run it, from its root.
-        rc = L.Here( root ).shell( vm.pack_line( str( archive ) ), quiet = True ).returncode
-        assert rc == 0
-        listed = subprocess.run( [ "tar", "-t", "-f", str( archive ) ], capture_output = True, text = True )
-        names = { n.strip( "./" ) for n in listed.stdout.split() } - { "" }
-        assert names == { "src", "src/a.cpp", "out" }, names
+        # The line as the machine that runs QEMU would run it, from its root,
+        # into a directory here rather than the guest.
+        argv = shlex.split( vm.rsync_line( [ "ssh" ], "E:/proj" ) )
+        for flag in ( "-e", "--rsync-path" ):
+            del argv[ argv.index( flag ) : argv.index( flag ) + 2 ]
+        assert subprocess.run( [ *argv[ : -1 ], f"{out}/" ], cwd = root ).returncode == 0
+        names = { str( p.relative_to( out ) ) for p in out.rglob( "*" ) }
+        assert names == { "src", "src/a.cpp" }, names
+
+
+if test( "a link to nothing does not fail the copy; anything else does" ):
+    done = lambda code, err = "": subprocess.CompletedProcess( [ ], code, "", err )
+    assert not vm.rsync_failed( done( 0 ) )
+    assert not vm.rsync_failed( done( 23, 'symlink has no referent: "/p/tl24/vfs"\n'
+                                          "rsync error: some files/attrs were not transferred (code 23)\n" ) )
+    assert vm.rsync_failed( done( 23, 'rsync: [receiver] mkstemp "/e/p/x" failed: Permission denied (13)\n'
+                                      "rsync error: some files/attrs were not transferred (code 23)\n" ) )
+    assert vm.rsync_failed( done( 12, "rsync: connection unexpectedly closed\n" ) )
+
+
+if test( "rsync goes into the image, and the host is told what it lacks" ):
+    script = vm.setup_script()
+    assert script.index( "Step 'rsync'" ) < script.index( "vs_buildtools" )
+    assert "noacl" in script and "rsync.exe' ) --version" in script
+    assert vm.package_hint( facts(), [ "rsync", "zstd" ] ) == "sudo apt install rsync zstd"
+    assert vm.package_hint( facts( system = "Darwin", os_ids = set() ), [ "rsync" ] ) == "brew install rsync"
+    assert "rsync.exe" in vm.RSYNC_FILES and any( p.startswith( "rsync-" ) for p in vm.MSYS2_PACKAGES )

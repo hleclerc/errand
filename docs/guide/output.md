@@ -1,18 +1,19 @@
 # Where the output goes
 
-**Two directories to find a case, then one flat list of its runs**, each cleared and recreated as it
+**The file's path and the case's name to find a case, then one flat list of its runs**, each cleared and recreated as it
 starts. Only the run directory is cleared; everything above it accumulates.
 
 ```text
-runs/{file}/{name}/{when}-{place}[-{params}]/
-runs/{file}/{name}/latest -> the newest of them
+runs/{path}/{name}/{when}-{place}[-{params}]/
+runs/{path}/{name}/latest -> the newest of them
 
-runs/solvers/cost/2026-09-25_18h04m11-gpu@gpu-box-method=newton,n=5000/
-runs/solvers/cost/2026-09-25_18h11m02-local@laptop-method=cg,n=5000/
+runs/bench/solvers.py/cost/2026-09-25_18h04m11-gpu@gpu-box-method=newton,n=5000/
+runs/bench/solvers.py/cost/2026-09-25_18h11m02-local@laptop-method=cg,n=5000/
 ```
 
-The file and the name are how you *look* for work — they are what you typed to run it — so they are
-directories. Everything that tells two **runs** of that case apart is one directory name, in the
+The file's path — from the project root, extension included — and the name are how you *look* for
+work: they are what you typed to run it, so they are directories. Two `test_ot.py` in two
+directories, or a `solve.py` beside a `solve.cpp`, never share one. Everything that tells two **runs** of that case apart is one directory name, in the
 order you would say it out loud: **when, where, and with what.**
 
 ::: tip Why not a level per dimension

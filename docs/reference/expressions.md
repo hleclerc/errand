@@ -50,12 +50,12 @@ A tag used **without** `=` asks only whether it is there. That is why `cuda` mat
 ## Examples
 
 ```bash
-errand -t 'cuda'                      # every environment that mentions cuda
-errand -t 'cuda=True'                 # every one where it is on
-errand -t 'jax & fp=64 & !remote'     # here, in double, on jax
-errand -t 'cuda | boxed'              # either kind of container
-errand -e 'slow & !gpu'               # the slow entries that are not gpu ones
-errand -e '!legacy' -k bench          # benchmarks, minus the old ones
+errand run -t 'cuda'                   # every environment that mentions cuda
+errand run -t 'cuda=True'              # every one where it is on
+errand run -t 'jax & fp=64 & !remote'  # here, in double, on jax
+errand run -t 'cuda | boxed'           # either kind of container
+errand run -e 'slow & !gpu'            # the slow entries that are not gpu ones
+errand run -e '!legacy' -k bench       # benchmarks, minus the old ones
 ```
 
 ```python

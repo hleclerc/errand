@@ -60,6 +60,6 @@ def _as_table( tags ) -> dict:
 
 
 def format_tags( tags ) -> str:
-    """`driver=jax,cuda` -- what crosses an ssh hop and what `--envs` prints."""
+    """`driver=jax,cuda` -- what crosses an ssh hop and what `errand envs` prints."""
     table = _as_table( tags )
     return ",".join( k if v is True else f"{k}={v}" for k, v in sorted( table.items() ) )

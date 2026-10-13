@@ -49,6 +49,13 @@ class Context:
     # `--batch`: let go rather than wait. Only a layer that has two ways of
     # starting something -- a batch system -- has anything to do with it.
     batch : bool = False
+    # `errand shell` with no command: somebody types into it. Only a layer that
+    # stands between the terminal and the command -- ssh, a container engine, a
+    # batch system -- has to be told to hand the terminal on.
+    interactive: bool = False
+    # Which pass this is: `prepare` resolves, builds and collects, `run` runs.
+    # A scheduler sizes the second from the plan the first wrote.
+    phase : str = "run"
     # Where a layer's OWN work runs -- booting a machine, copying into it --
     # as opposed to the command it wraps: whatever the layers before it lead
     # to. `Here` for the first layer; `Ssh` hands the next ones `Over`.
@@ -107,7 +114,7 @@ def under( argv, python ):
 
     Every layer's job is to run the work with the interpreter of the place it
     describes -- a venv's python, the one inside the container. But a command
-    is not always an interpreter call ( `errand --env gpu -- nvidia-smi` ), and
+    is not always an interpreter call ( `errand shell --env gpu -- nvidia-smi` ), and
     substituting the first word blindly turns that one into `python
     nvidia-smi`. So: a first word that names an interpreter is replaced; any
     other is a command in its own right and is kept.
@@ -127,6 +134,7 @@ class Vars:
     value: `Vars( lambda t: { "FTYPE": t.get( "fp", "64" ) } )`.
     """
     values: dict | object
+    when  : str | None = None
 
     def wrap( self, cmd: Command, ctx: Context ) -> Command:
         values = self.values( ctx.tags ) if callable( self.values ) else self.values
@@ -145,6 +153,7 @@ class Venv:
     requirements: str | None = None
     pip         : list = field( default_factory = list )
     create      : bool = False          # make the venv if `python` is inside a missing one
+    when        : str | None = None     # a condition: an expression over the tags and `phase`
 
     def wrap( self, cmd: Command, ctx: Context ) -> Command:
         return Command( under( cmd.argv, self.python ), cmd.env )
@@ -181,6 +190,7 @@ class Micromamba:
     pip         : list = field( default_factory = list )
     root_prefix : str | None = None     # where `-n <name>` resolves; wins over MAMBA_ROOT_PREFIX and the guesses below
     executable  : str | None = None     # the micromamba binary, when it is not on PATH -- e.g. on a compute node
+    when        : str | None = None     # a condition: an expression over the tags and `phase`
 
     def _exe( self, ctx ):
         """`micromamba`, pinned to the root prefix `-n <name>` must resolve against.
@@ -274,6 +284,7 @@ class Uv:
     python      : str | None = None
     requirements: str | None = None
     pip         : list = field( default_factory = list )
+    when        : str | None = None     # a condition: an expression over the tags and `phase`
 
     def _python( self, ctx ):
         return str( ctx.root / self.path / "bin" / "python" )
@@ -319,6 +330,7 @@ class Apptainer:
     fakeroot: bool = False
     scratch : str | None = None
     build_flags: list = field( default_factory = list )
+    when       : str | None = None
 
     @property
     def container( self ):
@@ -393,6 +405,7 @@ class Docker:
     pip   : list = field( default_factory = list )
     engine: str = "docker"
     user  : str | None = "caller"
+    when  : str | None = None
 
     @property
     def container( self ):
@@ -411,7 +424,8 @@ class Docker:
         binds = [ f for src, dst in self.mounts.items()
                   for f in ( "-v", f"{ctx.root / src}:{dst}" ) ]
         envs = [ f for k, v in cmd.env.items() for f in ( "-e", f"{k}={v}" ) ]
-        return Command( [ self.engine, "run", "--rm", *self._user_flags(), *self.flags,
+        return Command( [ self.engine, "run", "--rm", *( [ "-it" ] if ctx.interactive else [ ] ),
+                          *self._user_flags(), *self.flags,
                           *binds, *envs,
                           "-v", f"{ctx.root}:{ctx.root}", "-w", str( ctx.root ),
                           self.image, *under( cmd.argv, "python" ) ], { } )
@@ -447,6 +461,7 @@ class Nix:
     """`nix develop <flake> -c …`."""
     flake: str = "."
     shell: str | None = None
+    when : str | None = None
 
     def wrap( self, cmd: Command, ctx: Context ) -> Command:
         target = f"{self.flake}#{self.shell}" if self.shell else self.flake
@@ -461,6 +476,7 @@ class Guix:
     """`guix shell -m <manifest> -- …`."""
     manifest: str | None = None
     packages: list = field( default_factory = list )
+    when    : str | None = None
 
     def wrap( self, cmd: Command, ctx: Context ) -> Command:
         spec = [ "-m", self.manifest ] if self.manifest else list( self.packages )
@@ -478,9 +494,11 @@ class Module:
     login shell to exist at all. That is the whole layer.
     """
     names: list
+    when : str | None = None
 
-    def __init__( self, *names ):
+    def __init__( self, *names, when = None ):
         self.names = list( names )
+        self.when  = when
 
     def wrap( self, cmd: Command, ctx: Context ) -> Command:
         loads = " && ".join( f"module load {shlex.quote( n )}" for n in self.names )
@@ -514,6 +532,7 @@ class Slurm:
     account  : str | None = None
     nodelist : str | list | None = None   # `node15`, `node[1-4]` or [ "node15", "node16" ]
     extra    : list = field( default_factory = list )
+    when     : str | None = None
 
     def flags( self, ctx: Context | None = None ):
         """What was declared, filled in from what the work asks for.
@@ -523,13 +542,18 @@ class Slurm:
         the environment states explicitly always wins: the person who wrote
         `cpus = 16` knew something about the partition that the entry does not.
         """
-        needs = ( ctx.needs if ctx else { } ) or { }
+        # Preparing is one process, sized from nothing: the entries it would be
+        # sized from are what it is about to find out.
+        prepare = ctx is not None and ctx.phase == "prepare"
+        needs = { } if prepare else ( ( ctx.needs if ctx else { } ) or { } )
         cpus = self.cpus if self.cpus is not None else needs.get( "cpus" )
         gpus = self.gpus if self.gpus is not None else needs.get( "gpus" )
         ram  = needs.get( "ram" )
 
         out = [ ]
-        for flag, value in ( ( "--partition", self.partition ), ( "--nodes", self.nodes ),
+        for flag, value in ( ( "--partition", self.partition ),
+                             ( "--nodes", 1 if prepare and self.nodes else self.nodes ),
+                             ( "--ntasks", 1 if prepare else None ),
                              ( "--cpus-per-task", cpus ), ( "--gpus", gpus ),
                              ( "--time", self.time ), ( "--account", self.account ),
                              ( "--nodelist", self._nodelist() ) ):
@@ -552,7 +576,8 @@ class Slurm:
             # queued. `--parsable` makes it print the id and nothing else.
             return Command( [ "sbatch", "--parsable", *self.flags( ctx ),
                               "--wrap", cmd.shell() ], { } )
-        return Command( [ "srun", *self.flags( ctx ), *cmd.argv ], cmd.env )
+        return Command( [ "srun", *self.flags( ctx ), *( [ "--pty" ] if ctx.interactive else [ ] ),
+                          *cmd.argv ], cmd.env )
 
     def describe( self ):
         nodes = self._nodelist()
@@ -578,6 +603,7 @@ class Ssh:
     root   : str | None = None
     python : str = "python3"
     options: list = field( default_factory = list )
+    when   : str | None = None
 
     def wrap( self, cmd: Command, ctx: Context ) -> Command:
         # Never folded like the others: `run` takes over, because getting there
@@ -597,7 +623,8 @@ class Ssh:
     def run( self, inner, cmd: Command, ctx: Context, pull = None, echo = print ):
         there = self.place( ctx )
         remote_ctx = Context( root = there.root, tags = ctx.tags, remote = True, host = there,
-                              origin = ctx.origin )
+                              origin = ctx.origin, interactive = ctx.interactive,
+                              needs = ctx.needs, batch = ctx.batch, phase = ctx.phase )
 
         echo( f"  rsync push -> {self.host}:{remote_ctx.root}" )
         push( ctx.root, self.host, remote_ctx.root, self.options )
@@ -611,7 +638,7 @@ class Ssh:
         else:
             wrapped = compose( inner, Command( under( cmd.argv, self.python ), cmd.env ),
                                remote_ctx )
-            code = there.shell( wrapped.shell() ).returncode
+            code = there.shell( wrapped.shell(), tty = ctx.interactive ).returncode
 
         if pull:
             echo( f"  rsync pull  <- {self.host}:{remote_ctx.root} [{', '.join( pull )}]" )
@@ -753,8 +780,13 @@ def _quiet( argv ) -> bool:
 NODE_LOCAL = ( "/tmp", "/var/tmp", "/dev/shm", "/scratch/local", "/localscratch" )
 
 
+def is_scheduler( layer ) -> bool:
+    """A layer that puts the command in an allocation somebody else grants."""
+    return isinstance( layer, Slurm ) or getattr( layer, "is_scheduler", False )
+
+
 def batch_of( stack ):
-    return next( ( l for l in stack if isinstance( l, Slurm ) ), None )
+    return next( ( l for l in stack if is_scheduler( l ) ), None )
 
 
 def warnings_for( stack, root ) -> list:

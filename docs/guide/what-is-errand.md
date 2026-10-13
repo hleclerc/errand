@@ -37,7 +37,7 @@ layers**: micromamba, conda, uv, a venv, Nix or Guix, `module load`, a Docker, P
 container, another machine over ssh, a Slurm or OAR allocation — in any combination. Read it
 outside in: *that machine, an allocation on it, a container, your command.*
 
-<Term scene="stack" caption="errand train --env cluster: three layers, declared once, crossed by one flag." />
+<Term scene="stack" caption="errand run --env cluster train.py: three layers, declared once, crossed by one flag." />
 
 The shell script that does `ssh`, then `sbatch`, then `apptainer exec`, then rsyncs the results
 back — and that nobody else can run — is replaced by three lines in a file. `errand` *builds* each
@@ -67,16 +67,16 @@ there, and comparison between dates, machines and parameter sets falls out of th
 ## Your tools, as they are
 
 `errand` runs what you already have. With no configuration it looks at the directory and says what
-it found; `errand --init` writes that down as an `errand-project.py`.
+it found; `errand init` writes that down as an `errand-project.py`.
 
 | you have | errand uses |
 |---|---|
 | a `tests/` directory of pytest | `Pytest( )`: one entry per test, marks become entry tags |
-| `test_*.cpp` using Catch2 | `Catch2( )`: one entry per file, built once with the command you build with |
+| `test_*.cpp` using Catch2 | `Catch2( )`: one entry per test case, built once with the command you build with |
 | a `Cargo.toml` | `Cargo( )`: one entry per test target |
-| anything else | `errand --env X -- <command>`, or an [entry](./declaring-work) that calls it |
+| anything else | `errand shell --env X -- <command>`, or an [entry](./declaring-work) that calls it |
 
-→ [Start from what you have](./start), [Other languages](./providers)
+→ [Start from what you have](./start), [Runners](./runners)
 
 ## Optionally: errand's own entries
 
@@ -89,7 +89,7 @@ without it, and a project can use both.
 
 ## What it is not
 
-**It is not a build system.** errand compiles nothing itself. A provider that needs a build runs the
+**It is not a build system.** errand compiles nothing itself. A runner that needs a build runs the
 command you already build with, once, before any of its entries. Your compiler, your flags and your
 layout stay yours.
 
@@ -106,7 +106,7 @@ runs what you ask where you ask and records where each number came from; the jud
 
 ## The shape of a project
 
-Nothing is required. `errand` with no configuration at all reads the directory, runs what it
+Nothing is required. `errand run` with no configuration at all reads the directory, runs what it
 finds in the interpreter you started it with, and says what it guessed:
 
 ```
@@ -117,7 +117,7 @@ src/…                  the code
 Once you want to say *where* things run, files at the root say it — errand reads every `errand-*.py`:
 
 ```
-errand-project.py      providers, project settings                  ← errand --init
+errand-project.py      runners, project settings                  ← errand init
 errand-envs.py         environments, and what only this machine can supply — untracked
 runs/                  the output tree, which errand writes and you read
 ```

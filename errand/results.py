@@ -59,6 +59,12 @@ def stamp( ) -> str:
     return _STAMP
 
 
+def fresh_stamp( ) -> str:
+    """A stamp for a command about to be started from here: what `stamp()`
+    will answer in it, once handed over through `STAMP_ENV`."""
+    return datetime.datetime.now().strftime( "%Y-%m-%d_%Hh%Mm%S" )
+
+
 def now( ) -> str:
     """When it ran, to the second, with the offset it was written under.
 
@@ -97,9 +103,27 @@ def place( env: str | None = None ) -> str:
     return f"{slug( env )}@{slug( host )}" if env else slug( host )
 
 
-def label( entry ) -> str:
-    """The two directories that find a case: its file, then its name."""
-    return f"{slug( entry.file.stem )}/{slug( entry.name )}"
+def label( entry, root: Path ) -> str:
+    """The directories that find a case: its file, then its name -- or only the
+    file, for a file run as a whole.
+
+    The file is its path from the project root, extension included -- what was
+    typed to run it. A stem alone would put `tests/ot/test_ot.py` and
+    `bench/test_ot.py` in one directory, and `foo.py` with `foo.cpp`.
+    """
+    f = Path( entry.file )
+    try:
+        parts = ( f.parts if not f.is_absolute() else
+                  Path( os.path.realpath( f ) ).relative_to( os.path.realpath( root ) ).parts )
+    except ValueError:
+        parts = ( f.name, )
+    where = "/".join( slug( p ) for p in parts )
+    # A file run as a whole IS the case: a level named after it again would only
+    # say the same thing twice ( `runs/scripts/plot.py/plot.py/` ).
+    runner = getattr( entry, "runner", None )
+    if runner is not None and runner.whole_files and not runner.takes_selector:
+        return where
+    return f"{where}/{slug( entry.name )}"
 
 
 ROOM = 48           # of parameter text in a directory name, before it is cut
@@ -125,14 +149,14 @@ def run_name( resolved: dict, where: str ) -> str:
     return f"{stamp()}-{where}" + ( f"-{tag}" if tag else "" )
 
 
-def dirs_for( out_root: Path, entry, resolved, where ):
+def dirs_for( out_root: Path, entry, resolved, where, root: Path ):
     """-> ( leaf, entry_root ). The leaf is this run's directory; the entry root
     is the top of what the summaries cover.
 
     Every run is stamped, without exception -- a stable path costs nothing,
     since `latest` is a symlink beside the stamped directories.
     """
-    entry_root = out_root / label( entry )
+    entry_root = out_root / label( entry, root )
     return entry_root / run_name( resolved, where ), entry_root
 
 

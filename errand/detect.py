@@ -7,9 +7,9 @@ tests by assuming something. This module makes that guess, cheaply -- it lists
 directories and reads a few files, and runs nothing -- so that it can be
 
 * announced before a run ( the guess is never silent ), and
-* written down by `errand --init`, which is how a guess becomes a declaration.
+* written down by `errand init`, which is how a guess becomes a declaration.
 
-A guess is a `Guess`: the provider to use, the line of `errand-project.py` that
+A guess is a `Guess`: the configured runner to use, the line of `errand-project.py` that
 would build it, and a short label for the announcement.
 """
 from __future__ import annotations
@@ -18,7 +18,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from .discovery import MARKER, SKIP_DIRS
+from .discovery import SKIP_DIRS
+from .runner import MARKER
 
 # Where a suite usually lives, tried in this order before looking anywhere else.
 PY_DIRS  = ( "tests", "test" )
@@ -31,7 +32,7 @@ class Guess:
     kind  : str        # "pytest" | "catch2" | "cargo"
     label : str        # "pytest (tests/)"
     line  : str        # the errand-project.py line that says the same thing
-    make  : object     # () -> Provider
+    make  : object     # () -> Runner
 
 
 def _walk( root: Path, depth: int = DEPTH ):
@@ -65,7 +66,7 @@ def _is_foreign_python( path: Path ) -> bool:
 
 
 def _pytest( root: Path ):
-    from .providers import Pytest
+    from .runner import Pytest
 
     def foreign( d: Path ):
         return [ p for pat in ( "test_*.py", "*_test.py" ) for p in d.glob( pat )
@@ -84,12 +85,12 @@ def _pytest( root: Path ):
     args = ", ".join( repr( d ) for d in dirs )
     return Guess( "pytest", "pytest (" + ", ".join( d.rstrip( "/" ) + "/" if d != "." else "./"
                                                    for d in dirs ) + ")",
-                  f"errand.provider( errand.Pytest( dirs = [ {args} ] ) )",
-                  lambda: Pytest( dirs = dirs, root = root ) )
+                  f"errand.runners.replace( errand.Pytest( dirs = [ {args} ] ) )",
+                  lambda: Pytest( dirs = dirs ) )
 
 
 def _catch2( root: Path ):
-    from .providers import Catch2
+    from .runner import Catch2
 
     for d in _walk( root ):
         found = [ p for p in d.glob( "test_*.cpp" ) if "catch" in _read( p ).lower() ]
@@ -98,20 +99,20 @@ def _catch2( root: Path ):
         rel = d.relative_to( root ).as_posix()
         rel = "." if rel == "." else rel
         build = f"make -C {rel}" if ( d / "Makefile" ).exists() else None
-        line = f"errand.provider( errand.Catch2( dir = {rel!r}" + ( f", build = {build!r}" if build else "" ) + " ) )"
+        line = f"errand.runners.replace( errand.Catch2( dir = {rel!r}" + ( f", build = {build!r}" if build else "" ) + " ) )"
         return Guess( "catch2", f"catch2 ({rel}/)", line,
                       lambda: Catch2( dir = root / rel, build = build ) )
     return None
 
 
 def _cargo( root: Path ):
-    from .providers import Cargo
+    from .runner import Cargo
 
     for d in _walk( root ):
         if ( d / "Cargo.toml" ).is_file():
             rel = ( d / "Cargo.toml" ).relative_to( root ).as_posix()
-            line = ( "errand.provider( errand.Cargo( ) )" if rel == "Cargo.toml"
-                     else f"errand.provider( errand.Cargo( manifest = {rel!r} ) )" )
+            line = ( "errand.runners.replace( errand.Cargo( ) )" if rel == "Cargo.toml"
+                     else f"errand.runners.replace( errand.Cargo( manifest = {rel!r} ) )" )
             where = "./" if rel == "Cargo.toml" else rel.rsplit( "/", 1 )[ 0 ] + "/"
             return Guess( "cargo", f"cargo ({where})", line,
                           lambda: Cargo( manifest = root / rel ) )
@@ -119,7 +120,7 @@ def _cargo( root: Path ):
 
 
 def guess( root: Path ) -> list[ Guess ]:
-    """The existing suites below `root`, as providers would adopt them."""
+    """The existing suites below `root`, as configured runners would adopt them."""
     return [ g for g in ( _pytest( root ), _catch2( root ), _cargo( root ) ) if g ]
 
 
@@ -130,8 +131,8 @@ def announce( guesses: list ) -> str:
 # ── errand-project.py, written ───────────────────────────────────────────────────
 
 def has_entries( root: Path, exclude = ( ) ) -> bool:
-    from .discovery import candidates
-    return bool( candidates( root, exclude ) )
+    from .discovery import errand_files
+    return bool( errand_files( root, exclude ) )
 
 
 def render( root: Path ) -> str:
@@ -141,7 +142,7 @@ def render( root: Path ) -> str:
     out = [
         '"""What this project does: where its work is, and how it is built and run.',
         "",
-        "Written by `errand --init` from what was found in the directory; edit freely. Everything",
+        "Written by `errand init` from what was found in the directory; edit freely. Everything",
         "here is optional -- errand works without this file -- but writing it down turns a guess",
         "into a declaration that is visible, versioned and arguable.",
         "",
@@ -161,11 +162,11 @@ def render( root: Path ) -> str:
     if own:
         out += [ "# Entries written with errand ( `if test( ... ):` ) are found without any line here." , "" ]
     if not found and not own:
-        out += [ "# Nothing was found to run yet. Either point a provider at an existing suite:",
+        out += [ "# Nothing was found to run yet. Either point a runner at an existing suite:",
                  "#",
-                 "#     errand.provider( errand.Pytest( dirs = [ 'tests' ] ) )",
-                 "#     errand.provider( errand.Catch2( dir = 'cpp', build = 'make -C cpp' ) )",
-                 "#     errand.provider( errand.Cargo( ) )",
+                 "#     errand.runners.replace( errand.Pytest( dirs = [ 'tests' ] ) )",
+                 "#     errand.runners.replace( errand.Catch2( dir = 'cpp', build = 'make -C cpp' ) )",
+                 "#     errand.runners.replace( errand.Cargo( ) )",
                  "#",
                  "# or declare a piece of work next to the code it exercises ( see the docs ).",
                  "" ]
@@ -201,8 +202,8 @@ def init( root: Path, *, force: bool = False, echo = print ) -> int:
 
     path = config_in( root )
     if path is not None and not force:
-        echo( f"  {path.name} already exists here; --init does not overwrite it "
-              f"( --init=force to replace it )" )
+        echo( f"  {path.name} already exists here; init does not overwrite it "
+              f"( errand init --force to replace it )" )
         return 1
     ( root / CONFIG_FILE ).write_text( render( root ) )
     echo( f"  wrote {CONFIG_FILE}    ( what the project does; versioned )" )

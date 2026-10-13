@@ -5,19 +5,19 @@ with, and where you would like that to run.
 
 ```bash
 cd my-project
-errand                 # looks at the directory, says what it found, runs it
-errand --init          # writes that down as errand-project.py, and makes runs/
+errand run   # looks at the directory, says what it found, runs it
+errand init  # writes that down as errand-project.py, and makes runs/
 ```
 
 With no `errand-*.py`, errand reads the directory and **tells you what it guessed** before it runs
 anything:
 
 ```text
-  no errand-*.py; guessed:  pytest (tests/)  ·  catch2 (cpp/)  ·  cargo (rust/)   ( errand --init writes it down )
+  no errand-*.py; guessed:  pytest (tests/)  ·  catch2 (cpp/)  ·  cargo (rust/)   ( errand init writes it down )
 ```
 
 It is a guess about your layout — every framework finds its tests by assuming something — so it is
-never silent, and the cure is to write it down. That is all `errand --init` does.
+never silent, and the cure is to write it down. That is all `errand init` does.
 
 ## Pick your tools
 
@@ -59,31 +59,31 @@ my-project/
 ::: code-group
 
 ```python [pytest]
-# errand-project.py, as written by `errand --init`
+# errand-project.py, as written by `errand init`
 import errand
 
 errand.configure( out = "runs" )
-errand.provider( errand.Pytest( dirs = [ 'tests' ] ) )
+errand.runners.replace( errand.Pytest( dirs = [ 'tests' ] ) )
 ```
 
 ```python [C++ · Catch2]
-# errand-project.py, as written by `errand --init`
+# errand-project.py, as written by `errand init`
 import errand
 
 errand.configure( out = "runs" )
-errand.provider( errand.Catch2( dir = 'cpp', build = 'make -C cpp' ) )     # built once, before any file runs
+errand.runners.replace( errand.Catch2( dir = 'cpp', build = 'make -C cpp' ) )     # built once, before any file runs
 ```
 
 ```python [Rust · cargo]
-# errand-project.py, as written by `errand --init`
+# errand-project.py, as written by `errand init`
 import errand
 
 errand.configure( out = "runs" )
-errand.provider( errand.Cargo( manifest = 'Cargo.toml' ) )
+errand.runners.replace( errand.Cargo( manifest = 'Cargo.toml' ) )
 ```
 
 ```python [Any command]
-# Nothing to declare for a command: `errand --env X -- cmd` needs only the environment.
+# Nothing to declare for a command: `errand shell --env X -- cmd` needs only the environment.
 # Declare the work if you want its output kept, queued and compared:
 from errand import entry
 
@@ -104,7 +104,7 @@ if p := track( "cost", n = Param( 1000 ) ):
 
 Each suite keeps **its own runner, assertions and marks**: `pytest tests/` still works exactly as
 before. A `@pytest.mark.slow` is an entry tag, a Catch2 `[tag]` likewise, and `-e '!slow'` filters
-on them. The detail of each is in [Other languages](./providers).
+on them. The detail of each is in [Runners](./runners).
 
 ## What it looks for
 
@@ -116,15 +116,15 @@ on them. The detail of each is in [Other languages](./providers).
 | errand's own entries | any `.py` that imports `errand` — found by a text check, nothing to declare | nothing |
 
 Nothing is run to find any of that: it lists directories and reads a few files. An empty directory
-gets an `errand-project.py` too — with the three provider lines in comments — and an `errand-envs.py`
+gets an `errand-project.py` too — with the three runner lines in comments — and an `errand-envs.py`
 holding a stack of layers in comments, ready to be uncommented.
 
-`errand --init` never overwrites: `--init=force` replaces an existing file.
+`errand init` never overwrites: `errand init --force` replaces an existing file.
 
 ## Then: where it runs
 
 The same suite, unchanged, in more than one place — that is the point of the file you just wrote.
-Add a stack of [layers](./environments) in the `errand-envs.py` that `--init` wrote beside it — where
+Add a stack of [layers](./environments) in the `errand-envs.py` that `errand init` wrote beside it — where
 *you* run the project, so that file is not versioned:
 
 ```python
@@ -138,7 +138,7 @@ errand.envs[ "cluster" ] = errand.Env( [ errand.Ssh( host = "gpu-box", root = "~
 ```
 
 ```bash
-errand --env local,cluster         # every suite, in both places
+errand run --env local,cluster         # every suite, in both places
 errand --env cluster -- nvidia-smi # be let in, to look
 ```
 

@@ -219,7 +219,7 @@ if p := bench( "greedy" ):
         env[ "PYTHONPATH" ] = str( Path( __import__( "errand" ).__file__ ).resolve().parent.parent )
 
         started = time.perf_counter()
-        both = [ subprocess.Popen( [ sys.executable, "-m", "errand", "-k", "bench" ],
+        both = [ subprocess.Popen( [ sys.executable, "-m", "errand", "run", "-k", "bench" ],
                                    cwd = project, env = env,
                                    stdout = subprocess.PIPE, stderr = subprocess.STDOUT,
                                    text = True ) for _ in range( 2 ) ]
@@ -332,9 +332,9 @@ if test( "what arrives after an exclusive request waits behind it" ):
         assert not Q.waiting_exclusive()
 
 
-if test( "`errand -- cmd` runs the command through the queue and says its code" ):
+if test( "`errand shell -- cmd` runs the command through the queue and says its code" ):
     with private_queue():
-        r = subprocess.run( [ sys.executable, "-m", "errand", "-x", "--", sys.executable, "-c",
+        r = subprocess.run( [ sys.executable, "-m", "errand", "shell", "-x", "--", sys.executable, "-c",
                               "import sys; sys.exit( 3 )" ], capture_output = True, text = True,
                             env = { **os.environ, "PYTHONPATH": os.pathsep.join( sys.path ) } )
         assert r.returncode == 3, r.stderr

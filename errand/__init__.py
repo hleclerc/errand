@@ -30,10 +30,11 @@ default_env: str | None = None
 __all__ = [
     "Args", "Param", "Skipped", "bench", "entry", "experiment", "has_tag", "have",
     "need", "out_dir", "skip", "tag", "test", "track",
-    "configure", "default_env", "Env", "envs", "provider", "main", "value",
+    "configure", "default_env", "Env", "envs", "runners", "main", "value",
     "Vars", "Venv", "Micromamba", "Conda", "Uv", "Nix", "Guix", "Module",
     "Apptainer", "Docker", "Podman", "Ssh", "Slurm", "Windows",
-    "Provider", "Outcome", "RunContext", "Pytest", "Catch2", "Cargo",
+    "Runner", "Level", "Outcome", "RunContext", "Errand", "Pytest", "Catch2", "Cargo",
+    "Python", "Shell", "Executable",
 ]
 
 # Everything past the declaration surface is reached lazily: an entry file
@@ -44,7 +45,7 @@ _LAZY = {
     "configure" : "errand.config",
     "Env"       : "errand.config",
     "envs"      : "errand.config",
-    "provider"  : "errand.config",
+    "runners"   : "errand.config",
     "Vars"      : "errand.layers",
     "Venv"      : "errand.layers",
     "Micromamba": "errand.layers",
@@ -59,12 +60,17 @@ _LAZY = {
     "Ssh"       : "errand.layers",
     "Slurm"     : "errand.layers",
     "Windows"   : "errand.vm",
-    "Provider"  : "errand.providers",
-    "Outcome"   : "errand.providers",
-    "RunContext": "errand.providers",
-    "Pytest"    : "errand.providers",
-    "Catch2"    : "errand.providers",
-    "Cargo"     : "errand.providers",
+    "Runner"    : "errand.runner",
+    "Level"     : "errand.runner",
+    "Outcome"   : "errand.runner",
+    "RunContext": "errand.runner",
+    "Errand"    : "errand.runner",
+    "Pytest"    : "errand.runner",
+    "Catch2"    : "errand.runner",
+    "Cargo"     : "errand.runner",
+    "Python"    : "errand.runner",
+    "Shell"     : "errand.runner",
+    "Executable": "errand.runner",
 }
 
 # The same names, spelled out for type checkers and editors, which cannot follow
@@ -72,11 +78,13 @@ _LAZY = {
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .cli import main
-    from .config import Env, configure, envs, provider
+    from .config import Env, configure, envs, runners
     from .layers import (
         Apptainer, Conda, Docker, Guix, Micromamba, Module, Nix, Podman, Slurm, Ssh, Uv, Vars, Venv,
     )
-    from .providers import Cargo, Catch2, Outcome, Provider, Pytest, RunContext
+    from .runner import (
+        Cargo, Catch2, Errand, Executable, Level, Outcome, Pytest, Python, RunContext, Runner, Shell,
+    )
     from .vm import Windows
 
 

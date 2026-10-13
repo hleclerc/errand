@@ -105,11 +105,11 @@ symlink beside the stamped ones, so a tab left open on `latest/gaps.svg` keeps w
 ## Try it
 
 ```bash
-errand                            # the tests, and only the tests
-errand -e '!slow'                 # skip the slow one
-errand -k bench                   # the benchmarks
-errand "test_primes::sieve"       # one entry by name
-errand --help                     # what matched, with the parameters it takes
+errand run                        # the tests, and only the tests
+errand run -e '!slow'             # skip the slow one
+errand run -k bench               # the benchmarks
+errand run test_primes.py::sieve  # one entry by name
+errand list                       # what matched, with the parameters it takes
 ```
 
 **`errand` on its own never runs the benchmarks.** They are not `bulk`; you name them, or you ask
@@ -118,7 +118,7 @@ for `-k bench`. The experiment likewise. Numbers worth keeping are not something
 A comma is a matrix, here and everywhere else:
 
 ```bash
-errand -k bench --n=100000,1000000,10000000
+errand run -k bench . --n=100000,1000000,10000000
 ```
 
 Three runs, three directories, and a summary at the entry's root with one row per size.
@@ -126,7 +126,7 @@ Three runs, three directories, and a summary at the entry's root with one row pe
 ## What you get back
 
 ```text
-runs/test_primes/sieve/
+runs/test_primes.py/sieve/
   2026-09-24_18h04m11-default@thishost-n=100000/
     result.yaml          <- status, duration, RAM, params, results, tags
   2026-09-24_18h04m11-default@thishost-n=1000000/
@@ -134,7 +134,7 @@ runs/test_primes/sieve/
   latest -> the newest of them
   summary.yaml           <- one row per run, and the extents: read this after a matrix
 
-runs/test_primes/gaps/latest/gaps.svg     <- stable path, reload the tab
+runs/test_primes.py/gaps/latest/gaps.svg     <- stable path, reload the tab
 ```
 
 Nothing here is a special directory that `errand` knew about in advance. Every component is computed
@@ -145,14 +145,14 @@ from the entry, its parameters, where it ran and when — which is also how the 
 Open one:
 
 ```bash
-cat runs/test_primes/sieve/latest/result.yaml
-cat runs/test_primes/sieve/summary.yaml
+cat runs/test_primes.py/sieve/latest/result.yaml
+cat runs/test_primes.py/sieve/summary.yaml
 ```
 
 ## The same thing, on a screen
 
 ```bash
-errand --tui
+errand tui
 ```
 
 Enter on a case opens one window with every dimension in it: the parameters, the environments, how

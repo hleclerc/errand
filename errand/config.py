@@ -3,7 +3,7 @@
 Ordinary Python, loaded once BY PATH -- never as a module named `errand`, so a
 file sitting at the root of a project cannot shadow the package it imports
 from. There is no entry point to call and nothing to return: `configure`,
-`envs` and `provider` register what they are given.
+`envs` and `runners` hold what they are given.
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from .expr import matches
 # Every file matching this, at the root, is read. The root is the nearest directory that has one
 # -- which is also how a project nested inside a bigger repository says where it starts.
 CONFIG_GLOB = "errand-*.py"
-CONFIG_FILE = "errand-project.py"      # the name `--init` writes: the one that is versioned
+CONFIG_FILE = "errand-project.py"      # the name `errand init` writes: the one that is versioned
 ENVS_FILE   = "errand-envs.py"      # the one that is not
 
 
@@ -43,17 +43,38 @@ class Env:
     """
 
     def __init__( self, stack = ( ), **tags ):
+        if PHASE in tags:
+            raise ValueError( f"`{PHASE}` is not a tag an environment can declare: it is which phase "
+                              f"a layer's `when` is asked about ( {' or '.join( PHASES )} )" )
         self.name  = ""
         self.stack = list( stack )
         self.tags  = dict( tags )
-        for i, layer in enumerate( self.stack ):
-            if isinstance( layer, L.Ssh ) and i:
-                raise ValueError( "Ssh must be the first layer" )
-            # A machine errand boots is reached the way another machine is, and
-            # is first for the same reason -- or right after the `Ssh` that
-            # leads to the machine that boots it.
-            if getattr( layer, "is_vm", False ) and i and not ( i == 1 and isinstance( self.stack[ 0 ], L.Ssh ) ):
-                raise ValueError( f"{type( layer ).__name__} must be the first layer, or follow its Ssh" )
+        # What does not depend on the selected tags can be checked now, rather
+        # than on the day somebody first runs in this environment.
+        for phase in PHASES:
+            check_stack( [ l for l in self.stack if _phase_only( l, phase ) ], phase )
+
+    # -- the stack of one phase ----------------------------------------------
+
+    def stack_for( self, phase: str, tags = None ) -> list:
+        """The layers active in `phase` with `tags` selected, checked."""
+        out = [ l for l in self.stack if _active( l, phase, self.tags if tags is None else tags ) ]
+        check_stack( out, phase )
+        return out
+
+    def indexed( self, tags = None ):
+        """( index, layer ) for every layer active in at least one phase: what
+        `setup` builds and keeps current, under the index it was declared at."""
+        tags = self.tags if tags is None else tags
+        return [ ( i, l ) for i, l in enumerate( self.stack )
+                 if any( _active( l, phase, tags ) for phase in PHASES ) ]
+
+    def single_pass( self, tags = None ) -> bool:
+        """Can preparing and running be one process? Only when both phases go
+        through the same layers and nothing has to be sized from the plan."""
+        prepare, run = self.stack_for( "prepare", tags ), self.stack_for( "run", tags )
+        same = len( prepare ) == len( run ) and all( a is b for a, b in zip( prepare, run ) )
+        return same and not any( L.is_scheduler( l ) for l in run )
 
     @classmethod
     def make( cls, name: str, stack = ( ), tags = None ):
@@ -66,22 +87,68 @@ class Env:
 
     @property
     def container( self ):
-        return L.container_of( self.stack )
+        return L.container_of( self.stack_for( "run" ) )
 
     @property
     def ssh( self ):
-        return L.ssh_of( self.stack )
+        return L.ssh_of( self.stack_for( "run" ) )
 
     @property
     def vm( self ):
-        return L.vm_of( self.stack )
+        return L.vm_of( self.stack_for( "run" ) )
 
     def describe( self ):
-        return " -> ".join( l.describe() for l in self.stack ) or "this interpreter"
+        def one( l ):
+            when = getattr( l, "when", None )
+            return l.describe() + ( f" [{when}]" if when else "" )
+        return " -> ".join( one( l ) for l in self.stack ) or "this interpreter"
 
-    def wraps_anything( self ):
+    def wraps_anything( self, tags = None ):
         """Does reaching this environment mean leaving this process?"""
-        return any( not isinstance( l, L.Vars ) for l in self.stack )
+        return any( not isinstance( l, L.Vars ) for _, l in self.indexed( tags ) )
+
+
+# The pseudo-tag a layer's `when` can ask about, and its values.
+PHASE  = "phase"
+PHASES = ( "prepare", "run" )
+
+
+def _active( layer, phase, tags ) -> bool:
+    when = getattr( layer, "when", None )
+    if not when:
+        return True
+    from .expr import matches
+    return matches( when, { **dict( tags or { } ), PHASE: phase } )
+
+
+def _phase_only( layer, phase ) -> bool:
+    """Active in `phase` as far as can be told without knowing the tags: a
+    condition on anything but the phase is left for when they are known."""
+    when = getattr( layer, "when", None )
+    if not when:
+        return True
+    from .expr import names
+    if names( when ) - { PHASE }:
+        return False
+    return _active( layer, phase, { } )
+
+
+def check_stack( stack, phase = "run" ):
+    """What a stack must look like, phase by phase."""
+    for i, layer in enumerate( stack ):
+        if isinstance( layer, L.Ssh ) and i:
+            raise ValueError( "Ssh must be the first layer" + ( f" ( in the {phase} phase )"
+                                                               if phase != "run" else "" ) )
+        # A machine errand boots is reached the way another machine is, and is
+        # first for the same reason -- or right after the `Ssh` that leads to
+        # the machine that boots it.
+        if getattr( layer, "is_vm", False ) and i and not ( i == 1 and isinstance( stack[ 0 ], L.Ssh ) ):
+            raise ValueError( f"{type( layer ).__name__} must be the first layer, or follow its Ssh" )
+    schedulers = [ l for l in stack if L.is_scheduler( l ) ]
+    if len( schedulers ) > 1:
+        raise ValueError( f"{len( schedulers )} schedulers in the {phase} phase "
+                          f"( {', '.join( l.describe() for l in schedulers )} ): give them `when` "
+                          f"conditions that cannot both hold, e.g. when = \"phase=prepare\"" )
 
 
 @dataclass
@@ -91,6 +158,10 @@ class Settings:
     # Directories discovery must not walk into: vendored code, fixtures, a copy
     # of something that would be imported and should not be.
     exclude: list = field( default_factory = list )
+    # Where a runner's build goes, one directory per environment under it
+    # ( `build/<env>/` ): two environments never share a binary, so a number is
+    # never measured on a binary built for somewhere else.
+    build  : str = "build"
 
 
 class Envs( dict ):
@@ -105,9 +176,11 @@ class Envs( dict ):
 
 settings  = Settings()
 envs      = Envs()
-providers : list = [ ]
+# What runs which file: the runners that come with errand, which a project edits
+# in place ( `errand.runners.append`, `.remove`, `.replace` ).
+runners   = None            # a runners.Runners, filled below and by `reset`
 # What was GUESSED for a project with no config file of its own: [ detect.Guess ].
-# Kept apart from `providers` so that it can be announced -- a guess is never silent.
+# Kept apart so that it can be announced -- a guess is never silent.
 guessed   : list = [ ]
 
 
@@ -120,18 +193,22 @@ def configure( **kw ):
         setattr( settings, k, v )
 
 
-def provider( p ):
-    providers.append( p )
-    return p
-
-
 def reset( ):
     global settings
     settings = Settings()
     sys.modules[ "errand" ].default_env = None
     envs.clear()
-    providers.clear()
+    _default_runners()
     guessed.clear()
+
+
+def _default_runners( ):
+    # The same list object throughout: `errand.runners` is handed out once.
+    from .runner import Runners, defaults
+    global runners
+    if runners is None:
+        runners = Runners()
+    runners[ : ] = defaults()
 
 
 def load( root: Path, warn = None ) -> bool:
@@ -149,11 +226,12 @@ def load( root: Path, warn = None ) -> bool:
     local.reset( files, root )
     if not files:
         # No declaration: look at what is there. Existing suites are adopted for
-        # this run only, and `cli` says so; `errand --init` writes the guess down.
+        # this run only, and `cli` says so; `errand init` writes the guess down.
         from . import detect
         for g in detect.guess( root ):
             guessed.append( g )
-            providers.append( g.make() )
+            runners.replace( g.make() )
+        _root_runners( root )
         return False
     for path in files:
         spec = importlib.util.spec_from_file_location(
@@ -161,7 +239,14 @@ def load( root: Path, warn = None ) -> bool:
         module = importlib.util.module_from_spec( spec )
         spec.loader.exec_module( module )
         local.offer( module )
+    _root_runners( root )
     return True
+
+
+def _root_runners( root: Path ):
+    """What a runner's own relative paths -- `dirs`, `manifest` -- are relative to."""
+    for r in runners:
+        r.root = Path( root )
 
 
 # ── choosing where to run ────────────────────────────────────────────────────
@@ -240,3 +325,6 @@ def _covers( declared, value ) -> bool:
     if declared is True:
         return str( value ).lower() in ( "true", "yes", "1" )
     return str( value ) in [ p.strip() for p in str( declared ).split( "|" ) ]
+
+
+_default_runners()

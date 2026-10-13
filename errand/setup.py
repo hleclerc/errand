@@ -28,7 +28,7 @@ def state_path( root: Path, env ) -> Path:
 def wanted( env, ctx ) -> dict:
     """The fingerprint each layer of `env` says it should have."""
     out = { }
-    for i, layer in enumerate( env.stack ):
+    for i, layer in env.indexed( ctx.tags ):
         if hasattr( layer, "spec" ):
             out[ f"{i}:{layer.describe()}" ] = L.fingerprint( *layer.spec( ctx ) )
     return out
@@ -39,13 +39,13 @@ def recorded( root: Path, env ) -> dict:
 
 
 def status( root: Path, env, ctx ) -> str:
-    """ok / stale / not built / unknown -- what `--envs` prints."""
+    """ok / stale / not built / unknown -- what `errand envs` prints."""
     want = wanted( env, ctx )
     if not want:
-        return UNKNOWN if env.wraps_anything() else OK
+        return UNKNOWN if env.wraps_anything( ctx.tags ) else OK
     if env.ssh:
         return UNKNOWN           # only the other machine can say
-    for layer in env.stack:
+    for _, layer in env.indexed( ctx.tags ):
         if hasattr( layer, "probe" ) and not layer.probe( ctx ):
             return MISSING
     have = recorded( root, env )
@@ -64,7 +64,7 @@ def ensure( root: Path, env, ctx, *, force = False, echo = print, dry_run = Fals
     that reading would mean recreating, on somebody's first command, an
     environment that has been working for months. So: present and never seen
     before is recorded as-is, and only a declaration that has CHANGED since a
-    record errand itself wrote is a reason to touch it. `--setup force` is how
+    record errand itself wrote is a reason to touch it. `errand setup --force` is how
     you say the other thing.
     """
     want = wanted( env, ctx )
@@ -79,7 +79,7 @@ def ensure( root: Path, env, ctx, *, force = False, echo = print, dry_run = Fals
         there = L.Context( root = place.root, tags = ctx.tags, remote = True, host = place,
                            origin = ctx.origin )
     steps = [ ]
-    for i, layer in enumerate( env.stack ):
+    for i, layer in env.indexed( ctx.tags ):
         if not hasattr( layer, "build" ):
             continue
         key = f"{i}:{layer.describe()}"
@@ -102,8 +102,8 @@ def ensure( root: Path, env, ctx, *, force = False, echo = print, dry_run = Fals
     if not dry_run and env.ssh is not None:
         # A recipe, a requirements file, a project to install in editable mode:
         # all of them are files HERE, and the build happens THERE. Pushing
-        # first is what makes `--setup` over ssh mean the same thing as
-        # `--setup` at home.
+        # first is what makes `errand setup` over ssh mean the same thing as
+        # `errand setup` at home.
         echo( f"    rsync push -> {env.ssh.host}:{env.ssh.remote_root( ctx )}" )
         L.push( ctx.root, env.ssh.host, env.ssh.remote_root( ctx ), env.ssh.options )
     if dry_run:

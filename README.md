@@ -9,7 +9,7 @@ in — through ssh, a Slurm allocation, a container, whatever the way is — run
 at once if you ask, and repatriates what it produced.
 
 What you run is yours: a pytest suite, a Catch2 binary, a cargo project, a Makefile target, a script.
-With no configuration `errand` looks at the directory and says what it found; `errand --init` writes
+With no configuration `errand` looks at the directory and says what it found; `errand init` writes
 that down as an `errand-project.py`. Declaring work with errand's own `if track( … ):` guard is one
 more way to give it something to run, not the way in.
 
@@ -62,7 +62,7 @@ make            # everything else, including the release order
 ## Declaring work
 
 *This section is about errand's own declaration, which is optional: a pytest, Catch2 or cargo
-suite, or a plain command, needs none of it — see [Other languages](#other-languages).*
+suite, or a plain command, needs none of it — see [Runners](#runners).*
 
 An entry is a piece of work that produces something. You declare it next to the code it exercises,
 with a guard that reads like `if __name__ == "__main__":` but does more — several per file, mixable
@@ -86,7 +86,7 @@ Four traits say how it should be treated:
 
 | trait | what it decides | default |
 |---|---|---|
-| `bulk` | picked up by a bare `errand`, with no pattern | `True` |
+| `bulk` | picked up by `errand run` with no pattern | `True` |
 | `keep` | its numbers are kept and compared date to date | `False` |
 | `exclusive` | it needs the machine to itself | `False` |
 | `stable_path` | `latest/` is what you are meant to open | `False` |
@@ -128,22 +128,34 @@ run, which is what makes two dates or two machines comparable without you declar
 ## Running it
 
 ```bash
-errand                            # everything bulk, in the default environment
-errand solvers                    # every entry in solvers.py
-errand solvers::solve             # just that one
-errand "solvers::grad_*"          # fnmatch on the name; no `*` means exact
-errand "solvers::a,shapes::b"     # several specs
-errand -k bench                   # benchmarks only
-errand -k exp "solvers::*"        # experiments only, in solvers.py
-errand --help                     # the matched entries, with their parameters
-errand --tui                      # one screen: tick what to run, watch it run
+errand run                                # everything bulk under this directory
+errand run bench/solvers.py               # every entry in that file
+errand run bench/solvers.py::solve        # just that one
+errand run "bench/solvers.py::grad_*"     # a glob on the name; no glob means exact
+errand run "**/test_*.py::{basic,quick}"  # any depth, and alternatives
+errand run bench/solvers.py,tests         # several targets; a directory is all of it
+errand run -k bench                       # benchmarks only
+errand run -k exp "bench/solvers.py::*"   # experiments only, in that file
+errand list                               # the matched entries, with their parameters
+errand tui                                # one screen: tick what to run, watch it run
 ```
 
-The positional pattern is a comma-separated list of `file[::name]` specs, both sides globbable. The
-file part matches the full stem, and files are found anywhere in the tree with no directory or
-project distinction; a bare file part with no `*` must resolve to exactly one file, or you get an
-error listing the candidates. The pattern is the only way to narrow by location — there is no
-`--directory`.
+A target is a **path**, from the directory you are in, extension included — what the shell
+completes and what pytest prints — then optionally `::` and an entry name. Both sides are globs, the
+same globs on both sides: `*` and `?` inside a name, `[…]` a class, `{a,b}` alternatives, and `**`
+any depth of directories on the path side. A directory is everything under it. A comma outside
+braces separates targets, and `\,` is a comma that is only a comma.
+
+**What follows the target is the target's.** errand's options go before it; everything after it —
+`--env` included — is handed to what runs: the `sys.argv` of an errand file, the command line of a
+script, an executable, pytest or Catch2, what follows `--` for `cargo test`. Declared `Param`s are
+read out of it; the rest passes through, and is part of the run's name in `runs/`, since
+`--size 4096` and `--size 8192` are two runs. A comma is a [matrix](#parameters-and-matrices) there too, declared or
+not: `--size 1,2` is two runs, `--size=1,2` as well, `\\,` is a comma and `,,` an empty value. With no target there is nothing to hand arguments to: `errand run . --n=5` is everything here.
+
+A target that designates nothing is an error, not an empty run: a path with no glob must exist, a
+glob must match a file that declares work, and a `::name` must match an entry of the files it is
+about — each with the closest thing there is, when there is one.
 
 Finding candidate files is a text check, not an import: a file is a candidate if it **imports**
 `errand`. So a source file that happens to share its entry's name (`Cell.py` next to `test_Cell.py`)
@@ -160,7 +172,7 @@ everything in it twice, and errand says so rather than running the copies; put w
 file that declares nothing.
 
 A directory holding an `errand-*.py` of its own is **another project**, and is not walked into: its
-entries would run with this project's `src`, providers and environments, which is to say wrongly.
+entries would run with this project's `src`, runners and environments, which is to say wrongly.
 
 A candidate that will not import — a missing dependency, an example nobody set up — **costs its own
 row and nothing else.** Everything readable still runs; what could not be read is listed at the end,
@@ -174,7 +186,7 @@ if test( "the slow one", tags = [ "slow", "gpu" ] ):
 ```
 
 ```bash
-errand -e 'slow & !gpu'          # --entry-tags
+errand run -e 'slow & !gpu'          # --entry-tags
 ```
 
 `-e` picks *what* runs, `-t` picks *where* (see [Tags](#tags)). They take the same expressions.
@@ -182,7 +194,7 @@ errand -e 'slow & !gpu'          # --entry-tags
 ## Parameters and matrices
 
 `Param( default )` declares a typed flag — the type comes from the default. Parameters show up in
-`--help` and are echoed before each run:
+`errand list` and are echoed before each run:
 
 ```python
 if p := bench( "cost", n = Param( 1000, help = "nb of points" ),
@@ -191,13 +203,14 @@ if p := bench( "cost", n = Param( 1000, help = "nb of points" ),
 ```
 
 ```bash
-errand cost --n=5000 --method=lbfgs
-errand cost --n=1000,5000 --method=newton,lbfgs    # 4 runs, 4 directories
+errand run bench/solvers.py::cost --n=5000 --method=lbfgs
+errand run bench/solvers.py::cost --n=1000,5000 --method=newton,lbfgs    # 4 runs, 4 directories
 ```
 
 **A comma means a matrix**, and it means the same thing everywhere — on a parameter, on a tag, on an
-environment. Each value is an axis, the cartesian product is run, and every combination lands in its
-own directory so the results sit side by side. This works on any entry, tests included: sweeping a
+environment, on any argument of the target's own. Each value is an axis, the cartesian product is
+run, and every combination lands in its own directory so the results sit side by side; the grid is
+said once before it starts. `\,` is a comma that is only a comma, and `,,` an empty value. This works on any entry, tests included: sweeping a
 test across four environments is a perfectly good thing to want.
 
 ## Environments
@@ -235,7 +248,7 @@ errand.envs[ "cluster" ] = errand.Env( [ errand.Ssh( host = "gpu-box", root = "/
 | `Ssh( host, root =, python =, options = )` | must be first; everything after it runs on that machine. `options` go to ssh *and* rsync — a port, an identity, a jump host |
 | `Slurm( partition =, nodes =, gpus =, time =, … )` | goes through `srun`, or `sbatch` in [batch mode](#detached-runs) |
 | `Oar( … )`, `Pbs( … )`, `Sge( … )`, `Lsf( … )` | the same, for the other batch systems |
-| `Windows( iso =, key =, cpus =, ram =, msvc =, python =, provision =, fetch =, keep = )` | first, or right after the `Ssh` of the machine that boots it; a Windows VM under QEMU that errand installs and boots. Every argument is optional: with none it is a Server 2025 evaluation (no licence) with the MSVC build tools. See [below](#windows) |
+| `Windows( iso =, key =, cpus =, ram =, msvc =, python =, provision =, fetch =, keep =, data = )` | first, or right after the `Ssh` of the machine that boots it; a Windows VM under QEMU that errand installs and boots. Every argument is optional: with none it is a Server 2025 evaluation (no licence) with the MSVC build tools. See [below](#windows) |
 | `Vars( { … } )` | environment variables for the child process |
 
 Requirements belong to the layer that installs them — a `requirements.txt` for the conda
@@ -263,18 +276,18 @@ an edited recipe, a changed requirements file. Creating an environment, installi
 rebuilding an image are one operation seen at three moments, and it happens on its own.
 
 ```bash
-errand --envs           # what is declared, what state it is in, which is the default
-errand --setup          # do it now, and nothing else
-errand --setup=force    # from scratch
-errand --setup --dry-run  # say what that would run, and run nothing
-errand --no-setup       # skip the check for this run
+errand envs             # what is declared, what state it is in, which is the default
+errand setup            # do it now, and nothing else
+errand setup --force    # from scratch
+errand setup --dry-run  # say what that would run, and run nothing
+errand run --no-setup   # skip the check for this run
 ```
 
 **What is already there is adopted, not rebuilt.** The first time errand meets an environment there
 is no record of what it was built from, so every layer looks out of date — and acting on that
 reading would mean recreating, on somebody's first command, an environment that has been working
 for months. So: present and never seen before is recorded as-is; only a declaration that has
-*changed* since a record errand itself wrote is a reason to touch it, and `--setup=force` is how you
+*changed* since a record errand itself wrote is a reason to touch it, and `errand setup --force` is how you
 say the other thing. (`micromamba create -n x` on an existing `x` is not a no-op and not an update:
 it resolves the named specs into it, and `python=3.13` over a 3.14 environment takes every package
 installed for 3.14 out with it. An environment somebody is working in must never be the collateral
@@ -286,12 +299,33 @@ then runs on that host, with `fakeroot` and `scratch` as declared.
 
 This is why the core has no third-party dependencies: it has to work before any environment exists.
 
+### Preparing, then running
+
+What a target designates is for the place to say — a binary built over there exists only over
+there — so resolving, building, collecting and expanding the matrix happen **in the environment**,
+in a preparation phase that writes a plan ( the entries, what they ask, where they write ) before a
+run phase runs it. Every layer takes `when =`, an expression over the tags and the pseudo-tag
+`phase`, so the allocation that prepares and the one that runs are two `Slurm` layers with all their
+arguments:
+
+```python
+errand.envs[ "cluster" ] = errand.Env( [
+    errand.Ssh( host = "login.hpc", root = "/scratch/me/proj" ),
+    errand.Slurm( cpus = 16, time = "0:30:00",                   when = "phase=prepare" ),
+    errand.Slurm( partition = "gpu", gpus = 1, time = "2:00:00", when = "phase=run" ),
+    errand.Apptainer( image = "containers/cuda.sif" ) ] )
+```
+
+The run allocation is sized from the plan; under `--batch` the preparation submits it itself. With no
+scheduler and the same layers in both phases, it is all one pass. `errand list` is the preparation.
+
 ### Being let into one
 
 ```bash
-errand --env gpu -- python -m mypkg.toolchain   # that command, in that environment
-errand --env cluster -- nvidia-smi              # on the other machine, through ssh
-errand --driver torch -- python -c "import torch; print( torch.__version__ )"
+errand shell --env gpu -- python -m mypkg.toolchain    # that command, in that environment
+errand shell --env cluster -- nvidia-smi               # on the other machine, through ssh
+errand shell --env cluster --pull out -- make results  # ... and `out/` ( from the project root ) comes back afterwards; repeatable
+errand shell --driver torch -- python -c "import torch; print( torch.__version__ )"
 ```
 
 Everything after a bare `--` is a command to run *in* the environment rather than arguments to
@@ -306,10 +340,10 @@ A tag says what an environment *is*. There is nothing to declare — a tag is a 
 `errand.Env`, and every name used becomes a flag:
 
 ```bash
-errand --env cluster          # by name
-errand --driver jax           # by tag, one flag per name
-errand --fp 64 --cuda
-errand -t 'jax & fp=64 & !remote'            # --env-tags, the expression form
+errand run --env cluster               # by name
+errand run --driver jax                # by tag, one flag per name
+errand run --fp 64 --cuda
+errand run -t 'jax & fp=64 & !remote'  # --env-tags, the expression form
 ```
 
 **Saying nothing means every value.** An environment that does not mention `fp` covers every
@@ -334,9 +368,9 @@ value each is the exception.
 as it is on a parameter:
 
 ```bash
-errand -k bench "solvers::*" --fp 32,64        # both precisions
-errand -k bench "solvers::*" --env gpu,cluster # both machines
-errand -t 'cuda=True'                          # every cuda environment there is
+errand run -k bench --fp 32,64 "bench/solvers.py::*"         # both precisions
+errand run -k bench --env gpu,cluster "bench/solvers.py::*"  # both machines
+errand run -t 'cuda=True'                                    # every cuda environment there is
 ```
 
 Each environment gets its own output directory, so results sit side by side and the summaries
@@ -386,14 +420,14 @@ process**, one per user per host, so it is shared by every `errand` on that mach
 two projects, no interference.
 
 ```bash
-errand --queue        # what the host has, and what is holding it
-errand --no-queue     # this run does not wait, and does not hold
+errand queue           # what the host has, and what is holding it
+errand run --no-queue  # this run does not wait, and does not hold
 ```
 
 ```bash
-errand -j 8           # eight entries at a time
-errand -j auto        # as many as the machine has cores
-errand                # one at a time: the default
+errand run -j 8     # eight entries at a time
+errand run -j auto  # as many as the machine has cores
+errand run          # one at a time: the default
 ```
 
 `-j` runs **one process per entry**, because the isolation between entries is the module reload and
@@ -452,19 +486,20 @@ cause. `errand` checks for that before submitting and tells you plainly.
 
 ## Where the output goes
 
-**Two directories to find a case, then one flat list of its runs**, each cleared and recreated as it
+**The file's path and the case's name to find a case, then one flat list of its runs**, each cleared and recreated as it
 starts. Only the run directory is cleared; everything above it accumulates.
 
 ```
-runs/{file}/{name}/{when}-{place}[-{params}]/
-runs/{file}/{name}/latest -> the newest of them
+runs/{path}/{name}/{when}-{place}[-{params}]/
+runs/{path}/{name}/latest -> the newest of them
 
-runs/solvers/cost/2026-09-25_18h04m11-gpu@gpu-box-method=newton,n=5000/
-runs/solvers/cost/2026-09-25_18h11m02-local@laptop-method=cg,n=5000/
+runs/bench/solvers.py/cost/2026-09-25_18h04m11-gpu@gpu-box-method=newton,n=5000/
+runs/bench/solvers.py/cost/2026-09-25_18h11m02-local@laptop-method=cg,n=5000/
 ```
 
-The file and the name are how you *look* for work — they are what you typed to run it — so they are
-directories. Everything that tells two **runs** of that case apart is one directory name, in the
+The file's path — from the project root, extension included — and the name are how you *look* for
+work: they are what you typed to run it, so they are directories. Two `test_ot.py` in two
+directories, or a `solve.py` beside a `solve.cpp`, never share one. Everything that tells two **runs** of that case apart is one directory name, in the
 order you would say it out loud: when, where, and with what. A tree with a level per dimension reads
 beautifully drawn in a README and badly when it is a `cd` away, and the level whose name was a hash
 of the parameters could not be read at all. A matrix is more *names*, never more levels.
@@ -526,14 +561,15 @@ it to a shell string and runs it over ssh — rsync push before, targeted rsync 
   → gpu-box:/home/me/proj  env=cluster  tags=driver:jax,cuda
   rsync push → gpu-box:/home/me/proj
   ...
-  rsync pull ← gpu-box:/home/me/proj [runs/solvers/cost]
+  rsync pull ← gpu-box:/home/me/proj [runs/bench/solvers.py/cost]
 ```
 
-The paths to pull are computed **before the remote run happens**: the same rules applied to the same
-entries and parameters give the same answer on both sides, so nothing has to be declared at runtime,
+The paths to pull are **the ones the remote side's plan names**: it is written over there before
+anything runs, brought back first, and read — so nothing has to be declared at runtime,
 and the rest of the remote tree — which holds unrelated runs from other days — stays put.
 
-Matrices are expanded on this side, one plain run per combination, each value crossing already split.
+Targets are resolved and matrices expanded **over there**, where the work runs: this side only chooses
+the environments and hands the command over as it was typed.
 
 The remote command goes through an interactive shell, because ssh runs non-interactively and would
 otherwise never read the rc file that puts micromamba, cargo or nvm on `PATH`.
@@ -546,9 +582,9 @@ errand.envs[ "win" ] = errand.Env( [ errand.Windows( fetch = [ "build" ] ) ] )
 ```
 
 ```bash
-errand --env win --setup                         # once: 20 to 60 minutes, unattended
-errand --env win -- cmake -B build -G Ninja
-errand --env win -- cmake --build build          # build/ comes back here
+errand setup --env win                         # once: 20 to 60 minutes, unattended
+errand shell --env win -- cmake -B build -G Ninja
+errand shell --env win -- cmake --build build  # build/ comes back here
 ```
 
 A Windows virtual machine is one more place to run: errand installs it from an ISO, boots it under
@@ -558,10 +594,13 @@ reinstalled before it runs out — with the MSVC build tools on `PATH`. A `key` 
 your own Windows instead.
 
 The install is a layer build like any other, kept in `~/.cache/errand/windows/` and shared by every
-project declaring the same thing. Each boot starts clean from it (about half a minute); a booted
+project declaring the same thing. Each boot starts clean from it (about half a minute) — except
+`E:`, a second disk kept from one boot to the next (`data = "32G"`, `None` for none), where the
+project is copied, by rsync (installed in the image): only what changed crosses, and a build left
+there by one command is there for the next. A booted
 machine stays up while the errand process that booted it — or any other that used it — is alive,
 then `keep` more (none by default), and holds its cores and memory in the queue all that time —
-`errand --vm-stop` lets go of it sooner. It needs QEMU and an x86-64 host with KVM (Linux) or HVF
+`errand vm stop` lets go of it sooner. It needs QEMU and an x86-64 host with KVM (Linux) or HVF
 (Intel Mac); when one is missing, errand says which command installs it there. Commands only, for
 now: entries and `--batch` do not reach a virtual machine yet.
 
@@ -575,7 +614,8 @@ errand.envs[ "win" ] = errand.Env( [ errand.Ssh( host = "x86-box", root = "/home
 `Ssh` hands the layer after it a way to run a line on the machine it leads to, and `Windows` does
 its own work through it: what that machine is, whether an image is installed, starting QEMU,
 copying in, running, bringing back — each a line over there, its answer read back here. The
-deciding, the locks and the keeper stay on this machine; over there it needs QEMU, ssh and tar, and
+deciding, the locks and the keeper stay on this machine; over there it needs QEMU, ssh, rsync and
+tar (and zstd to install), and
 keeps the disks in its own cache. What `fetch` names comes back to the project's copy over there,
 and from there to here.
 
@@ -585,9 +625,9 @@ and from there to here.
 same thing in every context, and what changes is only how each one lets go.
 
 ```bash
-errand --batch -k bench --env gpu,cluster --fp 32,64
+errand run --batch -k bench --env gpu,cluster --fp 32,64
   submitted b7f3 - 8 run(s) - 4 on login.hpc (batch 918273), 4 on this machine (local 41288)
-  errand --status    errand --watch
+  errand status    errand watch
 ```
 
 | context | waiting | detached |
@@ -596,9 +636,9 @@ errand --batch -k bench --env gpu,cluster --fp 32,64
 | `Ssh` | ssh, output streamed | started over there and released, output to a file |
 | `Slurm`, … | `srun` | `sbatch`, which *is* the detachment: it returns as soon as the job is queued |
 
-Nothing else about the run changes — same paths, same queue, same output. And because the paths were
-worked out before anything started, **the arrival of a result file where one was expected is itself
-the completion signal.** No protocol between the two sides, no daemon, nothing that can get out of
+Nothing else about the run changes — same paths, same queue, same output. And because each place
+writes its plan before anything runs there, **the arrival of a result file where the plan said one
+would be is itself the completion signal.** No protocol between the two sides, no daemon, nothing that can get out of
 sync: the output tree is the state.
 
 What is kept locally is only what the tree cannot say — which runs belong to one submission, and
@@ -618,9 +658,9 @@ is what asking does.
 ## Keeping track
 
 ```bash
-errand --status        # one shot, plain text
-errand --watch         # the same, live, until everything has landed
-errand --forget b7f3   # drop a submission from the list, keeping its results
+errand status       # one shot, plain text
+errand watch        # the same, live, until everything has landed
+errand forget b7f3  # drop a submission from the list, keeping its results
 ```
 
 ```
@@ -639,7 +679,7 @@ one, the matrix reads as a **table** — parameters down, places across — sinc
 has, and a flat list of eight lines hides the one axis you were varying. A cell shows the kept
 number once there is one, so a column slower than its neighbour is visible without opening anything.
 
-`--watch` holds no state of its own: it polls the tree and the batch systems, so it can be started,
+`errand watch` holds no state of its own: it polls the tree and the batch systems, so it can be started,
 killed and restarted at any point, and several can watch at once. A page in a browser would show
 this same table and answer the same question; the terminal comes first because it is where the work
 is already happening.
@@ -647,7 +687,7 @@ is already happening.
 ## The screen
 
 ```bash
-errand --tui
+errand tui
 ```
 
 **Two pages**, because there are two questions: *what do I run*, and *what came of it*. No focus to
@@ -726,7 +766,7 @@ somebody else ran it.
  │   ok    solve  n=1000  [local]        ││   result.yaml                 512 B │
  │   ok    solve  n=1000  [gpu]          ││   output.txt                 1.2 kB │
  │   ..    solve  n=5000  [local]        │╰─────────────────────────────────────╯
- │ ▸ errand -k bench --fp 32       6 ok  │╭─ output.txt ────────────────────────╮
+ │ ▸ errand run -k bench --fp 32   6 ok  │╭─ output.txt ────────────────────────╮
  │ ▸ errand tests --n 10           1 ok  ││ iteration 41   residual 3.1e-07     │
  ╰───────────────────────────────────────╯│ iteration 42   residual 1.9e-07     │
                                           ╰─────────────────────────────────────╯
@@ -755,7 +795,7 @@ Enter on a case asks the only question left: where, with which tags, with which 
  │   -j       1                                             how many at once     │
  │   --batch  [ ] detach                                 outlives this window    │
  │   ─────────────────────────────────────────────────────────────────────────   │
- │   errand shapes::solve --env local,gpu --fp 32,64 --n 1000,5000               │
+ │   errand run --env local,gpu --fp 32,64 bench/shapes.py::solve --n 1000,5000        │
  ╰───────────────────────────────────────────────────────────────────────────────╯
    space ticks · ←→ picks · type into a field · enter runs · esc gives up
 ```
@@ -797,7 +837,7 @@ A run started from the screen belongs to the screen, so leaving is refused while
 
 ## Configuration
 
-None is needed. `errand` with no configuration at all finds your entries and runs them in the
+None is needed. `errand run` with no configuration at all finds your entries and runs them in the
 interpreter you started it with.
 
 To declare what the project does, and where it runs, put **`errand-*.py`** files at the root of the
@@ -806,8 +846,8 @@ to you, and two names are the convention:
 
 | | |
 |---|---|
-| `errand-project.py` | what the **project** does: providers, compilation flags, `errand.configure`. Versioned |
-| `errand-envs.py` | where **you**, on **your machine**, run it: the environments. Not versioned — `errand --init` adds it to `.gitignore` |
+| `errand-project.py` | what the **project** does: runners, compilation flags, `errand.configure`. Versioned |
+| `errand-envs.py` | where **you**, on **your machine**, run it: the environments. Not versioned — `errand init` adds it to `.gitignore` |
 
 They are ordinary Python, loaded once by path and under a private name, with no entry point to call
 and nothing to return. `errand.envs` holds the environments by name, and the first one declared is
@@ -818,7 +858,7 @@ the default unless `errand.default_env` names another:
 import errand
 
 errand.configure( out = "runs", src = [ "core/src", "app/src" ] )
-errand.provider( errand.Catch2( dir = "tests/cpp" ) )
+errand.runners.replace( errand.Catch2( dir = "tests/cpp" ) )
 ```
 
 ```python
@@ -851,12 +891,13 @@ There is no mechanism for project-specific subcommands, because there does not n
 something you want to run is an entry, and `bulk = False` keeps it out of the way until you name it.
 
 ```python
+# tasks.py
 if entry( "docs", bulk = False ):
     build_docs( )
 ```
 
 ```bash
-errand docs
+errand run tasks.py::docs
 ```
 
 ### What only this machine can supply
@@ -902,19 +943,19 @@ errand.envs[ "cluster" ] = errand.Env( [ errand.Ssh( host = errand.value( "ssh_h
                                                      root = errand.value( "ssh_root", "/home/me/proj" ) ) ], cuda = True )
 ```
 
-## Other languages
+## Runners
 
 errand does not care what your tests are written in. An entry does not have to be a Python call
-site. Providers for C++ (Catch2, GoogleTest, doctest),
-Rust (`cargo test`, Criterion), JavaScript and plain executables come with `errand`, and one line
-in `errand-project.py` puts an existing suite under it — with an output directory, summaries, environment
+site. What runs a file is a **runner**: the ones for errand's own files, pytest, Catch2, cargo,
+python and shell scripts and executables come with `errand`, and one line in `errand-project.py`
+configures one for an existing suite — with an output directory, summaries, environment
 matrices and remote repatriation, none of which it had before:
 
 ```python
 import errand
-errand.provider( errand.Pytest( ) )
-errand.provider( errand.Catch2( dir = "tests/cpp" ) )
-errand.provider( errand.Cargo( ) )
+errand.runners.replace( errand.Pytest( ) )
+errand.runners.replace( errand.Catch2( dir = "tests/cpp" ) )
+errand.runners.replace( errand.Cargo( ) )
 ```
 
 A suite keeps everything that makes it itself, and its vocabulary is translated rather than
@@ -922,37 +963,37 @@ replaced: a `@pytest.mark.slow` is an entry tag, so `-e '!slow'` filters it with
 language `-t` uses on environments; a Catch2 `[tag]` likewise; a framework's own benchmark numbers
 land in `result.yaml` beside everyone else's.
 
-A provider finds its own entries the way its ecosystem does — `pytest`'s collection rules, the
+A runner finds its own entries the way its ecosystem does — `pytest`'s collection rules, the
 `test_*.cpp` under a directory, `cargo`'s targets. That is a guess about your layout, so it is a
-guess you write down: a provider line in `errand-project.py` is the declaration of what will be looked for
+guess you write down: a runner line in `errand-project.py` is the declaration of what will be looked for
 and where, and it takes the arguments to say something else. With no `errand-*.py` at all, `errand`
 reads the directory, guesses, and **tells you what it guessed** before running anything:
 
 ```text
-  no errand-*.py; guessed:  pytest (tests/)  ·  catch2 (cpp/)  ·  cargo (rust/)   ( errand --init writes it down )
+  no errand-*.py; guessed:  pytest (tests/)  ·  catch2 (cpp/)  ·  cargo (rust/)   ( errand init writes it down )
 ```
 
 Convenient for a first look, never silent, and the cure is to write the line — which is what
-`errand --init` does, making `runs/` and an `errand-envs.py` beside it. It never overwrites (`--init=force` does). Nothing
+`errand init` does, making `runs/` and an `errand-envs.py` beside it. It never overwrites (`errand init --force` does). Nothing
 is run to guess: it lists directories and reads a few files.
 
 Discovery over a large tree is not free, and will be cached against file mtimes. Later; it is an
 optimization, not a design question.
 
-**errand compiles nothing itself.** A provider that needs a build runs the command you already build
+**errand compiles nothing itself.** A runner that needs a build runs the command you already build
 with, once, before any of its entries — not once per file, and not once per parallel process:
 
 ```python
 import errand
-errand.provider( errand.Catch2( dir = "cpp", build = "make -C cpp" ) )
-errand.provider( errand.Catch2( dir = "cpp", build = "cmake --build build", binary = "build/{stem}" ) )
+errand.runners.replace( errand.Catch2( dir = "cpp", build = "make -C cpp" ) )
+errand.runners.replace( errand.Catch2( dir = "cpp", build = "cmake --build build", binary = "build/{stem}" ) )
 ```
 
 `binary` says where a source's executable lands, defaulting to `<dir>/<stem>`. Leave `build` out if
 something else already built them. Your compiler, your flags and your layout stay yours.
 
 **A missing tool is installed when the environment is errand's to install into.** A `Pytest`
-provider whose interpreter has no pytest installs it — into a venv, a micromamba environment, a
+runner whose interpreter has no pytest installs it — into a venv, a micromamba environment, a
 container — and says so. Into the *system* interpreter it declines and tells you what to run: that
 one is shared with everything else on the machine, and it is not errand's to change.
 
@@ -963,14 +1004,20 @@ enumerated without building it and `collect()` has to work before anything is bu
 goes to the binary as its own filter. `Cargo` asks `cargo metadata`, which knows the targets without
 compiling any of them.
 
-Writing a provider for something else is a three-method protocol; see the wiki.
+**Which runner takes a file** is decided by how well each fits it — `ERRAND` > `FRAMEWORK` >
+`LANGUAGE` > `FALLBACK` — and never by the order of `errand.runners`; two at the same, highest level
+is an error naming them. Only `ERRAND` and `FRAMEWORK` files are found by looking: a script or an
+executable runs when it is named in full ( `errand run scripts/plot.py` ), as one entry, with
+`ERRAND_OUT_DIR` set to its run's directory.
+
+Writing a runner for something else is `suitability` / `collect` / `run`; see the reference.
 
 ## Status
 
 Everything above works and is covered by errand's own suite, which is written with errand. Not
 released: the API may still move.
 
-Still to write: `errand init`, and providers beyond the three that ship (GoogleTest, doctest, ctest,
+Still to write: runners beyond the ones that ship (GoogleTest, doctest, ctest,
 JavaScript).
 
 One thing is deliberately left to you: a matrix that spans a laptop and a cluster partition at once

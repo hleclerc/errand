@@ -9,11 +9,11 @@ Creating an environment, installing into it and rebuilding an image are **one op
 three moments**, and it happens on its own.
 
 ```bash
-errand --envs             # what is declared, what state it is in, which is the default
-errand --setup            # do it now, and nothing else
-errand --setup=force      # from scratch
-errand --setup --dry-run  # say what that would run, and run nothing
-errand --no-setup         # skip the check for this run
+errand envs             # what is declared, what state it is in, which is the default
+errand setup            # do it now, and nothing else
+errand setup --force    # from scratch
+errand setup --dry-run  # say what that would run, and run nothing
+errand run --no-setup   # skip the check for this run
 ```
 
 You do not have to act on `stale` or `not built`. The next run that needs one of those environments
@@ -26,7 +26,7 @@ layer looks out of date — and acting on that reading would mean recreating, on
 command, an environment that has been working for months.
 
 So: **present and never seen before is recorded as-is.** Only a declaration that has *changed* since
-a record errand itself wrote is a reason to touch anything, and `--setup=force` is how you say the
+a record errand itself wrote is a reason to touch anything, and `errand setup --force` is how you say the
 other thing.
 
 ::: danger Why this matters more than it sounds
@@ -59,9 +59,9 @@ it has to work before any environment exists.
 ## Being let into one
 
 ```bash
-errand --env gpu -- python -m mypkg.toolchain   # that command, in that environment
-errand --env cluster -- nvidia-smi              # on the other machine, through ssh
-errand --driver torch -- python -c "import torch; print( torch.__version__ )"
+errand shell --env gpu -- python -m mypkg.toolchain  # that command, in that environment
+errand shell --env cluster -- nvidia-smi             # on the other machine, through ssh
+errand shell --driver torch -- python -c "import torch; print( torch.__version__ )"
 ```
 
 Everything after a bare `--` is a command to run *in* the environment rather than arguments to

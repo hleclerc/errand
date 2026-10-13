@@ -2,8 +2,8 @@
 
     errand.envs[ "win" ] = errand.Env( [ errand.Windows() ] )
 
-    errand --env win -- cmake -B build -G Ninja
-    errand --env win -- cmake --build build
+    errand shell --env win -- cmake -B build -G Ninja
+    errand shell --env win -- cmake --build build
 
 That is the whole declaration, and what it gets by default is a Windows Server
 evaluation, which needs no licence for 180 days and is rebuilt before it runs
@@ -25,7 +25,7 @@ which is how an ARM laptop gets a Windows at all.
 does there is a shell line run through it, whose answer is read back here:
 what that machine is, whether an image is installed, starting QEMU, copying the
 project in, running the command, bringing results back. Nothing of errand runs
-over there; all it needs there is QEMU, ssh and tar. The disks and the guest's
+over there; all it needs there is QEMU, ssh, rsync and tar. The disks and the guest's
 key live in THAT machine's cache; the locks, the state and the keeper live in
 this one's.
 
@@ -35,13 +35,13 @@ this one's.
               disk image, kept in ~/.cache/errand/windows/<fingerprint>/ on
               the machine that runs QEMU, and shared by every project that
               declares the same thing. It is a build like any other layer's:
-              `--setup` does it, a changed declaration redoes it, `--dry-run`
+              `errand setup` does it, a changed declaration redoes it, `--dry-run`
               says so.
     boot      once per warm period, half a minute to a few. Every boot starts
               from a fresh copy-on-write layer over that image, so nothing a
               run left behind survives a restart.
-    run       once per command: a tar of the project goes in, the command runs
-              through cmd.exe, what `fetch` names comes back.
+    run       once per command: the project goes in ( rsync: what changed ),
+              the command runs through cmd.exe, what `fetch` names comes back.
 
 **Up for as long as somebody needs it, and counted while it is.** A booted
 machine stays up while an errand process that used it is alive -- so a run of
@@ -49,9 +49,9 @@ several commands boots once -- and then `keep` more ( none by default: a boot
 is half a minute, and an idle machine holds what it holds for nothing ). All
 that time it holds its cores and its memory, so when it runs on this machine
 it holds them IN THE QUEUE, under a claim like any other work, and shows up in
-`errand --queue`. A small keeper process owns the machine ( and the claim ): it
+`errand queue`. A small keeper process owns the machine ( and the claim ): it
 starts QEMU once there is room, stops it once nobody holds it, and is what
-`errand --vm-stop` stops. Commands on one machine take turns.
+`errand vm stop` stops. Commands on one machine take turns.
 
 Nothing here is Windows-specific but the recipe; another guest would be another
 recipe over the same `Machine`.
@@ -87,9 +87,23 @@ PASSWORD = "Errand-vm-1!"
 VCVARS   = r"C:\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
 BUILD_TOOLS = "https://aka.ms/vs/17/release/vs_BuildTools.exe"
 
+# rsync, which copies the project in: only what changed crosses, where a tar
+# carried all of it at every command. MSYS2's, which runs without the rest of
+# MSYS2 -- the program and the DLLs it loads, nothing else. Pinned, being what
+# an image is made of; downloaded and unpacked by the machine that runs QEMU.
+MSYS2_REPO     = "https://repo.msys2.org/msys/x86_64"
+MSYS2_PACKAGES = [ "rsync-3.5.1-2", "msys2-runtime-3.6.10-7", "libopenssl-3.6.5-1", "libiconv-1.19-1",
+                   "libidn2-2.3.8-1", "libintl-0.22.5-1", "libunistring-1.4.2-1", "liblz4-1.10.0-1",
+                   "popt-1.19-1", "libxxhash-0.8.4-1", "libzstd-1.5.7-1" ]
+RSYNC_FILES    = [ "rsync.exe", "msys-2.0.dll", "msys-crypto-3.dll", "msys-iconv-2.dll", "msys-idn2-0.dll",
+                   "msys-intl-8.dll", "msys-unistring-5.dll", "msys-lz4-1.dll", "msys-popt-0.dll",
+                   "msys-xxhash-0.dll", "msys-zstd-1.dll" ]
+GUEST_MSYS     = r"C:\errand\msys"
+GUEST_RSYNC    = "C:/errand/msys/usr/bin/rsync.exe"
+
 # Bumped whenever what an image is made of changes in this file: the recipe is
 # part of the declaration, and an edit to it must be noticed like any other.
-RECIPE = 1
+RECIPE = 2
 
 INSTALL_TIMEOUT = 4 * 3600
 BOOT_TIMEOUT    = 20 * 60
@@ -121,7 +135,11 @@ class Windows:
     provision: list = field( default_factory = list )   # PowerShell: a `.ps1` of the project, or a line
     fetch    : list = field( default_factory = list )   # what to bring back after each command
     keep     : str = "0"             # how long it stays up once no errand process holds it any more
+    data     : str | None = "32G"    # a disk kept from one boot to the next, as E:, where the project
+                                     # lands -- so what a command leaves ( a build ) is there for the next
+                                     # one. Grows as it is written, up to this; None: everything is C:, reset
     root     : str | None = None     # where the project goes; C:/errand/<project name>
+    when     : str | None = None     # a condition: an expression over the tags and `phase`
 
     # Not a field: what `layers.vm_of` recognizes, like `Ssh` is recognized by its class.
     is_vm = True
@@ -140,7 +158,7 @@ class Windows:
                  "msvc": self.msvc, "python": self.python, "provision": list( self.provision ) }
 
     def booted( self ) -> dict:
-        return { "cpus": self.cpus, "ram": self.ram, "keep": self.keep }
+        return { "cpus": self.cpus, "ram": self.ram, "keep": self.keep, "data": self.data }
 
     # -- kept current, like any other layer ----------------------------------
 
@@ -169,7 +187,11 @@ class Windows:
     # -- being let in ---------------------------------------------------------
 
     def guest_root( self, ctx ) -> str:
-        return self.root or f"C:/errand/{ctx.root.name}"
+        if self.root:
+            return self.root
+        # On the disk that is kept, when there is one: a copy there is updated
+        # rather than made again, and what was built beside it stays.
+        return f"{DATA_DRIVE}:/{ctx.root.name}" if self.data else f"C:/errand/{ctx.root.name}"
 
     def line( self, cmd: L.Command, guest_root: str ) -> str:
         """`cmd` as one cmd.exe line, run from the project's copy over there."""
@@ -187,18 +209,26 @@ class Windows:
         env = { k: v for k, v in cmd.env.items() if k != "PYTHONPATH" }
         wrapped = L.compose( inner, L.Command( L.under( cmd.argv, "python" ), env ),
                              L.Context( root = Path( there ), tags = ctx.tags, remote = True ) )
+        if any( "\n" in str( a ) for a in cmd.argv ):
+            # cmd.exe reads one line: the rest would be dropped without a word.
+            echo( "  a command for windows is one line: cmd.exe would drop everything after a newline "
+                  "-- put the script in a file of the project, and run that" )
+            return 1
         name = self.image_name( ctx )
         if ctx.host.shell( ready_line( name, keyed = True ), quiet = True ).returncode:
-            echo( f"  windows is not installed yet {where( ctx.host )} -- errand --env <name> --setup" )
+            echo( f"  windows is not installed yet {where( ctx.host )} -- errand setup <name>" )
             return 1
         try:
             m = Machine( ctx.host, Facts.of( ctx.host ), name )
+            need( m.facts, ( "rsync", ), package_hint( m.facts, [ "rsync" ] ) )
             with m.using( self.booted(), echo ):
                 echo( f"  copy in -> windows:{there}" )
                 m.push( there )
                 line = self.line( wrapped, there )
                 echo( f"  > {line}" )
                 code = m.guest( line ).returncode
+                if self.data:
+                    m.guest( powershell( FLUSH_SCRIPT ), quiet = True )
                 wanted = [ *( pull or [ ] ), *self.fetch ]
                 if wanted:
                     echo( f"  fetch <- windows:{there} [{', '.join( wanted )}]" )
@@ -213,7 +243,7 @@ class Windows:
 
 
 class Install:
-    """`--setup` for a `Windows` layer, as one step: what it says it would do,
+    """`errand setup` for a `Windows` layer, as one step: what it says it would do,
     and the doing -- many lines through `ctx.host`, decided here between them."""
 
     def __init__( self, layer: Windows, ctx: L.Context ):
@@ -325,7 +355,7 @@ if [ -e /dev/kvm ]; then
 else f kvm absent; fi
 f cache "${XDG_CACHE_HOME:-$HOME/.cache}"
 ( . /etc/os-release 2>/dev/null && f os "$ID $ID_LIKE" )
-for t in qemu-system-x86_64 qemu-img ssh scp ssh-keygen tar curl wget; do
+for t in qemu-system-x86_64 qemu-img ssh scp ssh-keygen tar rsync zstd curl wget; do
     command -v "$t" >/dev/null 2>&1 && f tool "$t"
 done
 true
@@ -382,6 +412,19 @@ def qemu_hint( facts: Facts ) -> str:
     return "install QEMU ( qemu-system-x86 and qemu-img ) with its package manager"
 
 
+def package_hint( facts: Facts, names ) -> str:
+    """For tools whose package has their name everywhere: rsync, zstd."""
+    names = " ".join( names )
+    if facts.system == "Darwin":
+        return f"brew install {names}"
+    ids = facts.os_ids
+    for known, how in ( ( { "debian", "ubuntu" }, "sudo apt install" ), ( { "fedora", "rhel", "centos" }, "sudo dnf install" ),
+                        ( { "arch" }, "sudo pacman -S" ), ( { "suse", "opensuse", "sles" }, "sudo zypper install" ) ):
+        if ids & known:
+            return f"{how} {names}"
+    return f"install {names} with its package manager"
+
+
 def need( facts: Facts, tools, hint: str ):
     missing = [ t for t in tools if t not in facts.tools ]
     if missing:
@@ -417,7 +460,7 @@ def _escaped( path ) -> str:
 
 
 def qemu_argv( disk: str, *, accel: tuple, port: int, cpus: int, ram, iso: str | None = None,
-               media: str | None = None ) -> list:
+               media: str | None = None, data: str | None = None ) -> list:
     """The command line, for the machine that runs it: paths are ITS paths."""
     how, cpu = accel
     argv = [ "qemu-system-x86_64",
@@ -430,6 +473,10 @@ def qemu_argv( disk: str, *, accel: tuple, port: int, cpus: int, ram, iso: str |
              # driver disk to fetch and keep in step.
              "-drive", f"if=none,id=system,file={_escaped( disk )},format=qcow2,discard=unmap",
              "-device", "ide-hd,drive=system,bus=ide.0",
+             # The disk that is kept: written to directly, never through an
+             # overlay. Port 2, since 1 is the install medium's.
+             *( [ "-drive", f"if=none,id=data,file={_escaped( data )},format=qcow2,discard=unmap",
+                  "-device", "ide-hd,drive=data,bus=ide.2" ] if data else [ ] ),
              "-nic", f"user,model=e1000e,hostfwd=tcp:127.0.0.1:{port}-:22" ]
     # Somebody debugging an install wants to SEE it: ERRAND_VM_VNC=1 puts the
     # screen on vnc://127.0.0.1:5901, of the machine that runs it.
@@ -451,11 +498,35 @@ def qemu_argv( disk: str, *, accel: tuple, port: int, cpus: int, ram, iso: str |
     return argv
 
 
-def pack_line( archive: str ) -> str:
-    """The project, minus what rsync would leave out too, as one tar -- run from
-    its root on the machine that runs QEMU. No rsync on Windows, and one file
-    crosses far faster than ten thousand."""
-    return L.sh( [ "tar", "-c", "-h", "-f", archive, *[ f"--exclude={e}" for e in EXCLUDES ], "." ] )
+def msys_path( path: str ) -> str:
+    """A Windows path as the rsync in the guest reads it: E:/x is /e/x."""
+    path = str( path ).replace( "\\", "/" )
+    if re.match( r"^[A-Za-z]:", path ):
+        path = f"/{path[ 0 ].lower()}{path[ 2 : ]}"
+    return path.rstrip( "/" )
+
+
+def rsync_line( reach: list, there: str ) -> str:
+    """The project, minus what an `Ssh` push leaves out too, into `there` in the
+    guest -- run from its root on the machine that runs QEMU. Links followed, as
+    NTFS has none worth the name; no permission, owner or group, which the
+    guest's ACLs would only garble. Nothing deleted: what a command built beside
+    the sources is not on this side, and must stay over there."""
+    return L.sh( [ "rsync", "-rtL", "-e", L.sh( reach ), "--rsync-path", GUEST_RSYNC,
+                   *[ f"--exclude={e}" for e in EXCLUDES ], "./", f"{USER}@127.0.0.1:{msys_path( there )}/" ] )
+
+
+# rsync's 23 ( "some files were not transferred" ) and 24 ( "some vanished" ),
+# when every complaint is one of these, are a copy as good as can be: a link
+# to nothing has nothing to copy, as for an `Ssh` push.
+HARMLESS = re.compile( r"symlink has no referent|file has vanished|^rsync (error|warning): some files" )
+
+
+def rsync_failed( got ) -> bool:
+    if not got.returncode:
+        return False
+    said = [ l for l in ( got.stderr or "" ).splitlines() if l.strip() ]
+    return got.returncode not in ( 23, 24 ) or not all( HARMLESS.search( l.strip() ) for l in said )
 
 
 # ── one installed image, and the machine booted from it ─────────────────────
@@ -484,6 +555,50 @@ def _read( path: Path, default = "" ) -> str:
         return path.read_text().strip()
     except OSError:
         return default
+
+
+DATA_DRIVE = "E"
+
+# Run in the guest once it answers, every boot: the disk that is kept made
+# usable. Windows Server leaves a disk it has not seen offline ( its SAN
+# policy ), a new one is blank, and a letter is not promised from one boot to
+# the next -- so each is seen to. The system disk is the boot one; the kept
+# one is the other.
+DATA_SCRIPT = f"""
+$ErrorActionPreference = 'Stop'
+$d = Get-Disk | Where-Object {{ -not $_.IsBoot -and -not $_.IsSystem }} | Select-Object -First 1
+if ( -not $d ) {{ throw 'no data disk' }}
+if ( $d.IsOffline )  {{ Set-Disk -Number $d.Number -IsOffline $false }}
+if ( $d.IsReadOnly ) {{ Set-Disk -Number $d.Number -IsReadOnly $false }}
+if ( ( Get-Disk -Number $d.Number ).PartitionStyle -eq 'RAW' ) {{
+    Initialize-Disk -Number $d.Number -PartitionStyle GPT
+    New-Partition -DiskNumber $d.Number -UseMaximumSize -DriveLetter {DATA_DRIVE} | Out-Null
+    Format-Volume -DriveLetter {DATA_DRIVE} -FileSystem NTFS -NewFileSystemLabel errand-data -Confirm:$false | Out-Null
+}} else {{
+    $p = Get-Partition -DiskNumber $d.Number | Where-Object Type -eq 'Basic' | Select-Object -First 1
+    if ( $p.DriveLetter -ne '{DATA_DRIVE}' ) {{
+        Set-Partition -DiskNumber $d.Number -PartitionNumber $p.PartitionNumber -NewDriveLetter {DATA_DRIVE}
+    }}
+}}
+# Scanned on every write otherwise, which halves a compiler's speed -- as for C:\\errand.
+try {{ Add-MpPreference -ExclusionPath {DATA_DRIVE}:\\ }} catch {{ }}
+Write-Output 'errand-data-ok'
+"""
+
+
+# What Windows has not written yet, written. The machine is thrown away rather
+# than shut down, which to the disk that is kept is a power cut: without this
+# the files of the last command are there, with their names and sizes, and
+# zeros inside.
+FLUSH_SCRIPT = f"Write-VolumeCache -DriveLetter {DATA_DRIVE}"
+
+
+def powershell( script: str ) -> str:
+    """`script` as one cmd.exe line: encoded, so that no quote or newline of it
+    has to survive cmd.exe."""
+    import base64
+    return "powershell -NoProfile -NonInteractive -EncodedCommand " + \
+           base64.b64encode( script.encode( "utf-16-le" ) ).decode()
 
 
 GUEST_OPTIONS = [ "-o", "IdentitiesOnly=yes", "-o", "StrictHostKeyChecking=no",
@@ -557,7 +672,7 @@ class Machine:
         need( self.facts, ( "qemu-system-x86_64", "qemu-img" ), qemu_hint( self.facts ) )
         ( self.live / "config.json" ).write_text( json.dumps( {
             "host": self.host.spec(), "name": self.name, "cpus": booted[ "cpus" ], "ram": booted[ "ram" ],
-            "keep": _seconds( booted[ "keep" ] ) } ) )
+            "keep": _seconds( booted[ "keep" ] ), "data": booted.get( "data" ) } ) )
         ( self.live / "state" ).write_text( "starting" )
         env = { k: v for k, v in os.environ.items() if k != queue.CLAIM }
         # Wherever this errand was imported from is where the keeper imports it
@@ -581,7 +696,7 @@ class Machine:
                 raise VmError( f"the windows machine did not come up:\n{tail}" )
             if state != said:
                 echo( { "starting": "  starting the windows machine",
-                        "queued"  : "  waiting for the machine to have room for it ( errand --queue )",
+                        "queued"  : "  waiting for the machine to have room for it ( errand queue )",
                         "booting" : f"  booting windows {self.facts.where}" }.get( state, f"  windows: {state}" ) )
                 said, since = state, time.time()
             if state == "booting" and time.time() - since > BOOT_TIMEOUT:
@@ -603,28 +718,29 @@ class Machine:
         if got.returncode:
             raise VmError( f"could not write {path} {self.facts.where}: {got.stderr.strip()[ -300 : ]}" )
 
-    def start( self, disk: str, *, cpus, ram, iso = None, media = None, log: str ) -> tuple:
+    def start( self, disk: str, *, cpus, ram, iso = None, media = None, data = None, log: str ) -> tuple:
         """QEMU started over there and let go of -> ( port, pid ). The port is
         drawn at random and tried: only that machine knows which ones are free."""
-        how = accel( self.facts )
+        how, pidfile = accel( self.facts ), f"{log}.pid"
         for _ in range( 5 ):
             port = random.randint( 20000, 60000 )
-            argv = qemu_argv( disk, accel = how, port = port, cpus = cpus, ram = ram, iso = iso, media = media )
-            # nohup, all three streams elsewhere: it must outlive the ssh that
-            # started it, and that ssh must not wait for it.
-            out = self.there( f'nohup {L.sh( argv )} > "$1" 2>&1 < /dev/null & echo "errand-pid=$!"', log,
-                              what = "starting QEMU" )
+            argv = qemu_argv( disk, accel = how, port = port, cpus = cpus, ram = ram, iso = iso, media = media,
+                              data = data )
+            # QEMU lets go by itself, and only once the machine is set up: a
+            # port taken or a disk locked is its exit code, now, not a death
+            # to notice later -- and the pid is the one IT writes, not a guess
+            # at which process a shell put in the background.
+            got = self.host.shell( _sh( 'p=$1 l=$2; shift 2; rm -f "$p"; "$@" > "$l" 2>&1 < /dev/null; code=$?; '
+                                        'cat "$l"; [ $code -eq 0 ] && echo "errand-pid=$( cat "$p" )"; exit $code',
+                                        pidfile, log, *argv, "-daemonize", "-pidfile", pidfile ),
+                                   capture = True )
+            out = ( got.stdout or "" ) + ( got.stderr or "" )
             found = re.search( r"errand-pid=(\d+)", out )
-            if not found:
-                raise VmError( f"QEMU did not start {self.facts.where}: {out.strip()[ -300 : ]}" )
-            pid = int( found.group( 1 ) )
-            time.sleep( 2.0 )
-            if self.alive_there( pid ) is not False:
+            if got.returncode == 0 and found:
                 self._port = port
-                return port, pid
-            tail = self.host.shell( L.sh( [ "tail", "-c", "800", log ] ), capture = True ).stdout or ""
-            if "hostfwd" not in tail and "host forwarding" not in tail:
-                raise VmError( f"QEMU stopped at once {self.facts.where}:\n{tail}" )
+                return port, int( found.group( 1 ) )
+            if "hostfwd" not in out and "host forwarding" not in out:
+                raise VmError( f"QEMU did not start {self.facts.where}:\n{out.strip()[ -800 : ]}" )
         raise VmError( f"no free port for ssh into the machine {self.facts.where}, five tries" )
 
     def alive_there( self, pid ):
@@ -633,6 +749,14 @@ class Machine:
         if got.returncode == 0:
             return True
         return None if self.host.remote and got.returncode == 255 else False
+
+    def gone( self, pid ) -> bool:
+        """Dead, asked twice a few seconds apart: a machine's disk is renamed, or
+        its claim let go, on this answer -- one stray `no` must not do that."""
+        if self.alive_there( pid ) is not False:
+            return False
+        time.sleep( 3.0 )
+        return self.alive_there( pid ) is False
 
     def stop_there( self, pid ):
         """Thrown away rather than shut down: the next boot starts from the image
@@ -665,7 +789,7 @@ class Machine:
         """Until sshd answers, QEMU dies, or `timeout`."""
         deadline = time.time() + timeout
         while time.time() < deadline:
-            if self.alive_there( pid ) is False:
+            if self.gone( pid ):
                 return False
             if self.answers():
                 return True
@@ -673,21 +797,16 @@ class Machine:
         return False
 
     def push( self, there: str ):
-        """The project as the machine that runs QEMU has it, into the guest."""
-        win, archive = _backslashed( there ), f"{self.spot}/push.tar"
-        self.there( 'mkdir -p "$1"', self.spot )
-        got = self.host.shell( pack_line( archive ), capture = True )
-        if got.returncode:
-            raise subprocess.CalledProcessError( got.returncode, "tar", stderr = got.stderr )
-        try:
-            for step in ( lambda: self.guest( f'if not exist "{win}" mkdir "{win}"' ).returncode,
-                          lambda: self.scp( archive, f"{USER}@127.0.0.1:{there}.tar" ),
-                          lambda: self.guest( f'tar -x -f "{there}.tar" -C "{there}" && del "{win}.tar"' ).returncode ):
-                code = step()
-                if code:
-                    raise subprocess.CalledProcessError( code, "copy into windows" )
-        finally:
-            self.host.shell( L.sh( [ "rm", "-f", archive ] ), quiet = True )
+        """The project as the machine that runs QEMU has it, into the guest:
+        what changed since the last time, when `there` is on the kept disk."""
+        win = _backslashed( there )
+        code = self.guest( f'if not exist "{win}" mkdir "{win}"' ).returncode
+        if code:
+            raise subprocess.CalledProcessError( code, "copy into windows" )
+        got = self.host.shell( rsync_line( self._reach( "ssh", "-p" ), there ), capture = True )
+        if rsync_failed( got ):
+            raise VmError( f"could not copy the project into windows ( rsync: {got.returncode} ):\n"
+                           f"{( got.stderr or '' ).strip()[ -800 : ]}" )
 
     def fetch( self, paths, there: str ):
         """Into the project as the machine that runs QEMU has it -- from where an
@@ -711,11 +830,11 @@ class Machine:
         """Hold a claim, boot, wait for idleness, stop. Run as its own process,
         here; QEMU runs wherever `host` leads."""
         ( self.live / "keeper.pid" ).write_text( str( os.getpid() ) )
-        # A SIGTERM ( `--vm-stop` ) must unwind through the `finally` below, or
+        # A SIGTERM ( `errand vm stop` ) must unwind through the `finally` below, or
         # QEMU outlives its keeper and nobody counts what it holds.
         signal.signal( signal.SIGTERM, lambda *_: sys.exit( 0 ) )
         self._kill_leftover()
-        overlay, pid = f"{self.spot}/overlay.qcow2", None
+        overlay, pid, data = f"{self.spot}/overlay.qcow2", None, None
         try:
             ( self.live / "state" ).write_text( "queued" )
             # The queue is this machine's: cores over there are counted only
@@ -724,32 +843,55 @@ class Machine:
                               label = f"windows vm {self.name[ : 8 ]}", enabled = not self.host.remote ):
                 self.there( 'mkdir -p "$1" && rm -f "$3" && qemu-img create -q -f qcow2 -b "$2" -F qcow2 "$3"',
                             self.spot, f"{self.image}/base.qcow2", overlay, what = "the overlay" )
+                data = self.data_disk( config.get( "data" ) )
                 ( self.live / "state" ).write_text( "booting" )
-                port, pid = self.start( overlay, cpus = config[ "cpus" ], ram = config[ "ram" ],
+                port, pid = self.start( overlay, cpus = config[ "cpus" ], ram = config[ "ram" ], data = data,
                                         log = f"{self.spot}/qemu.log" )
                 ( self.live / "port" ).write_text( str( port ) )
                 ( self.live / "qemu.pid" ).write_text( str( pid ) )
                 if not self.wait_for( pid, BOOT_TIMEOUT ):
                     ( self.live / "state" ).write_text( "failed" )
                     return 1
+                if data:
+                    got = self.guest( powershell( DATA_SCRIPT ), capture = True )
+                    if "errand-data-ok" not in ( got.stdout or "" ):
+                        print( f"the disk that is kept could not be made {DATA_DRIVE}:\n"
+                               f"{( got.stdout or '' )[ -800 : ]}{( got.stderr or '' )[ -800 : ]}", flush = True )
+                        ( self.live / "state" ).write_text( "failed" )
+                        return 1
                 ( self.live / "state" ).write_text( "ready" )
                 held, ticks = None, 0     # the locks, kept until this process is gone
                 while held is None:
                     time.sleep( 2.0 )
                     ticks += 1
                     # Asked rarely: over ssh every question is a connection.
-                    if ticks % 15 == 0 and self.alive_there( pid ) is False:
+                    if ticks % 15 == 0 and self.gone( pid ):
                         break
                     held = self._idle( config[ "keep" ] )
         finally:
             ( self.live / "state" ).write_text( "stopping" )
             if pid is not None:
+                if data:
+                    # Every command flushed already; this is for whatever ran
+                    # since, or was cut short.
+                    with contextlib.suppress( subprocess.TimeoutExpired ):
+                        self.guest( powershell( FLUSH_SCRIPT ), quiet = True, timeout = 60 )
                 self.stop_there( pid )
             self.host.shell( L.sh( [ "rm", "-f", overlay ] ), quiet = True )
             ( self.live / "qemu.pid" ).unlink( missing_ok = True )
             ( self.live / "keeper.pid" ).unlink( missing_ok = True )
             ( self.live / "state" ).write_text( "stopped" )
         return 0
+
+    def data_disk( self, size ) -> str | None:
+        """The disk that is kept, made the first time -> its path over there.
+        One per image: every project booted from it has its folder on it, and
+        it outlives restarts and reinstalls of the same declaration alike."""
+        if not size:
+            return None
+        path = f"{self.image}/data.qcow2"
+        self.there( 'test -f "$1" || qemu-img create -q -f qcow2 "$1" "$2"', path, size, what = "the data disk" )
+        return path
 
     def _idle( self, keep: float ):
         """Long enough since the last command, no errand process still holding
@@ -823,6 +965,23 @@ class Machine:
                            f"declare it: errand.Windows( iso = 'path/to/windows.iso' )" )
         return target
 
+    def obtain_rsync( self, into: str, work: str, echo = print ):
+        """The rsync of the guest, unpacked from MSYS2's packages into `into`,
+        on the install media -- by the machine that runs QEMU, which has a
+        zstd to open them with, where Windows may not."""
+        if "curl" in self.facts.tools:
+            fetch = 'curl -fsSL --retry 3 -o "$p.tar.zst" "$repo/$p-x86_64.pkg.tar.zst"'
+        elif "wget" in self.facts.tools:
+            fetch = 'wget -q -O "$p.tar.zst" "$repo/$p-x86_64.pkg.tar.zst"'
+        else:
+            raise VmError( f"neither curl nor wget {self.facts.where} to download rsync for windows with" )
+        echo( f"  downloading rsync for windows from msys2 {self.facts.where}" )
+        script = ( 'repo="$1" into="$2" work="$3"; shift 3; set -e; mkdir -p "$into" "$work"; cd "$work"; '
+                   f'for p in {" ".join( MSYS2_PACKAGES )}; do {fetch}; '
+                   'zstd -dqc "$p.tar.zst" | tar -x -f - usr/bin; done; '
+                   'for f in "$@"; do cp "usr/bin/$f" "$into/"; done; cd / && rm -rf "$work"' )
+        self.there( script, MSYS2_REPO, into, work, *RSYNC_FILES, what = "unpacking rsync for windows" )
+
 
 def running( ) -> list:
     """-> [ live directory ] whose keeper is alive."""
@@ -833,7 +992,7 @@ def running( ) -> list:
 
 
 def stop_all( echo = print ) -> int:
-    """`errand --vm-stop`: every warm machine, now -- here or elsewhere, since
+    """`errand vm stop`: every warm machine, now -- here or elsewhere, since
     every keeper is here."""
     machines = running()
     for live in machines:
@@ -846,12 +1005,13 @@ def stop_all( echo = print ) -> int:
 
 
 def install( host, name: str, declared: dict, booted: dict, echo = print ) -> int:
-    """`--setup` for a `Windows` layer: install from the ISO, check it answers,
+    """`errand setup` for a `Windows` layer: install from the ISO, check it answers,
     and only then call it ready -- decided here, done through `host`."""
     try:
         facts = Facts.of( host )
         need( facts, ( "ssh", "scp", "ssh-keygen", "tar" ), "they come with OpenSSH and tar" )
         need( facts, ( "qemu-system-x86_64", "qemu-img" ), qemu_hint( facts ) )
+        need( facts, ( "rsync", "zstd" ), package_hint( facts, [ "rsync", "zstd" ] ) )
         how, _ = accel( facts )
         if how == "tcg":
             echo( f"  no hardware virtualization {facts.where} ( /dev/kvm ): this will take HOURS" )
@@ -864,10 +1024,11 @@ def install( host, name: str, declared: dict, booted: dict, echo = print ) -> in
                  '( test -f "$1/key" || ssh-keygen -q -t ed25519 -N "" -C errand-vm -f "$1/key" ) && '
                  'cp "$1/key.pub" "$3/errand_key.pub"', m.image, work, media, what = "preparing the install" )
         m.write( f"{media}/autounattend.xml", autounattend( key = declared[ "key" ], index = declared[ "index" ] ) )
+        m.obtain_rsync( f"{media}/rsync", f"{work}/msys2", echo )
         provision = [ ]
         for i, p in enumerate( declared[ "provision" ] ):
             if str( p ).endswith( ".ps1" ):
-                # From the project as that machine has it: `--setup` pushed it there first.
+                # From the project as that machine has it: `errand setup` pushed it there first.
                 m.there( 'cp "$1" "$2"', p, f"{media}/errand-provision-{i}.ps1", what = f"copying {p}" )
                 provision.append( p )
             else:
@@ -889,7 +1050,7 @@ def install( host, name: str, declared: dict, booted: dict, echo = print ) -> in
                               log = f"{work}/qemu.log" )
             report = started + 600
             # Setup powers the machine off when it is done: that is the signal.
-            while m.alive_there( pid ) is not False:
+            while not m.gone( pid ):
                 time.sleep( 10.0 )
                 if time.time() > report:
                     echo( f"    still installing, {( time.time() - started ) / 60:.0f} min" )
@@ -923,7 +1084,7 @@ def _check( m: Machine, booted: dict, work: str, echo ) -> bool:
     try:
         if not m.wait_for( pid, BOOT_TIMEOUT ):
             echo( "  installed, but sshd never answered: the first logon script did not run, "
-                  "or failed before sshd -- ERRAND_VM_VNC=1 and --setup=force to watch it" )
+                  "or failed before sshd -- ERRAND_VM_VNC=1 and errand setup --force to watch it" )
             return False
         status = ( m.guest( r"type C:\errand\setup.status", capture = True ).stdout or "" ).strip()
         if status != "ok":
@@ -1083,6 +1244,17 @@ try {{
     Stop-Service wuauserv -ErrorAction SilentlyContinue
     Set-Service wuauserv -StartupType Disabled -ErrorAction SilentlyContinue
     try {{ Set-MpPreference -DisableRealtimeMonitoring $true -ExclusionPath C:\\errand, C:\\BuildTools }} catch {{ }}
+
+    # What copies the project in. Its POSIX permissions would be mapped onto
+    # ACLs, and the files it writes come out unreadable to anybody else: off,
+    # so that they inherit the ACLs of where they land, as any other file.
+    Step 'rsync'
+    $bin = '{GUEST_MSYS}\\usr\\bin'
+    New-Item -ItemType Directory -Force $bin, '{GUEST_MSYS}\\etc' | Out-Null
+    Copy-Item ( Join-Path $media 'rsync\\*' ) $bin
+    Set-Content '{GUEST_MSYS}\\etc\\fstab' 'none / cygdrive binary,posix=0,noacl,user 0 0' -Encoding ascii
+    & ( Join-Path $bin 'rsync.exe' ) --version | Out-Null
+    if ( $LASTEXITCODE ) {{ throw "rsync: exit $LASTEXITCODE" }}
 {''.join( steps )}
     Set-Content C:\\errand\\setup.status 'ok'
 }} catch {{

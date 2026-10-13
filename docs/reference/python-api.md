@@ -12,9 +12,10 @@ And everything a project file needs:
 
 ```python
 import errand       # then errand.configure, errand.envs, errand.Env, errand.default_env,
-                    # errand.provider, errand.value, and the layers and providers by name:
+                    # errand.runners, errand.value, and the layers and runners by name:
                     # Vars Venv Micromamba Conda Uv Nix Guix Module Apptainer Docker Podman
-                    # Ssh Slurm  --  Provider Pytest Catch2 Cargo Outcome RunContext
+                    # Ssh Slurm  --  Runner Level Errand Pytest Catch2 Cargo Python Shell
+                    # Executable Outcome RunContext
 ```
 
 ::: tip The import surface is deliberately cheap
@@ -42,7 +43,7 @@ if p := entry( "solve", n = Param( 1000 ), keep = True, cpus = 4 ):
 
 | traits | default | |
 |---|---|---|
-| `bulk` | `True` | picked up by a bare `errand`, with no pattern |
+| `bulk` | `True` | picked up by `errand run` with no pattern |
 | `keep` | `False` | its numbers are kept and compared date to date |
 | `exclusive` | `False` | it needs the machine to itself |
 | `stable_path` | `False` | `latest/` is what you are meant to open |
@@ -82,7 +83,7 @@ Param( default, *, help = "", choices = None )
 ```
 
 The **type comes from the default** — `Param( 1000 )` reads its flag as an int. `help` shows in
-`errand --help` and in [the screen](/guide/tui); `choices` is checked before anything runs. Every
+`errand list` and in [the screen](/guide/tui); `choices` is checked before anything runs. Every
 parameter takes a value on the command line, and a comma in that value is a
 [matrix](/guide/matrices).
 
@@ -209,10 +210,12 @@ stack where it is not. Keyword arguments are its [tags](/guide/tags). Only an `E
 `errand.default_env` is what is used when nothing is asked for. Naming an environment that does
 not exist is an error.
 
-### provider
+### runners
 
 ```python
-errand.provider( p ) -> p
+errand.runners.replace( runner ) -> runner
+errand.runners.append( runner )
 ```
 
-Adopts a suite that already exists — see the [provider reference](./providers).
+What runs which file: a list, filled with the runners that come with errand. `replace` puts a
+configured runner in place of the default one of its kind — see the [runner reference](./runners).

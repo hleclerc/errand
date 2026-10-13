@@ -31,7 +31,7 @@ the exclusivity.
 Check that errand sees it before going any further:
 
 ```bash
-errand --help "solvers::cost"
+errand list bench/solvers.py::cost
 ```
 
 ## The places
@@ -78,16 +78,16 @@ for that before submitting, but a home or a `/scratch` is the right answer from 
 ## Get the places ready
 
 ```bash
-errand --envs                 # what is declared, and the state of each
-errand --setup --dry-run      # exactly what building them would run
-errand --setup                # do it, and nothing else
+errand envs             # what is declared, and the state of each
+errand setup --dry-run  # exactly what building them would run
+errand setup            # do it, and nothing else
 ```
 
-`--envs` will say `unknown` for `there`: only the other machine can say what it has. Reach it
+`errand envs` will say `unknown` for `there`: only the other machine can say what it has. Reach it
 directly to find out:
 
 ```bash
-errand --env there -- python -c "import sys; print( sys.version )"
+errand shell --env there -- python -c "import sys; print( sys.version )"
 ```
 
 Everything after `--` is a command to run *in* the environment. It is pushed, run over there and
@@ -96,14 +96,14 @@ reported back — and the environment is prepared first, by the same rules as a 
 ## Take the number, in both places
 
 ```bash
-errand "solvers::cost" --env here,there --n=100000
+errand run --env here,there bench/solvers.py::cost --n=100000
 ```
 
 ```text
   → bigbox.lab.example:/home/me/scratch/proj  env=there  tags=driver:cpu,remote
   rsync push → bigbox.lab.example:/home/me/scratch/proj
   ...
-  rsync pull ← bigbox.lab.example:/home/me/scratch/proj [runs/solvers/cost]
+  rsync pull ← bigbox.lab.example:/home/me/scratch/proj [runs/bench/solvers.py/cost]
 ```
 
 The comma is a [matrix](/guide/matrices); the two runs share one timestamp because they are one
@@ -111,14 +111,14 @@ command. The remote side never sees a matrix — it is expanded here, into plain
 to fetch back are worked out **before** anything starts.
 
 ```text
-runs/solvers/cost/
+runs/bench/solvers.py/cost/
   2026-10-02_14h22m07-here@laptop-n=100000/result.yaml
   2026-10-02_14h22m07-there@bigbox-n=100000/result.yaml
   summary.yaml
 ```
 
 ```bash
-cat runs/solvers/cost/summary.yaml
+cat runs/bench/solvers.py/cost/summary.yaml
 ```
 
 One row per run, with the extents across them. That file is recomputed from the neighbouring
@@ -127,16 +127,16 @@ One row per run, with the extents across them. That file is recomputed from the 
 ## Make it a sweep, and let go of it
 
 ```bash
-errand --batch "solvers::cost" --env here,there --n=100000,1000000 --method=newton,lbfgs
+errand run --batch --env here,there bench/solvers.py::cost --n=100000,1000000 --method=newton,lbfgs
   submitted 4c1e - 8 run(s) - 4 on bigbox.lab.example, 4 on this machine
-  errand --status    errand --watch
+  errand status    errand watch
 ```
 
 Eight runs, and the shell back. `--batch` means a detached session locally and a released ssh
 command over there; nothing else about the run changes.
 
 ```bash
-errand --watch
+errand watch
 ```
 
 ```text
@@ -151,9 +151,9 @@ errand --watch
 ```
 
 The matrix reads as a table — parameters down, places across — because that is the shape it has.
-`--watch` holds no state of its own: kill it, restart it, run two of them.
+`errand watch` holds no state of its own: kill it, restart it, run two of them.
 
-Close the terminal and come back tomorrow: `errand --status` reads the tree, and
+Close the terminal and come back tomorrow: `errand status` reads the tree, and
 [the arrival of a result file where one was expected is the completion
 signal](/guide/detached#the-output-tree-is-the-state). There is no daemon and nothing to get out of
 sync.
@@ -161,8 +161,8 @@ sync.
 ## A month later
 
 ```bash
-errand "solvers::cost" --env here,there --n=100000
-cat runs/solvers/cost/summary.yaml
+errand run --env here,there bench/solvers.py::cost --n=100000
+cat runs/bench/solvers.py/cost/summary.yaml
 ```
 
 Same command, new rows. The old runs are still there — only the run directory is cleared and
@@ -188,4 +188,4 @@ number came from; deciding what may be compared to what is yours.
 
 - [Sharing the machine](/guide/machine) — what `exclusive`, `cpus` and `gpus = 1` actually do.
 - [The screen](/guide/tui) — the same matrix, ticked rather than typed.
-- [Other languages](/guide/providers) — the same treatment for a Catch2 or cargo suite.
+- [Runners](/guide/runners) — the same treatment for a Catch2 or cargo suite.

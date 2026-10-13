@@ -71,12 +71,12 @@ if test( "the same results, whichever shape it ran in", tags = [ "slow" ] ):
     with tempfile.TemporaryDirectory() as tmp:
         project = write_project( Path( tmp ) / "proj", "", { "bench_p.py": PARAMETRIZED } )
 
-        code, _ = run_errand( project, "-k", "bench", "--n=1,2,3" )
+        code, _ = run_errand( project, "run", "-k", "bench", ".", "--n=1,2,3" )
         assert code == 0
         serial = { str( p.relative_to( project ) ): yamlish.read( p )[ "results" ]
                    for p in sorted( ( project / "runs" ).rglob( "result.yaml" ) ) }
 
-        code, _ = run_errand( project, "-k", "bench", "--n=1,2,3", "-j", "3" )
+        code, _ = run_errand( project, "run", "-k", "bench", "-j", "3", ".", "--n=1,2,3" )
         assert code == 0
         parallel = { str( p.relative_to( project ) ): yamlish.read( p )[ "results" ]
                      for p in sorted( ( project / "runs" ).rglob( "result.yaml" ) ) }
@@ -88,7 +88,7 @@ if test( "the same results, whichever shape it ran in", tags = [ "slow" ] ):
 if test( "an entry's output arrives whole, not interleaved", tags = [ "slow" ] ):
     with tempfile.TemporaryDirectory() as tmp:
         project = write_project( Path( tmp ) / "proj", "", { "test_chatty.py": CHATTY } )
-        code, output = run_errand( project, "-j", "2" )
+        code, output = run_errand( project, "run", "-j", "2" )
         assert code == 0, output
 
         # Both entries print three lines each, slowly, at the same time. If the
@@ -104,7 +104,7 @@ if test( "an entry's output arrives whole, not interleaved", tags = [ "slow" ] )
 if test( "what happened in a child is what the parent reports", tags = [ "slow" ] ):
     with tempfile.TemporaryDirectory() as tmp:
         project = write_project( Path( tmp ) / "proj", "", { "test_mixed.py": MIXED } )
-        code, output = run_errand( project, "-j", "3" )
+        code, output = run_errand( project, "run", "-j", "3" )
 
         assert code == 1, output                      # a failure anywhere is a failure
         assert "FAILED fails" in output, output
@@ -119,7 +119,7 @@ if test( "a value with a space survives the trip to the child", tags = [ "slow" 
     # be wrong.
     with tempfile.TemporaryDirectory() as tmp:
         project = write_project( Path( tmp ) / "proj", "", { "bench_p.py": PARAMETRIZED } )
-        code, output = run_errand( project, "-k", "bench", "--label", "two words", "-j", "2" )
+        code, output = run_errand( project, "run", "-k", "bench", "-j", "2", ".", "--label", "two words" )
         assert code == 0, output
         got = [ yamlish.read( p )[ "results" ]
                 for p in ( project / "runs" ).rglob( "result.yaml" ) ]
@@ -144,7 +144,7 @@ if p := bench( "alone two" ):
     with tempfile.TemporaryDirectory() as tmp:
         project = write_project( Path( tmp ) / "proj", "", { "bench_alone.py": WORK } )
         started = time.perf_counter()
-        code, output = run_errand( project, "-k", "bench", "-j", "2" )
+        code, output = run_errand( project, "run", "-k", "bench", "-j", "2" )
         elapsed = time.perf_counter() - started
         assert code == 0, output
         assert elapsed > 2.5, f"two exclusive benchmarks overlapped ({elapsed:.1f}s)\n{output}"

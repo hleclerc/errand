@@ -8,18 +8,19 @@ and only the way of letting go differs.
     Slurm, …  `sbatch` instead of `srun`
 
 Nothing else about the run changes -- same paths, same queue, same output. And
-because the paths were worked out BEFORE anything started, **the arrival of a
-result file where one was expected is itself the completion signal.** There is
+because each place writes its plan BEFORE anything runs there, **the arrival of
+a result file where its plan said one would be is itself the completion
+signal.** There is
 no protocol between the two sides, no daemon, and no agreement that can get out
 of sync: the output tree is the state.
 
-What is kept here is only what the tree cannot say: which runs belong to one
-submission, and what handle was given for each place. That record is LOCAL,
-because the side that expanded the matrix is the only one that ever knew those
-runs went together.
+What is kept here is only what the tree cannot say: which places belong to one
+submission, what handle was given for each, and where each writes its plan.
+That record is LOCAL: it is the side that asked which knows those places went
+together.
 
 Results are PULLED, not pushed: a finished remote run sits there until
-something collects it, which is what `--status` and `--watch` do.
+something collects it, which is what `errand status` and `errand watch` do.
 """
 from __future__ import annotations
 
@@ -34,7 +35,7 @@ from . import layers as L, yamlish
 
 BATCH_DIR = ".errand/batch"
 
-PENDING, RUNNING, DONE, LOST = "pending", "running", "done", "lost"
+PENDING, PREPARING, RUNNING, DONE, LOST = "pending", "preparing", "running", "done", "lost"
 
 
 def batch_dir( root: Path ) -> Path:
@@ -73,23 +74,45 @@ def forget( root: Path, ident: str ):
 
 # ── letting go ───────────────────────────────────────────────────────────────
 
-def detach( env, tags, argv, *, root, log: Path, child_env: dict ) -> dict:
-    """Start `argv` through `env`'s layers and come straight back.
+def detach( env, tags, argv, *, root, log: Path, child_env: dict, phase = "run",
+            then = None ) -> dict:
+    """Start `argv` through `env`'s layers of `phase` and come straight back.
+
+    `then` is what to run once that is done, inside the same allocation but
+    outside the layers after its scheduler: how a preparation submits the run
+    it has just sized, without anybody waiting for it here.
 
     -> { kind, handle, host?, remote_root?, options? }, or { kind: "failed" }.
     """
-    ctx = L.Context( root = root, tags = tags, batch = True )
-    cmd = L.Command( [ "python", "-m", "errand", *argv ], dict( child_env ) )
+    stack = env.stack_for( phase, tags )
+    ctx = L.Context( root = root, tags = tags, batch = True, phase = phase )
+    ssh = L.ssh_of( stack )
+    batch = L.batch_of( stack )
 
-    ssh = env.ssh
-    batch = L.batch_of( env.stack )
-
-    if L.vm_of( env.stack ) is not None:
+    if L.vm_of( stack ) is not None:
         return { "kind": "failed", "handle": "",
                  "error": f"{env.name} is a virtual machine: `--batch` does not reach one yet" }
 
+    tail, python, work = stack, "python", ctx
+    if ssh is not None:
+        tail, python = stack[ 1 : ], ssh.python
+        work = L.Context( root = ssh.remote_root( ctx ), tags = tags, remote = True,
+                          batch = True, phase = phase )
+    cmd = L.Command( [ python, "-m", "errand", *argv ], dict( child_env ) )
+    follow = L.Command( [ python, "-m", "errand", *then ], dict( child_env ) ) if then else None
+    if follow is not None and batch is not None:
+        # Inside the allocation, outside the layers after the scheduler.
+        k = tail.index( batch )
+        inner = L.compose( tail[ k + 1 : ], cmd, work )
+        cmd = L.Command( [ "sh", "-c", f"{inner.shell()} && {follow.shell()}" ], { } )
+        tail = tail[ : k + 1 ]
+        follow = None
+    wrapped = L.compose( tail, cmd, work )
+    if follow is not None:
+        # No scheduler: the same detached session goes on to the next step.
+        wrapped = L.Command( [ "sh", "-c", f"{wrapped.shell()} && {follow.shell()}" ], { } )
+
     if ssh is None and batch is None:
-        wrapped = L.compose( env.stack, cmd, ctx )
         log.parent.mkdir( parents = True, exist_ok = True )
         with open( log, "wb" ) as handle:
             # A session of its own: closing the terminal, or the shell sending
@@ -102,19 +125,14 @@ def detach( env, tags, argv, *, root, log: Path, child_env: dict ) -> dict:
 
     if ssh is None:
         # A batch system here on this machine: it is its own detachment.
-        wrapped = L.compose( env.stack, cmd, ctx )
         got = subprocess.run( wrapped.argv, cwd = root, capture_output = True, text = True,
                               env = { **os.environ, **wrapped.env } )
         return _from_submission( got, kind = "batch" )
 
-    remote_ctx = L.Context( root = ssh.remote_root( ctx ), tags = tags, remote = True,
-                            batch = True )
-    wrapped = L.compose( env.stack[ 1 : ], L.Command( [ ssh.python, *cmd.argv[ 1 : ] ], cmd.env ),
-                         remote_ctx )
-    L.push( root, ssh.host, remote_ctx.root, ssh.options )
+    L.push( root, ssh.host, work.root, ssh.options )
 
-    remote_log = f"{remote_ctx.root}/{BATCH_DIR}/{log.name}"
-    line = ( f"mkdir -p {remote_ctx.root}/{BATCH_DIR} && cd {remote_ctx.root} && "
+    remote_log = f"{work.root}/{BATCH_DIR}/{log.name}"
+    line = ( f"mkdir -p {work.root}/{BATCH_DIR} && cd {work.root} && "
              f"{wrapped.shell()}" )
 
     if batch is not None:
@@ -131,9 +149,14 @@ def detach( env, tags, argv, *, root, log: Path, child_env: dict ) -> dict:
                    else { "kind": "failed", "handle": "",
                           "error": ( got.stderr or got.stdout or "" ).strip()[ : 400 ] } )
 
-    record.update( host = ssh.host, remote_root = str( remote_ctx.root ),
+    record.update( host = ssh.host, remote_root = str( work.root ),
                    options = list( ssh.options ), log = remote_log )
     return record
+
+
+def submitted_path( plan: Path ) -> Path:
+    """Where a preparation says which job it submitted for the run it prepared."""
+    return plan.with_name( plan.stem + ".submitted.json" )
 
 
 def _ssh_capture( ssh, line ):
@@ -184,12 +207,56 @@ def _remote( place: dict, line: str ):
                            capture_output = True, text = True, timeout = 60 )
 
 
-def collect( root: Path, record: dict ):
-    """Fetch what a remote submission has produced so far. Cheap, and repeatable."""
+def _json( path: Path ):
+    import json
+    try:
+        return json.loads( path.read_text() )
+    except ( OSError, ValueError ):
+        return None
+
+
+def plan_of_place( root: Path, place: dict ):
+    """The plan that place wrote, once it has: what it is going to run."""
+    return _json( root / place[ "plan" ] ) if place.get( "plan" ) else None
+
+
+def runs_of( root: Path, record: dict ) -> list:
+    """Every run of a submission whose place has said what it will run."""
+    out = [ ]
     for place in record.get( "places", [ ] ):
-        if place.get( "host" ) and record.get( "pull" ):
-            L.fetch( record[ "pull" ], place[ "host" ], Path( place[ "remote_root" ] ), root,
-                     place.get( "options" ) or [ ] )
+        plan = plan_of_place( root, place )
+        if plan is not None:
+            out += [ { **r, "env": place.get( "env" ) or r.get( "env" ) } for r in plan[ "runs" ] ]
+    return out
+
+
+def run_job( root: Path, place: dict ):
+    """The job a preparation submitted for its run phase, as a place of its own."""
+    if not place.get( "plan" ):
+        return None
+    got = _json( submitted_path( root / place[ "plan" ] ) )
+    return { **place, **got } if got else None
+
+
+def alive_anywhere( root: Path, place: dict ):
+    """Still going: the preparation, or the run it submitted."""
+    then = run_job( root, place )
+    return alive( then ) if then is not None else alive( place )
+
+
+def collect( root: Path, record: dict ):
+    """Fetch what a remote submission has produced so far: its plan first, then
+    what the plan says will be written. Cheap, and repeatable."""
+    for place in record.get( "places", [ ] ):
+        if not place.get( "host" ):
+            continue
+        there = Path( place[ "remote_root" ] )
+        options = place.get( "options" ) or [ ]
+        L.fetch( [ str( Path( place[ "plan" ] ).parent ) ], place[ "host" ], there, root, options )
+        plan = plan_of_place( root, place )
+        if plan is not None:
+            L.fetch( sorted( { r[ "under" ] for r in plan[ "runs" ] } ), place[ "host" ], there,
+                     root, options )
 
 
 def states( root: Path, record: dict ) -> list:
@@ -197,26 +264,33 @@ def states( root: Path, record: dict ) -> list:
 
     The tree is the state. A run whose result file is there is done, whatever
     any handle claims; one whose file is absent is still owed, and whether it
-    is still going or lost is the only thing a handle is asked about.
+    is still going or lost is the only thing a handle is asked about. A place
+    that has not written its plan yet is still preparing: one row says so.
 
     WHERE it ran is looked for, not predicted. The place is part of the path,
-    and this side does not know it: a remote run carries the other machine's
-    name, and a batch job carries the name of whichever compute node the
-    scheduler happened to pick. So the parameter directory -- which IS
-    predictable, being a hash of what was asked for -- is searched, and the
-    result that names this run's environment and parameters is the one.
+    and a batch job carries the name of whichever compute node the scheduler
+    happened to pick. So the case directory is searched, and the result that
+    names this run's environment and parameters is the one.
     """
-    living = any( alive( p ) for p in record.get( "places", [ ] ) )
     rows = [ ]
-    for run in record.get( "runs", [ ] ):
-        result = _result_for( root, run )
-        if result:
-            rows.append( { **run, "state": DONE, "status": result.get( "status" ),
-                           "place": result.get( "place" ) or run.get( "place" ),
-                           "seconds": result.get( "duration_s" ),
-                           "results": result.get( "results" ) or { } } )
-        else:
-            rows.append( { **run, "state": RUNNING if living else LOST } )
+    for place in record.get( "places", [ ] ):
+        living = alive_anywhere( root, place )
+        plan = plan_of_place( root, place )
+        if plan is None:
+            rows.append( { "label": "(preparing)", "env": place.get( "env" ), "place": "?",
+                           "params": { }, "under": "",
+                           "state": PREPARING if living or living is None else LOST } )
+            continue
+        for run in plan[ "runs" ]:
+            run = { **run, "env": place.get( "env" ) or run.get( "env" ) }
+            result = _result_for( root, run )
+            if result:
+                rows.append( { **run, "state": DONE, "status": result.get( "status" ),
+                               "place": result.get( "place" ) or run.get( "place" ),
+                               "seconds": result.get( "duration_s" ),
+                               "results": result.get( "results" ) or { } } )
+            else:
+                rows.append( { **run, "state": RUNNING if living or living is None else LOST } )
     return rows
 
 
@@ -231,6 +305,8 @@ def result_path_for( root: Path, run: dict ):
     The path and not just its contents, because whoever wants to watch the run
     wants `output.txt` beside it.
     """
+    if not run.get( "under" ):
+        return None
     under = root / run[ "under" ]
     if not under.is_dir():
         return None

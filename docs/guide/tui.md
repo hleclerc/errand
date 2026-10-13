@@ -1,13 +1,13 @@
 # The screen
 
 ```bash
-errand --tui
+errand tui
 ```
 
 Here it is, over three places at once — your machine, a container, and a cluster behind ssh and
 Slurm. Search a case, press enter, tick the places, and each one gets its own row:
 
-<Term scene="tui" caption="errand --tui, drawn by hand from the screens below: a case ticked on three environments, each with its own stack of layers. The rows fill in as the runs finish; the cluster's output shows the ssh, the allocation and the fetch back." />
+<Term scene="tui" caption="errand tui, drawn by hand from the screens below: a case ticked on three environments, each with its own stack of layers. The rows fill in as the runs finish; the cluster's output shows the ssh, the allocation and the fetch back." />
 
 **Two pages**, because there are two questions: *what do I run*, and *what came of it*.
 
@@ -90,7 +90,7 @@ of saying so.
  │   ok    solve  n=1000  [local]        ││   result.yaml                 512 B │
  │   ok    solve  n=1000  [gpu]          ││   output.txt                 1.2 kB │
  │   ..    solve  n=5000  [local]        │╰─────────────────────────────────────╯
- │ ▸ errand -k bench --fp 32       6 ok  │╭─ output.txt ────────────────────────╮
+ │ ▸ errand run -k bench --fp 32   6 ok  │╭─ output.txt ────────────────────────╮
  │ ▸ errand tests --n 10           1 ok  ││ iteration 41   residual 3.1e-07     │
  ╰───────────────────────────────────────╯│ iteration 42   residual 1.9e-07     │
                                           ╰─────────────────────────────────────╯
@@ -123,7 +123,7 @@ Enter on a case asks the only question left: where, with which tags, with which 
  │   -j       1                                             how many at once     │
  │   --batch  [ ] detach                                 outlives this window    │
  │   ─────────────────────────────────────────────────────────────────────────   │
- │   errand shapes::solve --env local,gpu --fp 32,64 --n 1000,5000               │
+ │   errand run --env local,gpu --fp 32,64 bench/shapes.py::solve --n 1000,5000        │
  ╰───────────────────────────────────────────────────────────────────────────────╯
    space ticks · ←→ picks · type into a field · enter runs · esc gives up
 ```

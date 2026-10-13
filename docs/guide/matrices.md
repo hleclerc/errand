@@ -3,7 +3,7 @@
 ## Param
 
 `Param( default )` declares a typed flag — the type comes from the default. Parameters show up in
-`--help` and are echoed before each run:
+`errand list` and are echoed before each run:
 
 ```python
 from errand import bench, Param
@@ -14,7 +14,7 @@ if p := bench( "cost", n = Param( 1000, help = "nb of points" ),
 ```
 
 ```bash
-errand cost --n=5000 --method=lbfgs
+errand run bench/solvers.py::cost --n=5000 --method=lbfgs
 ```
 
 `Param( 1000 )` is an int, `Param( "newton" )` a string, `Param( 0.5 )` a float — the default's type
@@ -30,21 +30,29 @@ is a `TypeError` saying so — which is what catches `n = 1000` written where
 ## A comma is a matrix
 
 ```bash
-errand cost --n=1000,5000 --method=newton,lbfgs    # 4 runs, 4 directories
+errand run bench/solvers.py::cost --n=1000,5000 --method=newton,lbfgs    # 4 runs, 4 directories
 ```
 
 **A comma means a matrix**, and it means the same thing everywhere — on a parameter, on a tag, on an
-environment:
+environment, on any argument of the target's own:
 
 ```bash
-errand cost --n=1000,5000                     # two parameter values
-errand cost --fp 32,64                        # two values of a tag
-errand cost --env local,gpu                   # two environments
-errand cost --env local,gpu --fp 32,64 --n=1000,5000   # eight runs
+errand run bench/solvers.py::cost --n=1000,5000                             # two parameter values
+errand run scripts/sweep.sh --size 1024,4096                                # two command lines
+errand run --fp 32,64 bench/solvers.py::cost                                # two values of a tag
+errand run --env local,gpu bench/solvers.py::cost                           # two environments
+errand run --env local,gpu --fp 32,64 bench/solvers.py::cost --n=1000,5000  # eight runs
 ```
 
 Each value is an axis, the cartesian product is run, and every combination lands in its own
-directory so the results sit side by side.
+directory so the results sit side by side. When there is more than one run, the grid is said once
+before anything starts — `4 runs: n = 1000 | 5000, args = --size 1024 | --size 4096` — so a comma
+that was not meant as one is seen in time.
+
+**`\,` is a comma**, and only a comma: `--tol 1e-3\,1e-6` is one argument with a comma in it
+( quote it, or write `\\,`, so the shell leaves the backslash ). **`,,` is an empty value**:
+`--suffix=,_fast` is two runs, one with an empty suffix. No other backslash means anything. On an
+`--option=value`, the comma is in the value: `--mode=a,b` is `--mode=a`, then `--mode=b`.
 
 This works on **any** entry, tests included: sweeping a test across four environments is a perfectly
 good thing to want, and often the thing you most want.
@@ -54,7 +62,7 @@ good thing to want, and often the thing you most want.
 A matrix is **more names, never more levels**:
 
 ```text
-runs/bench_solver/solve/
+runs/bench_solver.py/solve/
   2026-09-24_18h04m11-local@thishost-method=cg,n=10000/result.yaml
   2026-09-24_18h04m11-gpu@thishost-method=cg,n=10000/result.yaml
   2026-09-24_18h04m11-gpu@gpu-box-method=cg,n=10000/result.yaml
@@ -87,14 +95,14 @@ value of it. [Saying nothing means every value.](./tags)
 
 ## Where it is expanded
 
-Matrices are expanded **on this side**, one plain run per combination, each value crossing already
-split. That is true of a local run, of a run [over ssh](./remote), and of a
-[detached](./detached) one — which is what lets the paths to fetch back be computed before the
-remote run has even started.
+Matrices are expanded **where the work runs**, one plain run per combination, during the
+[preparation](./environments#preparing-then-running): the plan it writes names every run, and that is
+what the fetch back, `errand status` and the screen read — for a local run, a run [over
+ssh](./remote) and a [detached](./detached) one alike.
 
 ## On a screen
 
-[`errand --tui`](./tui) builds the same comma. Enter on a case opens a window with every dimension
+[`errand tui`](./tui) builds the same comma. Enter on a case opens a window with every dimension
 in it — environments, tags, parameters, how many at once — and ticking two of anything is a matrix,
 for exactly the reason a comma is. Below the rule the window shows the command it is about to run,
 so the day you want it in a script you already know what to write.

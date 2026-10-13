@@ -47,7 +47,7 @@ Four traits say how an entry should be treated:
 
 | trait | what it decides | default |
 |---|---|---|
-| `bulk` | picked up by a bare `errand`, with no pattern | `True` |
+| `bulk` | picked up by `errand run` with no pattern | `True` |
 | `keep` | its numbers are kept and compared date to date | `False` |
 | `exclusive` | it needs the machine to itself | `False` |
 | `stable_path` | `latest/` is what you are meant to open | `False` |
@@ -87,7 +87,7 @@ a timing taken while something else was running is not a timing. When the number
 timings, use `track`, or `bench( …, exclusive = False )` — they are the same thing.
 
 They are four lines of Python over `entry`, and you can write a fifth of your own the same way.
-Note that a bare `errand` runs **only the tests**: a `bench`, a `track` or an `experiment` is named,
+Note that `errand run` with no pattern runs **only the tests**: a `bench`, a `track` or an `experiment` is named,
 or asked for with `-k bench` (both of the first two) / `-k exp`.
 
 Override a trait on the spot when the preset is not quite right:
@@ -122,7 +122,7 @@ if test( "the slow one", tags = [ "slow", "gpu" ] ):
 ```
 
 ```bash
-errand -e 'slow & !gpu'
+errand run -e 'slow & !gpu'
 ```
 
 `-e` picks *what* runs; `-t` picks *where* (see [Tags](./tags)). They take the same expressions.
@@ -149,12 +149,13 @@ There is no mechanism for project-specific subcommands, because there does not n
 something you want to run is an entry, and `bulk = False` keeps it out of the way until you name it.
 
 ```python
+# tasks.py
 if entry( "docs", bulk = False ):
     build_docs( )
 ```
 
 ```bash
-errand docs
+errand run tasks.py::docs
 ```
 
 ## Next

@@ -151,7 +151,7 @@ def tui_env( project: Path ):
 
 
 def start_tui( project: Path, *args ):
-    return Term( [ sys.executable, "-m", "errand", "--tui", *args ], project,
+    return Term( [ sys.executable, "-m", "errand", "tui", *args ], project,
                  env = tui_env( project ) )
 
 

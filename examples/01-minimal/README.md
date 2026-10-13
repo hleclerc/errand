@@ -12,17 +12,17 @@ test_primes.py    five entries: two tests, two benchmarks, one experiment
 ```bash
 cd examples/01-minimal
 
-errand                            # the tests, and only the tests
-errand -e '!slow'                 # skip the slow one
-errand -k bench                   # the benchmarks
-errand "test_primes::sieve"       # one entry by name
-errand --help                     # what matched, with the parameters it takes
+errand run                        # the tests, and only the tests
+errand run -e '!slow'             # skip the slow one
+errand run -k bench               # the benchmarks
+errand run test_primes.py::sieve  # one entry by name
+errand list                       # what matched, with the parameters it takes
 ```
 
 A comma is a matrix, here and everywhere else:
 
 ```bash
-errand -k bench --n=100000,1000000,10000000
+errand run -k bench . --n=100000,1000000,10000000
 ```
 
 Three runs, three directories, and a summary at the entry's root with one row per size.
@@ -51,7 +51,7 @@ example.
 ## The same thing, on a screen
 
 ```bash
-errand --tui
+errand tui
 ```
 
 Enter on a case opens one window with every dimension in it: the cases, the parameters, how many at

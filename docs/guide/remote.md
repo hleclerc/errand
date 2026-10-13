@@ -14,14 +14,14 @@ errand.envs[ "box" ] = errand.Env( [ errand.Ssh( host = "gpu-box", root = "/home
 ```
 
 ```bash
-errand -k bench --env box
+errand run -k bench --env box
 ```
 
 ```text
   → gpu-box:/home/me/proj  env=box  tags=cuda
   rsync push → gpu-box:/home/me/proj
   ...
-  rsync pull ← gpu-box:/home/me/proj [runs/solvers/cost]
+  rsync pull ← gpu-box:/home/me/proj [runs/bench/solvers.py/cost]
 ```
 
 ## The paths are computed before the run happens
@@ -91,8 +91,9 @@ warning about `root` needing to be on a shared filesystem.
 
 ## Results are pulled, not pushed
 
-A finished remote run sits there until something collects it, which is what asking does. For a
-waiting run, the pull is the last step. For a [detached](./detached) one, `--status` and `--watch`
+A finished remote run sits there until something collects it, which is what asking does. What to
+pull is what the remote side's [plan](./environments#preparing-then-running) names: it is written over
+there before anything runs, and brought back first. For a waiting run, the pull is the last step. For a [detached](./detached) one, `errand status` and `errand watch`
 are what collect it.
 
 ## What only this machine can supply

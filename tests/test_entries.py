@@ -99,7 +99,7 @@ if test( "a comma is a matrix" ):
     params = { "n": Param( 1 ), "m": Param( "a" ) }
     combos = expand( { "n": "1,2", "m": "x,y" }, params )
     assert len( combos ) == 4
-    assert { tuple( sorted( values.items() ) ) for _, values in combos } == {
+    assert { tuple( sorted( ( k, v ) for k, v in values.items() if k != "args" ) ) for _, values in combos } == {
         ( ( "m", "x" ), ( "n", 1 ) ), ( ( "m", "y" ), ( "n", 1 ) ),
         ( ( "m", "x" ), ( "n", 2 ) ), ( ( "m", "y" ), ( "n", 2 ) ),
     }
@@ -112,7 +112,7 @@ if test( "only what actually varied is called out" ):
 
 
 if test( "no override at all is one silent combination" ):
-    assert expand( { "n": None }, { "n": Param( 1 ) } ) == [ ( { }, { } ) ]
+    assert expand( { "n": None }, { "n": Param( 1 ) } ) == [ ( { }, { "args": [ ] } ) ]
 
 
 if test( "choices are checked before anything runs" ):

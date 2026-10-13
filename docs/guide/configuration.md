@@ -1,9 +1,9 @@
 # Configuration
 
-None is needed. `errand` with no configuration at all finds your entries and runs them in the
+None is needed. `errand run` with no configuration at all finds your entries and runs them in the
 interpreter you started it with.
 
-You do not have to write these files from a blank page: **`errand --init`** reads the directory,
+You do not have to write these files from a blank page: **`errand init`** reads the directory,
 writes the `errand-project.py` that says what errand would otherwise guess (see
 [Start from what you have](./start)), and an `errand-envs.py` holding a commented stack of layers
 ready to adapt. It makes `runs/`, adds it and `errand-envs.py` to `.gitignore` if there is a git
@@ -15,8 +15,8 @@ to you, and two names are the convention:
 
 | | |
 |---|---|
-| `errand-project.py` | what the **project** does: providers, compilation flags, `errand.configure`. Versioned |
-| `errand-envs.py` | where **you**, on **your machine**, run it: the environments. Not versioned — `errand --init` adds it to `.gitignore` |
+| `errand-project.py` | what the **project** does: runners, compilation flags, `errand.configure`. Versioned |
+| `errand-envs.py` | where **you**, on **your machine**, run it: the environments. Not versioned — `errand init` adds it to `.gitignore` |
 
 They are ordinary Python, loaded once by path and under a private name, with no entry point to call
 and nothing to return. `errand.envs` holds the environments by name, and the first one declared is
@@ -27,7 +27,7 @@ the default unless `errand.default_env` names another:
 import errand
 
 errand.configure( out = "runs", src = [ "core/src", "app/src" ] )
-errand.provider( errand.Catch2( dir = "tests/cpp" ) )
+errand.runners.replace( errand.Catch2( dir = "tests/cpp" ) )
 ```
 
 ```python
@@ -70,12 +70,14 @@ children errand starts for itself use.
 The default environment is not a setting: it is `errand.default_env = "name"`, or the first one
 declared.
 
-## envs and provider
+## envs and runners
 
 `errand.envs[ name ] = errand.Env( [ layers… ], **tags )` declares an [environment](./environments); its keyword arguments
 are its [tags](./tags). `Ssh` must be the first layer, and `errand.Env` refuses a stack where it is not.
 
-`errand.provider( … )` adopts a suite that already exists — see [Other languages](./providers).
+`errand.runners` says what runs which file; `errand.runners.replace( … )` puts a configured runner
+in place of a default one — a suite under a directory of its own, a build to run first. See
+[Runners](./runners).
 
 ## Subcommands: there are none, on purpose
 
@@ -83,12 +85,13 @@ There is no mechanism for project-specific subcommands, because there does not n
 something you want to run is an entry, and `bulk = False` keeps it out of the way until you name it.
 
 ```python
+# tasks.py
 if entry( "docs", bulk = False ):
     build_docs( )
 ```
 
 ```bash
-errand docs
+errand run tasks.py::docs
 ```
 
 ## What only this machine can supply
@@ -160,9 +163,9 @@ Use `need` only for what genuinely cannot be defaulted.
 ## Another project inside this one
 
 A directory holding an `errand-*.py` of its own is **another project**, and discovery does not walk into
-it: its entries would run with this project's `src`, providers and environments, which is to say
+it: its entries would run with this project's `src`, runners and environments, which is to say
 wrongly.
 
 ## Next
 
-[Other languages](./providers) — putting a suite you already have under errand.
+[Runners](./runners) — putting a suite you already have under errand.

@@ -4,7 +4,7 @@ A pytest suite, a Catch2 suite and a cargo one, none of them modified. Three lin
 put all three under `errand`.
 
 ```
-errand-project.py        three providers, and nothing else
+errand-project.py        three runners, and nothing else
 tests/test_api.py        ordinary pytest, still runs under `pytest`
 cpp/test_geometry.cpp    ordinary Catch2, still runs on its own
 cpp/Makefile             whatever you already build with
@@ -20,11 +20,11 @@ would have running it build a micromamba environment on your machine. Environmen
 ```bash
 cd examples/03-existing-suite
 
-errand                               # all three suites
-errand test_api                      # the python ones
-errand test_geometry::area           # one Catch2 case, by name
-errand -e '!slow'                    # pytest marks are entry tags
-errand --env local,old               # every suite, both python versions
+errand run                              # all three suites
+errand run tests/test_api.py            # the python ones
+errand run cpp/test_geometry.cpp::area  # one Catch2 case, by name
+errand run -e '!slow'                   # pytest marks are entry tags
+errand run --env local,old              # every suite, both python versions
 ```
 
 ## What adopting them buys
@@ -43,8 +43,8 @@ The Catch2 benchmark in `cpp/test_geometry.cpp` is the clearest case: it already
 and the measurement went to the terminal and died there. Now:
 
 ```bash
-errand --batch -k bench --env local --env-tags '!legacy'
-errand --watch
+errand run --batch -k bench --env local --env-tags '!legacy'
+errand watch
 ```
 
 and the numbers accumulate per machine and per date, next to the Python ones, in the same tree.
@@ -56,7 +56,7 @@ say so before running anything:
 
 ```
   no errand-*.py; guessed:  pytest (tests/)  ·  catch2 (cpp/)  ·  cargo (rust/)
-  ( errand --init writes it down )
+  ( errand init writes it down )
 ```
 
 Every framework locates its tests by assuming something about your layout, so there is no version of
@@ -71,11 +71,11 @@ the binaries where you say they land:
 
 ```python
 import errand
-errand.provider( errand.Catch2( dir = "cpp", build = "make -C cpp" ) )
-errand.provider( errand.Catch2( dir = "cpp", build = "cmake --build build", binary = "build/{stem}" ) )
+errand.runners.replace( errand.Catch2( dir = "cpp", build = "make -C cpp" ) )
+errand.runners.replace( errand.Catch2( dir = "cpp", build = "cmake --build build", binary = "build/{stem}" ) )
 ```
 
-`build` runs **once before any entry of that provider** — not once per file, and not once per
+`build` runs **once before any entry of that runner** — not once per file, and not once per
 parallel process, which under `-j` would have several of them writing the same binary at the same
 time. `binary` says where a source's executable ends up, `{stem}` being the source's name; it
 defaults to `<dir>/<stem>`, which is where the Makefile here puts it. Leave `build` out entirely if
@@ -89,11 +89,9 @@ without building anything at all.
 
 ## Notice
 
-- **The C++ provider is one entry per file, not per test case.** The list of entries has to be known
-  on *this* side of an ssh hop, before anything is compiled, so that the paths to rsync back can be
-  computed in advance. A `::name` in the pattern is passed through to the binary as its own filter,
-  so `test_geometry::area` still reaches one case.
+- **The C++ runner is one entry per test case, after a build.** The build runs during the
+  preparation, where the cases will run, and the binary is then asked for its own cases.
 - **pytest marks become entry tags.** `-e '!slow'` filters them, with the same expression language
   that `-t` uses on environments.
 - **Nothing was converted.** `pytest tests/` and `./cpp/test_geometry` still work exactly as before.
-  A provider runs the suite you already have; it does not replace it.
+  A runner runs the suite you already have; it does not replace it.

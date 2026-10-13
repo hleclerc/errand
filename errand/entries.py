@@ -57,9 +57,9 @@ class Args:
 
 
 class Entry:
-    # A provider ( None: this file's own two-phase guard ) and the opaque key it
-    # uses to find this entry again when asked to run it.
-    provider = None
+    # The runner ( None: this file's own two-phase guard, run by the core ) and
+    # the opaque key it uses to find this entry again when asked to run it.
+    runner = None
     key      = None
 
     def __init__( self, name, tags, params, traits, resources, file, line, module ):

@@ -29,8 +29,8 @@ if test( "the two agree", tags = [ "slow" ] ):
 # `bench` keeps its numbers, dated, and takes the machine to itself while it
 # runs -- so nothing else that errand launched is competing for the cache.
 #
-#   errand -k bench
-#   errand primes_bench --n=100000,1000000        <- two runs, two directories
+#   errand run -k bench
+#   errand run test_primes.py::sieve --n=100000,1000000        <- two runs, two directories
 #
 # A comma is a matrix. Here it gives one row per size in the summary that sits
 # at the entry's root.
@@ -57,12 +57,12 @@ if p := bench( "sieve beats trial division", n = Param( 20_000 ) ):
 
 # --- it must be looked at ---------------------------------------------------
 #
-#   errand -k exp
-#   errand "test_primes::gaps"
+#   errand run -k exp
+#   errand run test_primes.py::gaps
 #
 # `p.out_dir` is this run's own directory. An experiment gets a stable
 # `latest/` symlink beside the stamped ones, so the tab you leave open on
-# runs/test_primes/gaps/latest/gaps.svg keeps working.
+# runs/test_primes.py/gaps/latest/gaps.svg keeps working.
 
 if p := experiment( "gaps", n = Param( 100_000 ) ):
     ps   = sieve( p.n )

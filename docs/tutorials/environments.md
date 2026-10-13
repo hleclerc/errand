@@ -17,13 +17,13 @@ bench_solver.py        the entries
 
 ::: info These places do not exist on your machine
 `gpu-box`, `login.hpc`, the `demo` micromamba environment and the CUDA image are somebody else's.
-Read the file, adapt it, and `errand --envs` will tell you honestly what is and is not built here.
+Read the file, adapt it, and `errand envs` will tell you honestly what is and is not built here.
 :::
 
 ## Look before you leap
 
 ```bash
-errand --envs
+errand envs
 ```
 
 ```text
@@ -38,7 +38,7 @@ errand --envs
 
 You do not have to act on `stale` or `not built`. The next run that needs one of those environments
 builds it first — a changed `requirements.txt`, a new pip spec, an edited `.def`, all the same
-thing. `--setup` does it now and nothing else; `--no-setup` skips the check; `--setup --dry-run`
+thing. `errand setup` does it now and nothing else; `--no-setup` skips the check; `--setup --dry-run`
 says what it *would* run.
 
 ## The declaration
@@ -125,10 +125,10 @@ errand anything; the [`Vars` layer](/guide/tags#tags-only-select) is what puts t
 ## Choosing where
 
 ```bash
-errand -k bench --env gpu           # by name
-errand -k bench --driver cuda       # by tag; every tag name is a flag
-errand -k bench --fp 32
-errand -k bench -t 'cuda & !remote' # by expression
+errand run -k bench --env gpu            # by name
+errand run -k bench --driver cuda        # by tag; every tag name is a flag
+errand run -k bench --fp 32
+errand run -k bench -t 'cuda & !remote'  # by expression
 ```
 
 Tags are the keyword arguments on `errand.Env( … )`. Nothing declares them in advance, and an environment
@@ -137,16 +137,16 @@ that omits a name matches **any** value of it.
 ## Running in several places at once
 
 ```bash
-errand bench_solver --env local,gpu
-errand bench_solver --fp 32,64
-errand bench_solver --env local,gpu --n=10000,100000     # 4 runs
-errand bench_solver -t 'cuda=True'                       # every cuda environment there is
+errand run --env local,gpu bench_solver.py
+errand run --fp 32,64 bench_solver.py
+errand run --env local,gpu bench_solver.py --n=10000,100000  # 4 runs
+errand run -t 'cuda=True' bench_solver.py                    # every cuda environment there is
 ```
 
 Each combination gets its own directory, so the results end up side by side:
 
 ```text
-runs/bench_solver/solve/
+runs/bench_solver.py/solve/
   2026-09-24_18h04m11-local@thishost-method=cg,n=10000/result.yaml
   2026-09-24_18h04m11-gpu@thishost-method=cg,n=10000/result.yaml
   2026-09-24_18h04m11-gpu@gpu-box-method=cg,n=10000/result.yaml
@@ -163,10 +163,10 @@ which is the whole reason you declared two.
 ## Leaving it to run
 
 ```bash
-errand --batch -k bench --env gpu,cluster --fp 32,64
+errand run --batch -k bench --env gpu,cluster --fp 32,64
   submitted b7f3 · 8 runs · 4 on login.hpc (slurm 918273…918276), 4 local
 
-errand --watch
+errand watch
 ```
 
 `--batch` is a **mode, not an environment**: locally it means a detached session, over `Ssh` it means

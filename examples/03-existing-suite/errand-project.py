@@ -1,9 +1,10 @@
 """Adopting a project that already has a test suite.
 
-Nothing below changes a single line of the existing tests. Each `provider` is
-a declaration of what will be looked for and where -- every test framework
-finds its tests by guessing about your layout, and writing the guess down is
-what keeps it from being a surprise.
+Nothing below changes a single line of the existing tests. `errand.runners`
+already holds a runner for each of these suites, looking where they usually
+are; each line below replaces one with a declaration of what will be looked
+for and where -- every test framework finds its tests by guessing about your
+layout, and writing the guess down is what keeps it from being a surprise.
 """
 import errand
 
@@ -17,24 +18,23 @@ errand.configure( src = [ "src" ] )
 # The existing suites. `errand.Pytest()` collects with pytest's own rules; pass
 # `dirs`/`args` to say something else. Without this file at all, errand would
 # have found them anyway and SAID SO before running -- this line is how you
-# stop it from guessing.
+# stop it from guessing. `replace`, not `append`: two pytest runners would both
+# claim every test file, and errand refuses to choose between them.
 
-errand.provider( errand.Pytest( dirs = [ "tests" ] ) )
+errand.runners.replace( errand.Pytest( dirs = [ "tests" ] ) )
 
-# errand compiles nothing itself. `build` is whatever YOU already build with,
-# run once before any entry of this provider ( not once per file, and not once
+# errand run compiles nothing itself. `build` is whatever YOU already build with,
+# run once before any entry of this runner ( not once per file, and not once
 # per parallel process ); `binary` says where the result lands, defaulting to
-# `<dir>/<stem>` -- which is where this Makefile puts it.
+# beside the source -- which is where this Makefile puts it.
 #
-#   errand.provider( errand.Catch2( dir = "cpp", build = "cmake --build build",
+#   errand.runners.replace( errand.Catch2( dir = "cpp", build = "cmake --build build",
 #                     binary = "build/{stem}" ) )
 #
-# One entry per .cpp file, because errand has to know the list of entries on
-# this side of an ssh hop -- before anything is compiled -- to know what to
-# rsync back afterwards. A `::name` in your pattern is handed to the binary as
-# its own filter.
-errand.provider( errand.Catch2( dir = "cpp", build = "make -C cpp" ) )
+# One entry per test case: the build runs during the preparation, where the
+# cases will run, and the binary is then asked for its own cases.
+errand.runners.replace( errand.Catch2( dir = "cpp", build = "make -C cpp" ) )
 
 # `cargo metadata` knows the targets without compiling any of them, so there is
 # nothing to declare: one entry per test target.
-errand.provider( errand.Cargo( manifest = "rust/Cargo.toml" ) )
+errand.runners.replace( errand.Cargo( manifest = "rust/Cargo.toml" ) )

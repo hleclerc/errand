@@ -10,10 +10,10 @@ errand.envs[ "cluster" ] = errand.Env( [ errand.Ssh( … ), errand.Slurm( … ) 
 ```
 
 ```bash
-errand --env cluster          # by name
-errand --driver jax           # by tag, one flag per name
-errand --fp 64 --cuda
-errand -t 'jax & fp=64 & !remote'            # --env-tags, the expression form
+errand run --env cluster               # by name
+errand run --driver jax                # by tag, one flag per name
+errand run --fp 64 --cuda
+errand run -t 'jax & fp=64 & !remote'  # --env-tags, the expression form
 ```
 
 ## Saying nothing means every value
@@ -55,9 +55,9 @@ FTYPE = os.environ.get( "MYPROJ_FTYPE", "FP64" )
 …and that is the point. A comma is a matrix here exactly as it is on a parameter:
 
 ```bash
-errand -k bench "solvers::*" --fp 32,64        # both precisions
-errand -k bench "solvers::*" --env gpu,cluster # both machines
-errand -t 'cuda=True'                          # every cuda environment there is
+errand run -k bench --fp 32,64 "bench/solvers.py::*"         # both precisions
+errand run -k bench --env gpu,cluster "bench/solvers.py::*"  # both machines
+errand run -t 'cuda=True'                                    # every cuda environment there is
 ```
 
 Each environment gets its own [output directory](./output), so results sit side by side and the
@@ -105,7 +105,7 @@ silently disappears is worse than an import that fails loudly.
 `-t` picks *where*, over the tags on an environment. They take the same expressions and never mix:
 
 ```bash
-errand -e 'slow & !gpu' -t 'cuda & !remote'
+errand run -e 'slow & !gpu' -t 'cuda & !remote'
 ```
 
 ## Next

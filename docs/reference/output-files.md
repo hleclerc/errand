@@ -5,10 +5,10 @@ and what errand knows about it, are the same files. See
 [Where the output goes](/guide/output) for the shape and the reasoning.
 
 ```text
-runs/{file}/{name}/{when}-{place}[-{params}]/result.yaml
-runs/{file}/{name}/{when}-{place}[-{params}]/output.txt
-runs/{file}/{name}/latest -> the newest of them
-runs/{file}/{name}/summary.yaml
+runs/{path}/{name}/{when}-{place}[-{params}]/result.yaml
+runs/{path}/{name}/{when}-{place}[-{params}]/output.txt
+runs/{path}/{name}/latest -> the newest of them
+runs/{path}/{name}/summary.yaml
 ```
 
 `{when}` is `2026-10-02_14h22m07` — one stamp for the whole invocation. `{place}` is `{env}@{host}`.
@@ -106,7 +106,7 @@ everything else.
 | | |
 |---|---|
 | `.errand/` | the per-project working directory: environment records, the command history the screen reads, the handles of [detached](/guide/detached) submissions. Untracked |
-| the queue | a directory of claims, one per user per host, outside any project. `errand --queue` reads it |
+| the queue | a directory of claims, one per user per host, outside any project. `errand queue` reads it |
 
 Neither is anything you need to open. The queue is state about *this machine right now*; `.errand/`
 holds what the output tree cannot say — which runs belonged to one submission, and what was built

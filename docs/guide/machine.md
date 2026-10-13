@@ -21,8 +21,8 @@ One per user per host, so it is shared by every `errand` on that machine — two
 projects, no interference. It is a directory of claims, not a daemon.
 
 ```bash
-errand --queue        # what the host has, and what is holding it
-errand --no-queue     # this run does not wait, and does not hold
+errand queue           # what the host has, and what is holding it
+errand run --no-queue  # this run does not wait, and does not hold
 ```
 
 ## Any command, under the queue
@@ -31,11 +31,11 @@ The queue is not only for entries. A bare `--` with no `--env` runs **that comma
 machine**, once the queue lets it:
 
 ```bash
-errand -- make -j16                      # shared: it waits only if the machine is full
-errand -x -- ./bench --n 1e7             # a benchmark: the machine to itself
-errand --cpus 8 --ram 16G -- ./solve     # what it needs, so neighbours can be let in
-errand -l build.log -n "nightly" -- ./all   # a log file, and a name in the queue
-errand -q -- ./quiet                     # no banner
+errand shell -- make -j16                        # shared: it waits only if the machine is full
+errand shell -x -- ./bench --n 1e7               # a benchmark: the machine to itself
+errand shell --cpus 8 --ram 16G -- ./solve       # what it needs, so neighbours can be let in
+errand shell -l build.log -n "nightly" -- ./all  # a log file, and a name in the queue
+errand shell -q -- ./quiet                       # no banner
 ```
 
 | flag | |
@@ -43,7 +43,7 @@ errand -q -- ./quiet                     # no banner
 | `-x`, `--exclusive` | the machine to itself. This is what a measurement wants |
 | `--cpus`, `--ram` | what it needs, counted against the host |
 | `-m`, `--mem` | a memory *ceiling* for the command (default `8G`, `24G` exclusive) |
-| `-n`, `--label` | its name in `errand --queue` |
+| `-n`, `--label` | its name in `errand queue` |
 | `-l`, `--log` | stdout and stderr go there |
 | `-q`, `--quiet` | no banner |
 
@@ -53,8 +53,8 @@ with `MemoryMax` set, so a runaway allocation takes down the command and not the
 bus — over ssh, from cron — the command still runs, only without its ceiling.
 
 ```bash
-errand --queue        # what is holding the machine, and what is waiting for it
-errand --wait         # return once nothing holds it and nothing is queued for it
+errand queue       # what is holding the machine, and what is waiting for it
+errand wait        # return once nothing holds it and nothing is queued for it
 ```
 
 ### An exclusive request is not overtaken

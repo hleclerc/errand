@@ -11,4 +11,4 @@ layers (containers, ssh, Slurm) → `02`; no framework, work to write with erran
 
 The first one needs nothing but `errand`. The other two name micromamba, Apptainer, ssh hosts and a
 Slurm partition that do not exist on your machine — they are there to be read and adapted, and
-`errand --envs` will tell you honestly that none of them is built.
+`errand envs` will tell you honestly that none of them is built.

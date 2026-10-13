@@ -70,7 +70,7 @@ function stack() {
   const frames = []
   const draw = ( { typed = 0, depth = 0, logged = 0, running = false, dots = 0, back = 0, done = false } ) => {
     const g = new Grid( rows, cols )
-    const cmd = '$ errand train --env cluster'
+    const cmd = '$ errand run --env cluster train.py'
     g.put( 0, 1, '$ ', 'dim' ).put( 0, 3, cmd.slice( 2, 2 + typed ), 'b' )
     for ( let i = 0; i < depth; i++ ) {
       const n = nest[ i ]
@@ -81,11 +81,11 @@ function stack() {
     for ( let i = 0; i < logged; i++ ) {
       g.put( 12 + i, 2, '→', 'run' ).put( 12 + i, 4, log[ i ][ 1 ], 'dim' )
     }
-    if ( back >= 1 ) g.put( 15, 2, '←', 'ok' ).put( 15, 4, 'rsync runs/train/…/ back to your laptop', 'dim' )
-    if ( done ) g.put( 17, 2, 'PASS', 'ok' ).put( 17, 7, 'train   cluster@gpu-box   42.1s   runs/train/latest/', '' )
+    if ( back >= 1 ) g.put( 15, 2, '←', 'ok' ).put( 15, 4, 'rsync runs/train.py/train/…/ back to your laptop', 'dim' )
+    if ( done ) g.put( 17, 2, 'PASS', 'ok' ).put( 17, 7, 'train  cluster@gpu-box  42.1s  runs/train.py/train/latest/', '' )
     return g.html()
   }
-  const cmdLen = 'errand train --env cluster'.length
+  const cmdLen = 'errand run --env cluster train.py'.length
   for ( let t = 0; t <= cmdLen; t += 3 ) frames.push( { ms: 45, html: draw( { typed: Math.min( t, cmdLen ) } ) } )
   frames.push( { ms: 500, html: draw( { typed: cmdLen } ) } )
   for ( let d = 1; d <= nest.length; d++ ) {
@@ -98,7 +98,7 @@ function stack() {
   return { cols, rows, title: 'errand', frames }
 }
 
-// ── errand --tui, over three machines ────────────────────────────────────────
+// ── errand tui, over three machines ──────────────────────────────────────────
 
 function tui() {
   const cols = 82, rows = 24
@@ -181,15 +181,15 @@ function tui() {
     header( g, 'runs', done === 3 ? 'idle' : 'running' )
     g.put( 1, 1, 'find: ', 'dim' ).put( 1, 7, '▏', 'run' )
     g.box( 2, 1, 12, 46, 'runs', 'dim' )
-    g.put( 3, 3, '▾ errand solve --env local,gpu,cluster', 'b' ).put( 3, 43, `${ done }/3`, done === 3 ? 'ok' : 'run' )
+    g.put( 3, 3, '▾ errand run bench/shapes.py::solve', 'b' ).put( 3, 43, `${ done }/3`, done === 3 ? 'ok' : 'run' )
     ENVS.forEach( ( e, i ) => {
       const sel_ = i === sel
       g.put( 4 + i, 3, sel_ ? '›' : ' ', 'run' )
       g.put( 4 + i, 5, status[ i ] === 'ok' ? 'ok' : '..', status[ i ] === 'ok' ? 'ok' : 'run' )
       g.put( 4 + i, 10, `solve  n=1000  [${ e.name }]`, sel_ ? 'hl' : '' )
     } )
-    g.put( 8, 3, '▸ errand tests --n 10', 'dim' ).put( 8, 40, '1 ok', 'dim' )
-    g.put( 9, 3, '▸ errand -k bench --fp 32', 'dim' ).put( 9, 40, '6 ok', 'dim' )
+    g.put( 8, 3, '▸ errand run tests --n 10', 'dim' ).put( 8, 40, '1 ok', 'dim' )
+    g.put( 9, 3, '▸ errand run -k bench --fp 32', 'dim' ).put( 9, 40, '6 ok', 'dim' )
     g.box( 2, 48, 6, 33, 'files', 'dim' )
     g.put( 3, 50, 'output.txt', '' ).put( 3, 70, '1.2 kB', 'dim' )
     g.put( 4, 50, 'result.yaml', '' ).put( 4, 70, '512 B', 'dim' )
@@ -214,14 +214,14 @@ function tui() {
   add( casesPage( '', 0 ), 1300 )
   for ( const f of [ 's', 'so', 'sol' ] ) add( casesPage( f, 0 ), 380 )
   add( casesPage( 'sol', 0 ), 500 )
-  const cmd = ( t ) => 'errand solve' + ( t.every( ( x ) => !x ) ? '' : ` --env ${ [ 'local', 'gpu', 'cluster' ].filter( ( _, i ) => t[ i ] ).join( ',' ) }` )
+  const cmd = ( t ) => 'errand run' + ( t.every( ( x ) => !x ) ? '' : ` --env ${ [ 'local', 'gpu', 'cluster' ].filter( ( _, i ) => t[ i ] ).join( ',' ) }` ) + ' bench/shapes.py::solve'
   for ( const t of [ [ 0, 0, 0 ], [ 1, 0, 0 ], [ 1, 1, 0 ], [ 1, 1, 1 ] ] ) add( dialog( t.map( Boolean ), 0, cmd( t ) ), t.some( Boolean ) ? 650 : 900 )
   add( dialog( [ true, true, true ], 0, cmd( [ 1, 1, 1 ] ) ), 700 )
   add( runsPage( [ '..', '..', '..' ], 0, 0 ), 700 )
   add( runsPage( [ 'ok', '..', '..' ], 0, 0 ), 700 )
   add( runsPage( [ 'ok', 'ok', '..' ], 2, 3 ), 600 )
   for ( let n = 3; n <= 9; n++ ) add( runsPage( [ 'ok', 'ok', n === 9 ? 'ok' : '..' ], 2, n ), n === 9 ? 3600 : 800 )
-  return { cols, rows, title: 'errand --tui', frames }
+  return { cols, rows, title: 'errand tui', frames }
 }
 
 export const scenes = { stack, tui }

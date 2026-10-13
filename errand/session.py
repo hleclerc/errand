@@ -10,11 +10,11 @@ Two rules from the screen live here, because they are not about drawing.
 `launch()` starts it as an ordinary child. There is nothing the screen can do
 that the shell cannot, and the history is a list of commands for that reason.
 
-**It reads the output tree, not the pipe.** The paths are worked out before the
-run starts, by `plan_of` -- the very function the batch ledger is built from --
-so each case's output is a file whose name this side already knows. Which is
-why one case can be read while seven others are running, and why a job
-submitted yesterday reads the same as one started a second ago.
+**It reads the output tree, not the pipe.** Every place a command runs in
+writes its plan before running anything -- the very plan the batch ledger reads
+-- so each case's output is a file whose name this side learns before it is
+written. Which is why one case can be read while seven others are running, and
+why a job submitted yesterday reads the same as one started a second ago.
 """
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ import time
 from collections import deque
 from pathlib import Path
 
-from . import batch, cli, config, discovery, history, results as R, yamlish
+from . import batch, cli, config, discovery, history, results as R, targets as T, yamlish
 
 PULL = 5.0                 # seconds between fetches of a remote submission
 TAIL = 64 * 1024           # how much of an output file is worth reading back
@@ -46,6 +46,7 @@ class Session:
         self.command_line = ""
         self.log     = deque( maxlen = 4000 )
         self.plan    : list = [ ]
+        self.stamp   : str | None = None
         self.record  : dict | None = None      # a submission this session adopted
         self.started = 0.0
         self.states  : list = [ ]
@@ -67,7 +68,7 @@ class Session:
                 cli._put_src_on_path( self.root )
                 self.entries, _, _ = discovery.select(
                     None, self.root, bulk_only = False, exclude = config.settings.exclude,
-                    providers = config.providers )
+                    runners = config.runners, cwd = self.root )
             except Exception as err:                  # a bad config, mostly
                 print( f"{type( err ).__name__}: {err}" )
         # A file that would not import costs its own row and nothing else: half
@@ -118,18 +119,24 @@ class Session:
     # ── writing a command ────────────────────────────────────────────────────
 
     def pattern_for( self, entries ):
-        """`file::case` for each, `file` when every case of it was asked for --
-        shorter, and it stays true when a case is added to it tomorrow."""
+        """`path::case` for each -- `path::{a,b}` for several of one file, and
+        `path` alone when every case of it was asked for: shorter, and it stays
+        true when a case is added to it tomorrow. Paths are from the root, which
+        is where the command is started from; names are escaped, so that a case
+        called `grad_*` designates that case and no other."""
         if not entries:
             return ""
         parts = [ ]
         for path in dict.fromkeys( e.file for e in entries ):
-            mine  = [ e for e in entries if e.file == path ]
+            mine  = list( dict.fromkeys( e.name for e in entries if e.file == path ) )
             whole = [ e for e in self.entries if e.file == path ]
+            shown = T.escape( os.path.relpath( path, self.root ) )
             if len( mine ) == len( whole ):
-                parts.append( path.stem )
+                parts.append( shown )
+            elif len( mine ) == 1:
+                parts.append( f"{shown}::{T.escape( mine[ 0 ] )}" )
             else:
-                parts += [ f"{path.stem}::{e.name}" for e in mine ]
+                parts.append( f"{shown}::{{{','.join( T.escape( n ) for n in mine )}}}" )
         return ",".join( dict.fromkeys( parts ) )
 
     def command( self, entries = ( ), envs = ( ), tags = None, params = None,
@@ -139,25 +146,29 @@ class Session:
         A comma is a matrix, and a second tick is a comma: this is where the
         one becomes the other, and it is the whole of what a dialog does.
         """
-        out = [ ]
-        pattern = self.pattern_for( list( entries ) )
-        if pattern:
-            out.append( pattern )
+        out = [ "run" ]
         if envs:
             out += [ "--env", ",".join( envs ) ]
         for name, values in sorted( ( tags or { } ).items() ):
             if values:
                 out += [ f"--{name.replace( '_', '-' )}", ",".join( str( v ) for v in values ) ]
-        for name, values in sorted( ( params or { } ).items() ):
-            values = values if isinstance( values, ( list, tuple ) ) else [ values ]
-            joined = ",".join( str( v ).strip() for v in values if str( v ).strip() )
-            if joined:
-                out += [ f"--{name.replace( '_', '-' )}", joined ]
         if jobs and int( jobs ) > 1:
             out += [ "-j", str( int( jobs ) ) ]
         if batch:
             out.append( "--batch" )
-        return out
+        # errand's options, then the target, then what belongs to the target:
+        # the parameters are its arguments. Parameters with no case ticked are
+        # for everything here, which `.` says.
+        given = [ ]
+        for name, values in sorted( ( params or { } ).items() ):
+            values = values if isinstance( values, ( list, tuple ) ) else [ values ]
+            joined = ",".join( str( v ).strip() for v in values if str( v ).strip() )
+            if joined:
+                given += [ f"--{name.replace( '_', '-' )}", joined ]
+        pattern = self.pattern_for( list( entries ) )
+        if pattern or given:
+            out.append( pattern or "." )
+        return out + given
 
     @staticmethod
     def as_line( argv ):
@@ -181,7 +192,10 @@ class Session:
         """Start it, and start watching where it is going to write. -> why not."""
         if self.running:
             return "something is already running"
-        self.plan    = self.predict( argv )
+        # The command's stamp is chosen here, so that the plans it writes --
+        # here or wherever it goes -- can be told from every other command's.
+        self.stamp   = R.fresh_stamp()
+        self.plan    = [ ]
         self.states  = [ ]
         self.record  = None
         self.started = time.time()
@@ -192,7 +206,8 @@ class Session:
         try:
             self.child = subprocess.Popen(
                 [ sys.executable, "-m", "errand", *argv ], cwd = self.root,
-                env = { **os.environ, "PYTHONUNBUFFERED": "1", "NO_COLOR": "1" },
+                env = { **os.environ, "PYTHONUNBUFFERED": "1", "NO_COLOR": "1",
+                        R.STAMP_ENV: self.stamp },
                 stdout = subprocess.PIPE, stderr = subprocess.STDOUT, text = True, bufsize = 1 )
         except OSError as err:
             return str( err )
@@ -214,28 +229,31 @@ class Session:
         return None
 
     def predict( self, argv ):
-        """Where that command is going to write, worked out by the code that is
-        about to write there. A screen guessing differently would watch the
-        wrong files -- and would be believed."""
+        """Where that command would write if it ran HERE, worked out by the code
+        that would write there: what a line of history is shown with, from what
+        it produced the last time. Best effort, and never what a launched
+        command is watched with -- that is the plan it writes itself, wherever
+        it runs."""
         noise = io.StringIO()
         try:
           with contextlib.redirect_stdout( noise ), contextlib.redirect_stderr( noise ):
             parser = cli.build_parser( config.tag_names() )
-            known, _ = parser.parse_known_args( argv )
-            pattern = cli.positional_of( parser, argv )
+            verb, argv = cli.split_verb( parser, argv )
+            if verb != "run":
+                return [ ]
+            before, pattern, after = cli.split_target( parser, argv )
+            known, _ = parser.parse_known_args( before )
             kinds = { cli.KINDS[ k ] for k in known.kind if k in cli.KINDS }
             entries, _, _ = discovery.select(
                 pattern, self.root, kinds = kinds, entry_tags = known.entry_tags,
                 bulk_only = not pattern and not kinds, exclude = config.settings.exclude,
-                providers = config.providers )
+                runners = config.runners, cwd = self.root )
             declared = { }
             for e in entries:
                 declared.update( e.params )
-            for name in declared:
-                parser.add_argument( f"--{name.replace( '_', '-' )}", dest = name, type = str,
-                                     default = None )
-            parsed = parser.parse_args( argv )
-            combos = cli.expand( { n: getattr( parsed, n, None ) for n in declared }, declared )
+            raw_values, raw = cli.split_args( after, declared )
+            combos = cli.expand( { n: raw_values.get( n ) for n in declared }, declared, raw )
+            parsed = known
             targets = cli._targets( parsed, config.tag_names() )
             return cli.plan_of( targets, entries, combos,
                                 root = self.root, out_root = self.out_root )
@@ -253,7 +271,11 @@ class Session:
         child: a result file where one was expected IS the completion."""
         alive = self.running
         if self.record is not None:
-            alive = any( batch.alive( p ) for p in self.record.get( "places", [ ] ) )
+            alive = any( batch.alive_anywhere( self.root, p ) for p in self.record.get( "places", [ ] ) )
+        elif self.stamp:
+            # What the command said it would run, place by place, as each plan
+            # appears -- brought back from over there by the command itself.
+            self.plan = cli.planned( self.root, self.stamp )
         self.states = self.states_of( self.plan,
                                       batch.RUNNING if alive else batch.LOST )
         self.adopt()
@@ -317,7 +339,7 @@ class Session:
         for record in batch.load_all( self.root ):
             if record[ "id" ] not in self.seen_batches:
                 self.record = record
-                self.plan = record.get( "runs", [ ] )
+                self.plan = batch.runs_of( self.root, record )
                 threading.Thread( target = self._pull, args = ( record, ), daemon = True ).start()
                 return record
         self.seen_batches = { r[ "id" ] for r in batch.load_all( self.root ) }
@@ -329,7 +351,7 @@ class Session:
                 batch.collect( self.root, record )
             except Exception:
                 pass
-            if not any( batch.alive( p ) for p in record.get( "places", [ ] ) ):
+            if not any( batch.alive_anywhere( self.root, p ) for p in record.get( "places", [ ] ) ):
                 return
             time.sleep( PULL )
 
@@ -337,7 +359,7 @@ class Session:
         """The most recent result for that case, whatever its parameters and
         wherever it ran. Read from the tree, like everything else -- so it is
         there after a restart, and after somebody else ran it."""
-        label = R.label( entry )
+        label = R.label( entry, self.root )
         if label in self._last:
             return self._last[ label ]
         best, when = None, -1.0

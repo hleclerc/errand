@@ -1,16 +1,18 @@
-"""Finding the files that declare work, and the entries inside them.
+"""Finding the files that hold work, and the entries inside them.
 
-A pattern is a comma-separated list of `file[::name]` specs, both sides
-globbable with `*`. The file part matches the full stem and is looked for
-anywhere under the root, with no directory or project distinction; with no
-`*` it must resolve to exactly one file.
+A pattern is a comma-separated list of `path[::name]` targets, paths relative
+to the cwd and both sides globs: see `targets`.
 
-Candidate files are found by a text check rather than by importing everything:
-a file is a candidate if it IMPORTS `errand`. Without that, a source file
-sharing its entry's name (`Cell.py` next to `test_Cell.py`) would be a false
-ambiguity for what should be an unambiguous lookup -- and a file that merely
-mentions errand in a comment would be imported and executed on the strength of
-a word.
+Which runner a file is for is asked of every runner in `errand.runners`, and
+the one that fits it best takes it ( see `runners` ). Walking the tree finds
+only what declares itself as work -- errand's own files and the suites of a
+framework; a script or an executable is taken only when it is named.
+
+Candidate files of errand's own are found by a text check rather than by
+importing everything: a file is one if it IMPORTS `errand`. Without that, a
+source file sharing its entry's name (`Cell.py` next to `test_Cell.py`) would
+be taken for one -- and a file that merely mentions errand in a comment would
+be imported and executed on the strength of a word.
 
 Reading one is tolerant: a file that will not import costs its own row in
 `broken` and nothing else. Everything else still runs, and the runner reports
@@ -19,31 +21,18 @@ what it could not read and fails over it.
 from __future__ import annotations
 
 import contextlib
-import fnmatch
 import importlib.util
-import re
+import os
 import sys
 from pathlib import Path
 
-from . import entries as E
+from . import entries as E, runner as R, targets as T
 
 SKIP_DIRS = {
     ".git", ".hg", ".svn", "__pycache__", "node_modules", "build", "dist",
     ".venv", "venv", ".tox", ".mypy_cache", ".pytest_cache", ".ruff_cache",
     ".cache", ".idea", ".vscode", "target", "runs", ".claude",
 }
-
-# A file declares work when it IMPORTS errand, not when it merely says the
-# word. A comment explaining that a suite is collected by errand, a docstring,
-# a string in somebody's fixture -- all of those mention it, and none of them
-# should be imported and executed on the strength of that.
-MARKER = re.compile( r"^[ \t]*(from[ \t]+errand(\.[\w.]+)?[ \t]+import|import[ \t]+errand\b)",
-                     re.MULTILINE )
-
-# The project's own files: they mention errand by nature, and re-executing one
-# as if it declared work would register everything it declares a SECOND time --
-# providers twice over, environments twice over, every entry duplicated.
-NOT_WORK = "errand-*.py"
 
 # The package errand imports candidate files under. A synthetic root, so that a
 # file under tests/ is never confused with an installed package of the same
@@ -52,9 +41,7 @@ NOT_WORK = "errand-*.py"
 SCAN_PKG = "_errand_scan"
 
 
-def iter_py_files( root: Path, exclude = ( ) ):
-    import os
-
+def iter_files( root: Path, exclude = ( ) ):
     from .config import config_in
 
     skip = SKIP_DIRS | { e.strip( "/" ) for e in exclude }
@@ -63,62 +50,75 @@ def iter_py_files( root: Path, exclude = ( ) ):
                           if d not in skip and not d.endswith( ".egg-info" )
                           # A directory holding a config file of its own is
                           # ANOTHER PROJECT, and its entries are not ours to
-                          # run: they would run with our `src`, our providers
+                          # run: they would run with our `src`, our runners
                           # and our environments -- which is to say wrongly.
                           and config_in( Path( dirpath ) / d ) is None ]
         for f in filenames:
-            if f.endswith( ".py" ):
-                yield Path( dirpath ) / f
+            yield Path( dirpath ) / f
 
 
-def candidates( root: Path, exclude = ( ) ) -> list[ Path ]:
-    here = Path( __file__ ).resolve().parent      # errand's own sources mention the marker
-    out = [ ]
-    for p in iter_py_files( root, exclude ):
-        if here in p.resolve().parents or fnmatch.fnmatchcase( p.name, NOT_WORK ):
+def _runners( runners ):
+    if runners is None:
+        from . import config
+        runners = config.runners
+    return list( runners )
+
+
+def owners( path: Path, runners, at_least = R.NONE ):
+    """-> ( the best level, [ the runners at it ] ) for one file.
+
+    `at_least` leaves out the runners that could not reach it anyway: walking a
+    whole tree asks only the ones that could make a file discoverable.
+    """
+    best, who = R.NONE, [ ]
+    for r in runners:
+        if r.level < max( at_least, best, R.FALLBACK ):
             continue
-        try:
-            if MARKER.search( p.read_text( errors = "ignore" ) ):
-                out.append( p )
-        except OSError:
-            pass
-    return sorted( out )
+        got = R.Level( r.suitability( path ) )
+        if got > best:
+            best, who = got, [ r ]
+        elif got == best and got > R.NONE:
+            who.append( r )
+    return best, who
+
+
+def pool( root: Path, exclude = ( ), runners = None ) -> dict:
+    """{ path: ( level, [ runners ] ) } for every file found by walking: the
+    ones that declare themselves as work."""
+    runners = _runners( runners )
+    out = { }
+    for f in iter_files( root, exclude ):
+        level, who = owners( f, runners, R.FRAMEWORK )
+        if level.discoverable:
+            out[ f ] = ( level, who )
+    return out
+
+
+def candidates( root: Path, exclude = ( ), runners = None ) -> list[ Path ]:
+    """Every file a walk finds work in, whoever runs it."""
+    return sorted( pool( root, exclude, runners ), key = str )
+
+
+def errand_files( root: Path, exclude = ( ) ) -> list[ Path ]:
+    """The files that declare errand's own entries."""
+    return candidates( root, exclude, [ R.Errand() ] )
 
 
 # ── patterns ─────────────────────────────────────────────────────────────────
 
-def parse_pattern( pattern: str | None, files: list[ Path ], root: Path ):
-    """-> [ ( matched_files, name_glob | None ), ... ], one per comma-separated spec."""
-    specs = [ s.strip() for s in pattern.split( "," ) ] if pattern else [ "" ]
-    return [ _one_spec( s, files, root ) for s in specs ]
+def _near( files, root, cwd ):
+    """-> a function suggesting the paths closest to what was typed."""
+    from . import fuzzy
 
+    shown = [ os.path.relpath( f, cwd ) for f in files ]
 
-def _declares_entries( path: Path ) -> bool:
-    try:
-        return bool( MARKER.search( path.read_text( errors = "ignore" ) ) )
-    except OSError:
-        return False
-
-
-def _one_spec( spec, files, root ):
-    file_part, sep, name_glob = spec.partition( "::" )
-    file_part = file_part.strip()
-    name_glob = name_glob.strip() if sep else None
-    name_glob = name_glob or None
-
-    if not file_part:
-        return list( files ), name_glob
-
-    if "*" in file_part or "?" in file_part:
-        return [ p for p in files if fnmatch.fnmatchcase( p.stem, file_part ) ], name_glob
-
-    matched = [ p for p in files if p.stem == file_part ]
-    if len( matched ) > 1:
-        shown = ", ".join( str( p.relative_to( root ) ) for p in matched )
-        raise ValueError( f"'{file_part}' matches several files ({shown}) -- "
-                          f"use a glob, e.g. '{file_part}*', to take them all" )
-    # Zero is not an error here: the file part may belong to another provider.
-    return matched, name_glob
+    def near( typed ):
+        typed = typed.replace( "*", " " ).replace( "/", " " ).strip()
+        if not typed:
+            return [ ]
+        ranked = fuzzy.rank( typed, shown, lambda x: { "path": ( x, 1.0 ) } )
+        return [ item for item, _, _ in ranked[ : 4 ] ]
+    return near
 
 
 # ── importing ────────────────────────────────────────────────────────────────
@@ -185,13 +185,17 @@ def import_file( path: Path, root: Path ):
 # Not silence either: what could not be read is reported, and it fails the run.
 broken: list = [ ]
 
+# The runners `select` built to collect, so that nothing builds them twice.
+built: list = [ ]
 
-def collect( files: list[ Path ], root: Path ):
+
+def collect( files: list[ Path ], root: Path, reset = True ):
     """Import every file and return ( entries, { module_name: path } )."""
     import traceback
 
     E.reset_collection()
-    broken.clear()
+    if reset:
+        broken.clear()
     modules = { }
     for f in files:
         try:
@@ -219,45 +223,109 @@ def select_at( path: Path, line: int, root: Path ):
 
 
 def select( pattern, root, kinds = None, entry_tags = None, bulk_only = False, exclude = ( ),
-            providers = ( ) ):
-    """Everything the command line asked for: ( entries, modules )."""
+            runners = None, cwd = None, context = None, build = True ):
+    """Everything the command line asked for: ( entries, modules, selectors ).
+
+    Raises ValueError when a target designates nothing, when two runners claim
+    a file equally, or when a `::name` matches no entry of the files it is
+    about: a typo must not be an empty, successful run.
+    """
     from .expr import matches
 
-    # One pool of files, so that "a bare name must resolve to exactly one" is
-    # checked across every provider at once rather than inside each.
-    files = candidates( root, exclude )
-    for p in providers:
-        files += [ f for f in p.files() if f not in files ]
-    files = sorted( set( files ), key = str )
+    runners = _runners( runners )
+    cwd = Path( cwd or os.getcwd() )
+    broken.clear()
+    built.clear()
+    found = pool( root, exclude, runners )
 
-    specs = parse_pattern( pattern, files, root )
-    wanted = sorted( { f for matched, _ in specs for f in matched }, key = str )
+    def explicit( path: Path ) -> bool:
+        # Named in full: whatever can run it at all may, a script included.
+        level, who = owners( path, runners )
+        if level == R.NONE:
+            return False
+        found[ path ] = ( level, who )
+        return True
 
-    # A file a provider owns is that provider's, whatever it happens to import:
-    # a pytest suite that imports errand for a helper is still pytest's.
-    owned = { f for p in providers for f in p.files() }
-    mine = [ f for f in wanted
-             if f.suffix == ".py" and f not in owned and _declares_entries( f ) ]
-    all_entries, modules = collect( mine, root )
-    for p in providers:
-        all_entries += p.collect( specs )
+    files = sorted( found, key = str )
+    specs = T.resolve( pattern, files, cwd = cwd, root = root, explicit = explicit,
+                       suggest = _near( files, root, cwd ) )
+    wanted = list( dict.fromkeys( f for matched, _ in specs for f in matched ) )
 
-    # The `::name` that chose a whole-file entry is not consumed here: a
-    # provider that runs files hands it to the binary as its own filter.
-    from .providers import selector_of
+    by_runner = { }
+    for f in wanted:
+        level, who = found[ f ]
+        if len( who ) > 1:
+            names = " and ".join( r.name for r in who )
+            raise ValueError(
+                f"{os.path.relpath( f, cwd )}: {names} both take it, at level {level.name} -- "
+                f"keep one ( errand.runners.replace( … ) puts a configured runner in place of "
+                f"the default one, errand.runners.remove( … ) takes one out )" )
+        by_runner.setdefault( id( who[ 0 ] ), ( who[ 0 ], [ ] ) )[ 1 ].append( f )
+
+    def mine( files ):
+        # The specs again, over this runner's files only.
+        keep = set( files )
+        return [ T.Spec( [ f for f in spec[ 0 ] if f in keep ], spec[ 1 ], spec.text )
+                 for spec in specs ]
+
+    all_entries, modules = [ ], { }
+    for r, files in by_runner.values():
+        if getattr( r, "in_process", False ):
+            # errand's own: read by importing, run by re-importing.
+            got, modules = collect( files, root, reset = False )
+            all_entries += got
+            continue
+        r.context = context
+        if r.builds_to_collect and build and context is not None:
+            # What it holds can only be listed once it is built: so it is
+            # built now, here, once -- and a failed build costs its files'
+            # rows, not the run.
+            why = r.prepare( [ ], context )
+            built.append( r )
+            if why:
+                broken.extend( ( f, f"{r.name}: {why.splitlines()[ 0 ]}", why ) for f in files )
+                continue
+        all_entries += r.collect( mine( files ) )
+        broken.extend( ( f, f"{r.name}: {why.splitlines()[ 0 ]}", why )
+                       for f, why in getattr( r, "broken", [ ] ) )
+
     selectors = { }
+
+    def named( e, name_glob ):
+        # A runner whose entries are whole files consumes the `::name` itself;
+        # filtering on it here would reject the entry for not being called
+        # after one of its own cases.
+        consumed = e.runner is not None and e.runner.whole_files
+        return name_glob is None or consumed or T.name_matches( name_glob, e.name )
+
+    for spec in specs:
+        matched, name_glob = spec
+        if name_glob is None:
+            continue
+        # A file run as a whole has nothing to choose a `::name` from, unless
+        # its runner hands the name on to it.
+        for f in matched:
+            r = found[ f ][ 1 ][ 0 ]
+            if r.whole_files and not r.takes_selector:
+                raise ValueError( f"'{spec.text}': {os.path.relpath( f, cwd )} is run as a whole "
+                                  f"( {r.name} ), with no entries to choose from" )
+        # Every `::name` has to find something, before any filter: `-k bench`
+        # on a test is a choice, `::basik` is a typo.
+        here = [ e for e in all_entries if e.file in matched ]
+        if here and not any( named( e, name_glob ) for e in here ):
+            from . import fuzzy
+            there = list( dict.fromkeys( e.name for e in here ) )
+            near = [ n for n, _, _ in fuzzy.rank( name_glob.replace( "*", " " ), there,
+                                                  lambda n: { "name": ( n, 1.0 ) } )[ : 3 ] ]
+            shown = near or there[ : 8 ]
+            raise ValueError( f"'{spec.text}' matches no entry\n  "
+                              + ( "did you mean:  " if near else "there:  " )
+                              + "  ".join( repr( n ) for n in shown ) )
 
     out = [ ]
     for e in all_entries:
         for matched, name_glob in specs:
-            if e.file not in matched:
-                continue
-            # A provider whose entries are whole files consumes the `::name`
-            # itself; filtering on it here would reject the entry for not
-            # being called after one of its own cases.
-            consumed = e.provider is not None and e.provider.whole_files
-            if name_glob is not None and not consumed and \
-               not fnmatch.fnmatchcase( e.name, name_glob ):
+            if e.file not in matched or not named( e, name_glob ):
                 continue
             if kinds and e.kind not in kinds:
                 continue
@@ -266,7 +334,7 @@ def select( pattern, root, kinds = None, entry_tags = None, bulk_only = False, e
             if entry_tags and not matches( entry_tags, e.tags ):
                 continue
             out.append( e )
-            if e.provider is not None:
-                selectors[ e.name ] = selector_of( specs, e.file )
+            if e.runner is not None:
+                selectors[ e.name ] = R.selector_of( specs, e.file )
             break
     return out, modules, selectors

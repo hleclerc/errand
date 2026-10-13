@@ -56,13 +56,13 @@ The three worked examples ship in the sdist and in the checkout, and are meant t
 
 ```bash
 cd examples/01-minimal     && errand          # no configuration at all
-cd examples/02-environments && errand --envs  # four environments over three machines
+cd examples/02-environments && errand envs    # four environments over three machines
 cd examples/03-existing-suite && errand       # pytest + Catch2 + cargo, unmodified
 ```
 
 The first needs nothing but `errand`. The other two name micromamba environments, Apptainer images,
 ssh hosts and a Slurm partition that do not exist on your machine — they are there to be read and
-adapted, and `errand --envs` will tell you honestly that none of them is built.
+adapted, and `errand envs` will tell you honestly that none of them is built.
 
 Each one has a tutorial on this site: [one](/tutorials/first-entry), [two](/tutorials/environments),
 [three](/tutorials/adopt-a-suite).

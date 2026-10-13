@@ -51,6 +51,44 @@ queuing](./machine#when-somebody-else-owns-the-machine) when it is.
 
 Every argument is spelled out in the [layer reference](/reference/layers).
 
+## Preparing, then running
+
+What a target designates is for the place to say: a binary built over there exists only over there,
+`cargo metadata` needs a cargo, a file that imports torch can only be read where torch is. So the
+machine you type on only chooses the environments and hands the command over as it was typed;
+**resolving the targets, building, collecting and expanding the matrix all happen in the
+environment** — and a typo is reported from there.
+
+That happens in a **preparation phase**, which writes a *plan* — the entries, what they ask of a
+machine, the directories they will write — before a **run phase** runs it. The plan is what the
+fetch back, [`errand status`](./detached) and [the screen](./tui) read, and what an allocation is
+sized from. The run phase collects again, without rebuilding, and refuses to run if that is not what
+was prepared.
+
+Every layer takes **`when =`**, an [expression](/reference/expressions) over the selected tags and
+the pseudo-tag `phase` ( `prepare` or `run` ). A layer without one is in both phases. So the
+allocation that prepares — one task, CPUs to compile, half an hour — and the one that runs are two
+`Slurm` layers, each with all its arguments:
+
+```python
+# errand-envs.py
+errand.envs[ "cluster" ] = errand.Env( [
+    errand.Ssh( host = "login.hpc", root = "/scratch/me/proj" ),
+    errand.Slurm( cpus = 16, time = "0:30:00",                   when = "phase=prepare" ),
+    errand.Slurm( partition = "gpu", gpus = 1, time = "2:00:00", when = "phase=run" ),
+    errand.Apptainer( image = "containers/cuda.sif" ),
+], driver = "jax", cuda = True )
+```
+
+At most one scheduler is active per phase, and errand checks it. In preparation a scheduler starts
+**one task**, whatever `nodes` says, and is not sized from entries nobody knows yet; in the run phase
+it is sized from the plan. When both phases go through the same layers and none of them is a
+scheduler — a container, another machine — preparing and running are **one pass**, one process. A
+condition can read the tags too: `when = "fp=64"`, `when = "phase=run & cuda"`.
+
+`errand list` is the preparation: on a cluster it goes through the preparation's allocation, because
+what would run *there* is only known there.
+
 ## Two rules about what goes where
 
 **Requirements belong to the layer that installs them** — a `requirements.txt` for the conda
@@ -85,7 +123,7 @@ differs. Choosing where to run has nothing to say about which engine holds the i
 ## Looking at them
 
 ```bash
-errand --envs
+errand envs
 ```
 
 ```text
@@ -104,11 +142,11 @@ current](./upkeep).
 ## Choosing one
 
 ```bash
-errand -k bench --env gpu            # by name
-errand -k bench --driver cuda        # by tag; every tag name becomes a flag
-errand -k bench --fp 32
-errand -k bench -t 'cuda & !remote'  # by expression
-errand -k bench --env gpu,cluster    # both: a comma is a matrix here too
+errand run -k bench --env gpu            # by name
+errand run -k bench --driver cuda        # by tag; every tag name becomes a flag
+errand run -k bench --fp 32
+errand run -k bench -t 'cuda & !remote'  # by expression
+errand run -k bench --env gpu,cluster    # both: a comma is a matrix here too
 ```
 
 Use `--env NAME` when you want exactly one and mean it. Everything else is in [Tags](./tags).

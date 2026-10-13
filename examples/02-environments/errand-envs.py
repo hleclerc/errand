@@ -75,8 +75,8 @@ errand.envs[ "cluster" ] = errand.Env(
 # the virtual machine around the command. Everything is decided here and done
 # over there through ssh; `build` comes back all the way here.
 #
-#     errand --env windows --setup                   # once, over there: 20 to 60 minutes
-#     errand --env windows -- cmake -B build -G Ninja
+#     errand setup --env windows                   # once, over there: 20 to 60 minutes
+#     errand shell --env windows -- cmake -B build -G Ninja
 #
 # A driver of its own, so that `--driver cpu` does not sweep it into a
 # benchmark: a virtual machine takes commands, not entries, for now.

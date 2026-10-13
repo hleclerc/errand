@@ -117,12 +117,12 @@ if test( "enter on a case asks where, and runs it", tags = [ "slow" ] ):
             assert "env" in asked and "[ ] plain" in asked and "--fp" in asked, asked
             # One line each: the flag, the boxes to tick, what it means.
             assert "[ ] 32" in asked and "[ ] 64" in asked, asked
-            assert "errand test_demo::quick" in asked, asked
+            assert "errand run test_demo.py::quick" in asked, asked
 
             term.send( "\n" )              # and run it
             until( term, "hello from quick", 90 )
             ran = term.text()
-            assert "errand test_demo::quick" in ran, ran
+            assert "errand run test_demo.py::quick" in ran, ran
             # Facing it: what it wrote, and the file under the cursor.
             assert "result.yaml" in ran, ran
         finally:
@@ -213,7 +213,7 @@ if test( "typing is a search, and the best answer comes first" ):
 if test( "runs and history are one list, and a command runs again", tags = [ "slow" ] ):
     with tempfile.TemporaryDirectory() as tmp:
         project = a_project( tmp )
-        code, output = run_errand( project, "test_demo::quick", "--env", "other" )
+        code, output = run_errand( project, "run", "--env", "other", "test_demo.py::quick" )
         assert code == 0, output
 
         term = start_tui( project )
@@ -222,7 +222,7 @@ if test( "runs and history are one list, and a command runs again", tags = [ "sl
             term.send( fkey( 3 ) )         # to the runs page
             shown = term.text()
             # A command typed in a shell is in the same list as one run here.
-            assert "test_demo::quick --env other" in shown, shown
+            assert "--env other test_demo.py::quick" in shown, shown
 
             term.send( "\n" )              # fold it open: what it produced
             opened = term.text()
@@ -238,7 +238,7 @@ if test( "the runs are searched too, by their command", tags = [ "slow" ] ):
     with tempfile.TemporaryDirectory() as tmp:
         project = a_project( tmp )
         for case in ( "quick", "slow" ):
-            code, output = run_errand( project, f"test_demo::{case}" )
+            code, output = run_errand( project, "run", f"test_demo.py::{case}" )
             assert code == 0, output
 
         term = start_tui( project )
@@ -246,14 +246,14 @@ if test( "the runs are searched too, by their command", tags = [ "slow" ] ):
             until( term, "test_demo.py" )
             term.send( fkey( 3 ) )
             both = term.frame()
-            assert "test_demo::quick" in both and "test_demo::slow" in both, both
+            assert "test_demo.py::quick" in both and "test_demo.py::slow" in both, both
 
             # A history is only useful once one line of it can be found.
             term.send( "slo" )
             found = term.frame()
             assert "find: slo" in found, found
-            assert "test_demo::slow" in found, found
-            assert "test_demo::quick" not in found, found
+            assert "test_demo.py::slow" in found, found
+            assert "test_demo.py::quick" not in found, found
 
             # And the search of one page is not the search of the other.
             term.send( fkey( 2 ) )
@@ -286,7 +286,7 @@ if test( "a terminal whose terminfo has `rep` still gets whole borders" ):
         import sys
         env = tui_env( project )
         env[ "TERM" ], env[ "TERMINFO" ] = "xterm-withrep", str( info )
-        term = Term( [ sys.executable, "-m", "errand", "--tui" ], project, env = env )
+        term = Term( [ sys.executable, "-m", "errand", "tui" ], project, env = env )
         try:
             until( term, "test_demo.py" )
             shown = term.frame()
@@ -319,7 +319,7 @@ if test( "a terminfo that names `\\E[<` as its mouse still gets a wheel, and no 
         project = a_project( tmp, { "test_many.py": MANY } )
         env = tui_env( project )
         env[ "TERM" ], env[ "TERMINFO" ] = "xterm-sgrmouse", str( info )
-        term = Term( [ sys.executable, "-m", "errand", "--tui" ], project, env = env )
+        term = Term( [ sys.executable, "-m", "errand", "tui" ], project, env = env )
         try:
             until( term, "case_00" )
             for _ in range( 5 ):

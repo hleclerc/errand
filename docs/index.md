@@ -24,12 +24,12 @@ features:
     linkText: Environments
   - icon: 🧩
     title: Your tools, as they are
-    details: "pytest, Catch2, cargo, a Makefile target or any command: errand runs what you already have, unmodified, in any of those places. With no configuration it looks at the directory and says what it found; `errand --init` writes that down."
+    details: "pytest, Catch2, cargo, a Makefile target or any command: errand runs what you already have, unmodified, in any of those places. With no configuration it looks at the directory and says what it found; `errand init` writes that down."
     link: /guide/start
     linkText: Start from what you have
   - icon: 🔒
     title: Sharing the machine
-    details: "Work says what it needs — a core, eight of them, a GPU, the whole machine — and errand holds a queue per host so two invocations, in two terminals, on two projects, do not trample each other. `errand -x -- ./bench` puts any command under it. A timing taken while something else was running is not a timing."
+    details: "Work says what it needs — a core, eight of them, a GPU, the whole machine — and errand holds a queue per host so two invocations, in two terminals, on two projects, do not trample each other. `errand shell -x -- ./bench` puts any command under it. A timing taken while something else was running is not a timing."
     link: /guide/machine
     linkText: The queue
   - icon: 📂
@@ -49,7 +49,7 @@ features:
     linkText: Detached runs
   - icon: 🖥️
     title: One screen for all of it
-    details: "errand --tui — two pages, because there are two questions: what do I run, and what came of it. Tick three places, press enter, watch the three layer stacks fill the runs page. Drawn with the curses of the standard library."
+    details: "errand tui — two pages, because there are two questions: what do I run, and what came of it. Tick three places, press enter, watch the three layer stacks fill the runs page. Drawn with the curses of the standard library."
     link: /guide/tui
     linkText: The screen
   - icon: 🪶
@@ -78,13 +78,13 @@ errand.envs[ "cluster" ] = errand.Env( [ errand.Ssh( host = "gpu-box", root = "~
 Then go there:
 
 ```bash
-errand --env cluster -- nvidia-smi          # be let in: any command, through every layer
-errand train --env cluster                  # run a piece of work there, results brought back
-errand train --env local,cluster            # in both places, side by side
-errand --batch train --env cluster          # and give me the shell back
+errand shell --env cluster -- nvidia-smi   # be let in: any command, through every layer
+errand run --env cluster train.py          # run a piece of work there, results brought back
+errand run --env local,cluster train.py    # in both places, side by side
+errand run --batch --env cluster train.py  # and give me the shell back
 ```
 
-<Term scene="stack" caption="errand train --env cluster. The ssh, the allocation and the container are the three layers declared above; setting them up, entering them and fetching the files back is errand's part." />
+<Term scene="stack" caption="errand run --env cluster train.py. The ssh, the allocation and the container are the three layers declared above; setting them up, entering them and fetching the files back is errand's part." />
 
 ## Whatever you test with
 
@@ -94,33 +94,33 @@ places to start it in. Pick yours.
 ::: code-group
 
 ```bash [pytest]
-cd my-project                  # a tests/ directory, nothing about errand in it
-errand --init                  # writes errand-project.py: errand.provider( errand.Pytest( dirs = [ 'tests' ] ) )
-errand                         # the suite, here
-errand --env local,cluster     # the same suite, in both places, side by side
-errand -e '!slow'              # @pytest.mark.slow is an entry tag
+cd my-project                   # a tests/ directory, nothing about errand in it
+errand init                     # writes errand-project.py: errand.runners.replace( errand.Pytest( dirs = [ 'tests' ] ) )
+errand run                      # the suite, here
+errand run --env local,cluster  # the same suite, in both places, side by side
+errand run -e '!slow'           # @pytest.mark.slow is an entry tag
 ```
 
 ```bash [C++ · Catch2]
-cd my-project                  # cpp/test_*.cpp and a Makefile
-errand --init                  # errand.provider( errand.Catch2( dir = 'cpp', build = 'make -C cpp' ) )
-errand                         # built once, then each test file run
-errand test_geometry::area     # one Catch2 case, by name
-errand --env cluster           # compiled and run over there, results back here
+cd my-project                   # cpp/test_*.cpp and a Makefile
+errand init                             # errand.runners.replace( errand.Catch2( dir = 'cpp', build = 'make -C cpp' ) )
+errand run                              # built once, then each test file run
+errand run cpp/test_geometry.cpp::area  # one Catch2 case, by name
+errand run --env cluster                # compiled and run over there, results back here
 ```
 
 ```bash [Rust · cargo]
-cd my-project                  # a Cargo.toml
-errand --init                  # errand.provider( errand.Cargo( ) )
-errand                         # one entry per test target
-errand --env cluster           # cargo test, inside the cluster's container
+cd my-project             # a Cargo.toml
+errand init               # errand.runners.replace( errand.Cargo( ) )
+errand run                # one entry per test target
+errand run --env cluster  # cargo test, inside the cluster's container
 ```
 
 ```bash [Any command]
 cd my-project                  # a script, a Makefile target, a notebook runner...
-errand --env cluster -- make check
-errand --env cluster -- ./run_experiment.sh --seed 3
-errand -x -- ./my_benchmark    # alone on this machine while it runs, whatever else is queued
+errand shell --env cluster -- make check
+errand shell --env cluster -- ./run_experiment.sh --seed 3
+errand shell -x -- ./my_benchmark    # alone on this machine while it runs, whatever else is queued
 ```
 
 ```python [errand's own entries]
@@ -166,6 +166,6 @@ when they were taken.
 
 ::: warning Status
 Everything documented here works and is covered by errand's own suite — which is itself written with
-errand. It is not released yet: the API may still move. Still to write: providers beyond the three
+errand. It is not released yet: the API may still move. Still to write: runners beyond the three
 that ship.
 :::

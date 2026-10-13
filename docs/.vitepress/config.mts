@@ -8,6 +8,9 @@ export default defineConfig( {
   // GitHub Pages under github.com/hleclerc/errand
   base: '/errand/',
 
+  // Decision records are for whoever works on errand, not for the site.
+  srcExclude: [ 'adr/**' ],
+
   cleanUrls: true,
   lastUpdated: true,
 
@@ -48,7 +51,7 @@ export default defineConfig( {
           items: [
             { text: 'Running it',        link: '/guide/running' },
             { text: 'Parameters & matrices', link: '/guide/matrices' },
-            { text: 'Other languages',   link: '/guide/providers' },
+            { text: 'Runners',           link: '/guide/runners' },
             { text: 'Writing entries',   link: '/guide/declaring-work' },
           ]
         },
@@ -88,7 +91,7 @@ export default defineConfig( {
             { text: 'Command line',    link: '/reference/cli' },
             { text: 'Python API',      link: '/reference/python-api' },
             { text: 'Layers',          link: '/reference/layers' },
-            { text: 'Providers',       link: '/reference/providers' },
+            { text: 'Runners',         link: '/reference/runners' },
             { text: 'Tag expressions', link: '/reference/expressions' },
             { text: 'Output files',    link: '/reference/output-files' },
           ]
