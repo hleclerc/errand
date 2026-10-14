@@ -20,12 +20,15 @@ from .expr import matches
 # -- which is also how a project nested inside a bigger repository says where it starts.
 CONFIG_GLOB = "errand-*.py"
 CONFIG_FILE = "errand-project.py"      # the name `errand init` writes: the one that is versioned
-ENVS_FILE   = "errand-envs.py"      # the one that is not
+ENVS_FILE   = "errand-envs.py"      # where it runs: versioned when it holds no machine name
+VARS_FILE   = "errand-vars.py"      # what only this machine knows ( hosts, paths ): never versioned, read first
 
 
 def config_files( directory: Path ) -> list:
-    """The project files in `directory`, in the order they are read."""
-    return sorted( p for p in directory.glob( CONFIG_GLOB ) if p.is_file() )
+    """The project files in `directory`, in the order they are read: `errand-vars.py` first, so that
+    the files declaring environments can ask it for the hosts and paths of this machine."""
+    return sorted( ( p for p in directory.glob( CONFIG_GLOB ) if p.is_file() ),
+                   key = lambda p: ( p.name != VARS_FILE, p.name ) )
 
 
 def config_in( directory: Path ):

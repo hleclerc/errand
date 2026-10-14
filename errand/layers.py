@@ -603,6 +603,7 @@ class Ssh:
     root   : str | None = None
     python : str = "python3"
     options: list = field( default_factory = list )
+    also   : list = field( default_factory = list )   # sibling checkouts the work needs, pushed with the project
     when   : str | None = None
 
     def wrap( self, cmd: Command, ctx: Context ) -> Command:
@@ -628,6 +629,10 @@ class Ssh:
 
         echo( f"  rsync push -> {self.host}:{remote_ctx.root}" )
         push( ctx.root, self.host, remote_ctx.root, self.options )
+        for other in self.also:
+            # `../loom` lands at `<remote root>/../loom`: the same layout as here
+            push( Path( os.path.normpath( ctx.root / other ) ), self.host,
+                  Path( os.path.normpath( remote_ctx.root / other ) ), self.options )
 
         if inner and hasattr( inner[ 0 ], "run" ):
             # A layer that leads somewhere again -- a machine to boot over

@@ -3,9 +3,9 @@
 Testing an ssh layer wants a host you can reach. Testing a Slurm layer wants a
 partition you are allowed to submit to. Neither can be committed, and neither
 can be invented -- so they live in a file that is not versioned, beside the
-project's others: any `errand-*.py`, conventionally `errand-envs.py`:
+project's others: any `errand-*.py`, conventionally `errand-vars.py`, which is read first:
 
-    # errand-envs.py -- not tracked
+    # errand-vars.py -- not tracked
     ssh_host  = "gpu-box"
     ssh_root  = "/home/me/scratch/errand"
     slurm     = { "partition": "gpu", "time": "00:10:00" }
@@ -28,7 +28,7 @@ from __future__ import annotations
 import inspect
 from pathlib import Path
 
-ENVS_FILE = "errand-envs.py"
+VARS_FILE = "errand-vars.py"
 
 _cache: dict = { }
 _files: list = [ ]
@@ -87,8 +87,8 @@ def need( key: str, what: str = "", *, example = None ):
         return _cache[ key ]
 
     shown = f"{key} = {example!r}" if example is not None else f"{key} = ..."
-    where = next( ( f for f in _files if f.name == ENVS_FILE ), None ) \
-        or ( _files[ 0 ].parent if _files else ( _missing_root or Path( "." ) ) ) / ENVS_FILE
+    where = next( ( f for f in _files if f.name == VARS_FILE ), None ) \
+        or ( _files[ 0 ].parent if _files else ( _missing_root or Path( "." ) ) ) / VARS_FILE
     if where.is_file():
         hint = f"add it to {where}:\n    {shown}"
     else:

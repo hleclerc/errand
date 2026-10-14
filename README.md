@@ -245,7 +245,7 @@ errand.envs[ "cluster" ] = errand.Env( [ errand.Ssh( host = "gpu-box", root = "/
 | `Module( "gcc/13", "cuda/12" )` | Lmod / environment modules, the way a cluster picks a toolchain |
 | `Apptainer( image, recipe =, flags =, mounts =, pip =, fakeroot =, scratch =, build_flags = )` | wraps with `apptainer exec`, using the container's own interpreter. The last three are about *building* it rather than entering it |
 | `Docker( … )`, `Podman( … )` | likewise |
-| `Ssh( host, root =, python =, options = )` | must be first; everything after it runs on that machine. `options` go to ssh *and* rsync — a port, an identity, a jump host |
+| `Ssh( host, root =, python =, options =, also = )` | must be first; everything after it runs on that machine. `options` go to ssh *and* rsync — a port, an identity, a jump host. `also` lists sibling checkouts the work needs ( `[ "../loom" ]` ), pushed to the same relative place over there |
 | `Slurm( partition =, nodes =, gpus =, time =, … )` | goes through `srun`, or `sbatch` in [batch mode](#detached-runs) |
 | `Oar( … )`, `Pbs( … )`, `Sge( … )`, `Lsf( … )` | the same, for the other batch systems |
 | `Windows( iso =, key =, cpus =, ram =, msvc =, python =, provision =, fetch =, keep =, data = )` | first, or right after the `Ssh` of the machine that boots it; a Windows VM under QEMU that errand installs and boots. Every argument is optional: with none it is a Server 2025 evaluation (no licence) with the MSVC build tools. See [below](#windows) |
@@ -847,7 +847,8 @@ to you, and two names are the convention:
 | | |
 |---|---|
 | `errand-project.py` | what the **project** does: runners, compilation flags, `errand.configure`. Versioned |
-| `errand-envs.py` | where **you**, on **your machine**, run it: the environments. Not versioned — `errand init` adds it to `.gitignore` |
+| `errand-envs.py` | where the project runs: the environments. Not versioned by default — `errand init` adds it to `.gitignore` — but it can be, if it holds no host name: those go in `errand-vars.py` |
+| `errand-vars.py` | what only **your machine** knows: hosts, paths, queues. Never versioned, and read **first**, so that the other files ask it with `errand.value( "ssh_host", default )` |
 
 They are ordinary Python, loaded once by path and under a private name, with no entry point to call
 and nothing to return. `errand.envs` holds the environments by name, and the first one declared is

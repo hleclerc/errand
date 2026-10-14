@@ -198,7 +198,7 @@ def render_envs( ) -> str:
 
 def init( root: Path, *, force: bool = False, echo = print ) -> int:
     """Write `errand-project.py` and a commented `errand-envs.py`, and make the output directory real."""
-    from .config import CONFIG_FILE, ENVS_FILE, config_in
+    from .config import CONFIG_FILE, ENVS_FILE, VARS_FILE, config_in
 
     path = config_in( root )
     if path is not None and not force:
@@ -216,6 +216,7 @@ def init( root: Path, *, force: bool = False, echo = print ) -> int:
     echo( "  made runs/    ( what errand writes; the output tree )" )
     _ignore( root, "runs/", echo )
     _ignore( root, ENVS_FILE, echo )
+    _ignore( root, VARS_FILE, echo )
     return 0
 
 

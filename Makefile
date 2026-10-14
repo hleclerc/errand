@@ -28,7 +28,7 @@ VENV    ?= .venv
 TOOLS   := .venv-release
 TOOLSPY := $(TOOLS)/bin/python
 
-.PHONY: help dev venv test build check testpypi pypi tag clean site site-build
+.PHONY: help dev venv test build check testpypi pypi tag clean site site-build site-deploy
 
 help:
 	@echo "errand $(VERSION)   ( distribution: $(DIST) )"
@@ -39,6 +39,7 @@ help:
 	@echo
 	@echo "  make site        the website, live reloading   ( docs/, VitePress )"
 	@echo "  make site-build  the website into docs/.vitepress/dist"
+	@echo "  make site-deploy site-build, then push it to the gh-pages branch ( https://hleclerc.github.io/errand/ )"
 	@echo
 	@echo "  make build       sdist + wheel into dist/"
 	@echo "  make check       twine check --strict"
@@ -78,6 +79,20 @@ site: docs/node_modules
 
 site-build: docs/node_modules
 	cd docs && npm run build
+
+# The built site becomes the only commit of the gh-pages branch ( force-pushed: no history to keep ).
+# .nojekyll, or GitHub Pages drops the _-prefixed files of VitePress. Once, on GitHub:
+# Settings > Pages > Source = "Deploy from a branch", branch gh-pages, folder / ( root ).
+SITE_REMOTE ?= $(shell git remote get-url origin)
+SITE_BRANCH ?= gh-pages
+
+site-deploy: site-build
+	cd docs/.vitepress/dist && touch .nojekyll && rm -rf .git \
+	  && git init -q -b $(SITE_BRANCH) \
+	  && git add -A \
+	  && git commit -q -m "site: $$(cd ../../.. && git rev-parse --short HEAD)" \
+	  && git push -f $(SITE_REMOTE) $(SITE_BRANCH) \
+	  && rm -rf .git
 
 docs/node_modules: docs/package.json
 	cd docs && npm install

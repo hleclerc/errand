@@ -41,7 +41,7 @@ container*, then your command. There is no separate remote mode, no host file, n
 | `Module( "gcc/13", "cuda/12" )` | Lmod / environment modules, the way a cluster picks a toolchain |
 | `Apptainer( image, recipe =, flags =, mounts =, pip =, fakeroot =, scratch =, build_flags = )` | wraps with `apptainer exec`, using the container's own interpreter. The last three are about *building* it rather than entering it |
 | `Docker( image, recipe =, flags =, mounts =, pip =, user = )`, `Podman( … )` | likewise |
-| `Ssh( host, root =, python =, options = )` | must be first; everything after it runs on that machine. `options` go to ssh *and* rsync — a port, an identity, a jump host |
+| `Ssh( host, root =, python =, options =, also = )` | must be first; everything after it runs on that machine. `options` go to ssh *and* rsync — a port, an identity, a jump host. `also` lists sibling checkouts the work needs ( `[ "../loom" ]` ), pushed to the same relative place over there |
 | `Slurm( partition =, nodes =, cpus =, gpus =, time =, account =, nodelist =, extra = )` | goes through `srun`, or `sbatch` in [batch mode](./detached) |
 | `Vars( { … } )` | environment variables for the child process |
 

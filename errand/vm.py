@@ -62,6 +62,7 @@ import contextlib
 import fcntl
 import json
 import os
+import posixpath
 import random
 import re
 import signal
@@ -134,6 +135,7 @@ class Windows:
     python   : str | None = None     # "3.13.1": that python.org release, on PATH
     provision: list = field( default_factory = list )   # PowerShell: a `.ps1` of the project, or a line
     fetch    : list = field( default_factory = list )   # what to bring back after each command
+    also     : list = field( default_factory = list )   # sibling checkouts the work needs ( `../loom` ), copied in beside the project
     keep     : str = "0"             # how long it stays up once no errand process holds it any more
     data     : str | None = "32G"    # a disk kept from one boot to the next, as E:, where the project
                                      # lands -- so what a command leaves ( a build ) is there for the next
@@ -224,6 +226,8 @@ class Windows:
             with m.using( self.booted(), echo ):
                 echo( f"  copy in -> windows:{there}" )
                 m.push( there )
+                for other in self.also:
+                    m.push( posixpath.normpath( f"{there}/{other}" ), f"{other}/" )
                 line = self.line( wrapped, there )
                 echo( f"  > {line}" )
                 code = m.guest( line ).returncode
@@ -506,14 +510,14 @@ def msys_path( path: str ) -> str:
     return path.rstrip( "/" )
 
 
-def rsync_line( reach: list, there: str ) -> str:
+def rsync_line( reach: list, there: str, source: str = "./" ) -> str:
     """The project, minus what an `Ssh` push leaves out too, into `there` in the
     guest -- run from its root on the machine that runs QEMU. Links followed, as
     NTFS has none worth the name; no permission, owner or group, which the
     guest's ACLs would only garble. Nothing deleted: what a command built beside
     the sources is not on this side, and must stay over there."""
     return L.sh( [ "rsync", "-rtL", "-e", L.sh( reach ), "--rsync-path", GUEST_RSYNC,
-                   *[ f"--exclude={e}" for e in EXCLUDES ], "./", f"{USER}@127.0.0.1:{msys_path( there )}/" ] )
+                   *[ f"--exclude={e}" for e in EXCLUDES ], source, f"{USER}@127.0.0.1:{msys_path( there )}/" ] )
 
 
 # rsync's 23 ( "some files were not transferred" ) and 24 ( "some vanished" ),
@@ -796,14 +800,15 @@ class Machine:
             time.sleep( 3.0 )
         return False
 
-    def push( self, there: str ):
+    def push( self, there: str, source: str = "./" ):
         """The project as the machine that runs QEMU has it, into the guest:
-        what changed since the last time, when `there` is on the kept disk."""
+        what changed since the last time, when `there` is on the kept disk.
+        `source`: another directory of that machine, relative to the project's -- a sibling checkout."""
         win = _backslashed( there )
         code = self.guest( f'if not exist "{win}" mkdir "{win}"' ).returncode
         if code:
             raise subprocess.CalledProcessError( code, "copy into windows" )
-        got = self.host.shell( rsync_line( self._reach( "ssh", "-p" ), there ), capture = True )
+        got = self.host.shell( rsync_line( self._reach( "ssh", "-p" ), there, source ), capture = True )
         if rsync_failed( got ):
             raise VmError( f"could not copy the project into windows ( rsync: {got.returncode} ):\n"
                            f"{( got.stderr or '' ).strip()[ -800 : ]}" )
