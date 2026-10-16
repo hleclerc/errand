@@ -1,14 +1,18 @@
 # Output files
 
 The output tree is the whole state: there is no database, no ledger and no daemon. What a run wrote,
-and what errand knows about it, are the same files. See
-[Where the output goes](/guide/output) for the shape and the reasoning.
+and what errand knows about it, are the same files. Every run is recorded in errand's state
+directory, `.errand/runs/` ( `errand.configure( state = … )`, `ERRAND_STATE_DIR` ); with `-o` the
+same tree is written under `runs/` ( `errand.configure( out = … )` ), and with `--out PATTERN`
+wherever the pattern says. See [Where the output goes](/guide/output) for the shape and the
+reasoning.
 
 ```text
 runs/{path}/{name}/{when}-{place}[-{params}]/result.yaml
 runs/{path}/{name}/{when}-{place}[-{params}]/output.txt
 runs/{path}/{name}/latest -> the newest of them
 runs/{path}/{name}/summary.yaml
+runs/{first word}/{when}-{place}[-{args}]/…   # a plain command
 ```
 
 `{when}` is `2026-10-02_14h22m07` — one stamp for the whole invocation. `{place}` is `{env}@{host}`.
@@ -105,16 +109,17 @@ everything else.
 
 | | |
 |---|---|
-| `.errand/` | the per-project working directory: environment records, the command history the screen reads, the handles of [detached](/guide/detached) submissions. Untracked |
+| `.errand/` | the per-project state directory: the record of every run ( `runs/` ), environment records, the command history the screen reads, the handles of [detached](/guide/detached) submissions. Untracked; moved by `errand.configure( state = … )`, or per machine by `ERRAND_STATE_DIR` |
 | the queue | a directory of claims, one per user per host, outside any project. `errand queue` reads it |
 
-Neither is anything you need to open. The queue is state about *this machine right now*; `.errand/`
-holds what the output tree cannot say — which runs belonged to one submission, and what was built
-from which declaration.
+Neither is anything you need to open — `-o` is how a run is put where you will look. The queue is
+state about *this machine right now*; `.errand/` holds every run's record, and what a tree cannot
+say — which runs belonged to one submission, and what was built from which declaration.
 
 ## Writing your own files
 
-Anything you like, into `p.out_dir`:
+Anything you like, into `p.out_dir` — or, from a script or a command run with `-o`, into
+`$ERRAND_OUT_DIR`:
 
 ```python
 if p := experiment( "the shape of it" ):

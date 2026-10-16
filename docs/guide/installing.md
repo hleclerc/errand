@@ -55,9 +55,9 @@ way you would write your own.
 The three worked examples ship in the sdist and in the checkout, and are meant to be read in order:
 
 ```bash
-cd examples/01-minimal     && errand          # no configuration at all
-cd examples/02-environments && errand envs    # four environments over three machines
-cd examples/03-existing-suite && errand       # pytest + Catch2 + cargo, unmodified
+cd examples/03-entries     && errand run '**::*'   # no configuration at all
+cd examples/01-environments && errand envs         # four environments over three machines
+cd examples/02-existing-suite && errand run '**::*'  # pytest + Catch2 + cargo, unmodified
 ```
 
 The first needs nothing but `errand`. The other two name micromamba environments, Apptainer images,

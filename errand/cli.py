@@ -72,7 +72,7 @@ class Tee:
 
 
 @contextlib.contextmanager
-def capture( path: Path | None = None ):
+def capture( path: Path | None = None, log = None ):
     """Mirror stdout/stderr into a buffer -- and into `path` -- while still
     printing live.
 
@@ -81,20 +81,20 @@ def capture( path: Path | None = None ):
     `tail -f` works on it, and so does the screen, which is the same thing.
     """
     buf = io.StringIO()
-    handle = None
-    if path is not None:
-        try:
-            handle = open( path, "w", buffering = 1 )
-        except OSError:
-            handle = None                # a run must not fail over its own log
+    handles = [ ]
+    for where in ( path, log ):
+        if where is not None:
+            try:
+                handles.append( open( where, "a" if where == log else "w", buffering = 1 ) )
+            except OSError:
+                pass                     # a run must not fail over its own log
     old_out, old_err = sys.stdout, sys.stderr
-    streams = [ old_out, buf ] + ( [ handle ] if handle else [ ] )
-    sys.stdout, sys.stderr = Tee( *streams ), Tee( old_err, buf, *( [ handle ] if handle else [ ] ) )
+    sys.stdout, sys.stderr = Tee( old_out, buf, *handles ), Tee( old_err, buf, *handles )
     try:
         yield buf
     finally:
         sys.stdout, sys.stderr = old_out, old_err
-        if handle:
+        for handle in handles:
             handle.close()
 
 
@@ -135,8 +135,10 @@ def alternatives( text: str ) -> list[ str ]:
 
 
 def expand( raw_values: dict, params: dict, raw = ( ) ):
-    """`--n=1000,5000` is an axis, and so is any argument of the target's own
-    with a comma in it. -> [ ( varied, { name: value, ARGS: [ ... ] } ), ... ].
+    """`--n=1000,5000` is an axis of a declared parameter: the runner that
+    declared it reads the comma. Anything else of the target's own is passed as
+    it was written -- a command's words are never rewritten.
+    -> [ ( varied, { name: value, ARGS: [ ... ] } ), ... ].
 
     Values arrive as strings precisely so a comma can be seen before the type
     is applied; `varied` holds only what actually had several values, so the
@@ -159,26 +161,13 @@ def expand( raw_values: dict, params: dict, raw = ( ) ):
                 raise ValueError( f"--{name.replace( '_', '-' )}: {wrong} not in {p.choices}" )
         axes[ name ] = values
 
-    # The target's own arguments: each one with a comma is an axis of its own --
-    # on the value of an `--option=value`, as on a declared parameter.
-    def axis( token ):
-        name, eq, value = token.partition( "=" )
-        if token.startswith( "-" ) and eq:
-            return [ name + eq + v for v in alternatives( value ) ]
-        return alternatives( token )
-    tokens = [ axis( t ) for t in raw ]
-    args_vary = any( len( t ) > 1 for t in tokens )
-
     names = list( axes )
     out = [ ]
     for combo in itertools.product( *( axes[ n ] for n in names ) ):
-        for args in itertools.product( *tokens ):
-            chosen = dict( zip( names, combo ) )
-            varied = { n: v for n, v in chosen.items() if len( axes[ n ] ) > 1 }
-            if args_vary:
-                varied[ ARGS ] = " ".join( args )
-            chosen[ ARGS ] = list( args )
-            out.append( ( varied, chosen ) )
+        chosen = dict( zip( names, combo ) )
+        varied = { n: v for n, v in chosen.items() if len( axes[ n ] ) > 1 }
+        chosen[ ARGS ] = list( raw )
+        out.append( ( varied, chosen ) )
     return out
 
 
@@ -228,10 +217,61 @@ def aggregate_needs( entries ):
     return out
 
 
+def _handed_to_the_run( root, tags ) -> dict:
+    """What a run started by a runner sees of the place: its tags, and the
+    project's own sources first on the path -- the same sources the work of
+    this project would see, rather than somebody else's checkout of them."""
+    path = os.pathsep.join( _src_paths( root ) + [ os.environ.get( "PYTHONPATH", "" ) ] )
+    return { TAGS: ",".join( f"{k}={v}" for k, v in sorted( tags.items() ) ),
+             "PYTHONPATH": path.rstrip( os.pathsep ) }
+
+
+class Ask:
+    """What the command line asks of the machine for every run ( `-x`,
+    `--cpus`… ), on top of what each entry asks for itself, and how to say it."""
+
+    def __init__( self, known = None ):
+        get = lambda k: getattr( known, k, None ) if known is not None else None
+        self.resources = { k: get( k ) for k in ( "cpus", "ram", "gpus" ) if get( k ) }
+        self.exclusive = bool( get( "exclusive" ) )
+        self.label     = get( "label" )
+        self.log       = get( "log" )
+        self.quiet     = bool( get( "quiet" ) )
+        self.visible   = bool( get( "keep_out" ) or get( "out" ) )
+        self.wrap      = _ceiling( get( "mem" ) )
+
+    @staticmethod
+    def flags( known ) -> list:
+        """The same, as the flags a child of `-j` is started with."""
+        out = [ ]
+        for dest, flag in ( ( "keep_out", "-o" ), ( "exclusive", "-x" ), ( "quiet", "-q" ) ):
+            if getattr( known, dest, False ):
+                out.append( flag )
+        for dest, flag in ( ( "out", "--out" ), ( "cpus", "--cpus" ), ( "ram", "--ram" ),
+                            ( "gpus", "--gpus" ), ( "mem", "--mem" ), ( "label", "--label" ) ):
+            if getattr( known, dest, None ):
+                out += [ flag, str( getattr( known, dest ) ) ]
+        return out
+
+
+def _ceiling( mem ) -> list:
+    """`-m 8G`: a command held under that much memory, where systemd can do it.
+    Without a user bus ( ssh, cron ) the scope cannot be made, and the command
+    runs without its ceiling rather than not at all."""
+    if not mem:
+        return [ ]
+    scope = [ "systemd-run", "--user", "--scope", "-q", "-p", f"MemoryMax={mem}" ]
+    if shutil.which( "systemd-run" ) and subprocess.run( scope + [ "true" ], capture_output = True ).returncode == 0:
+        return scope
+    return [ ]
+
+
 def run_entries( entries, modules, *, root, out_root, overrides, env_name, tags,
-                 version, report, queued = True, quiet = False, selectors = None ):
+                 version, report, queued = True, quiet = False, selectors = None, ask = None ):
     E.set_tags( tags )
     selectors = selectors or { }
+    ask = ask or Ask()
+    quiet = quiet or ask.quiet
     where = R.place( env_name )
     if not quiet:
         print( head( f"\n{'=' * 10} {len( entries )} entr{'y' if len( entries ) == 1 else 'ies'}"
@@ -260,8 +300,9 @@ def run_entries( entries, modules, *, root, out_root, overrides, env_name, tags,
         # The claim is taken OUTSIDE the timing: waiting for the machine is not
         # part of how long the work takes, and recording it as if it were would
         # make a benchmark's numbers depend on who else was busy.
-        with queue.claim( e.resources, exclusive = e.traits[ "exclusive" ],
-                          label = f"{e.file.name}::{e.name}", enabled = queued,
+        with queue.claim( { **e.resources, **ask.resources },
+                          exclusive = e.traits[ "exclusive" ] or ask.exclusive,
+                          label = ask.label or f"{e.file.name}::{e.name}", enabled = queued,
                           echo = lambda m: print( dim( m ), flush = True ) ) as granted:
             # Being told WHICH card is the whole point of asking for one: two
             # entries that both picked the first would share it and neither
@@ -274,7 +315,7 @@ def run_entries( entries, modules, *, root, out_root, overrides, env_name, tags,
                     print( dim( f"  gpu {','.join( str( d ) for d in granted.devices )}" ),
                            flush = True )
                 started = time.perf_counter()
-                with capture( leaf / R.OUTPUT ) as buf:
+                with capture( leaf / R.OUTPUT, ask.log ) as buf:
                     try:
                         if e.runner is None:
                             if e.module not in modules:
@@ -300,11 +341,15 @@ def run_entries( entries, modules, *, root, out_root, overrides, env_name, tags,
                             # Somebody else's suite: it runs itself, and only
                             # says what came of it. Everything around the run
                             # is the same as for anything here.
+                            # A directory is handed over only when one was
+                            # asked for: the private record is errand's.
                             got = e.runner.run( e, P.RunContext(
                                 root = root, out_dir = leaf, params = resolved,
-                                env = dict( handed ), selector = selectors.get( e.name ),
+                                env = { **handed, **_handed_to_the_run( root, tags ),
+                                        **( { P.OUT_DIR: str( leaf ) } if ask.visible else { } ) },
+                                selector = selectors.get( e.name ),
                                 build_dir = build_dir_for( root, env_name ),
-                                args = target_argv( e, resolved, overrides ) ) )
+                                args = target_argv( e, resolved, overrides ), wrap = ask.wrap ) )
                             status, error = got.status, got.error
                             E.results.update( got.results )
                             if got.output:
@@ -371,7 +416,7 @@ def job_count( asked ) -> int:
 
 
 def run_in_processes( entries, combos, *, root, out_root, env, tags, how_many, report,
-                      out_prefix ):
+                      out_prefix, flags = ( ) ):
     """Each entry, in its own process, up to `how_many` at a time.
 
     What came of it is read back from the result file rather than parsed out of
@@ -391,7 +436,7 @@ def run_in_processes( entries, combos, *, root, out_root, env, tags, how_many, r
         child[ PARAMS ] = json.dumps( values )
         child[ "PYTHONUNBUFFERED" ] = "1"
         argv = [ sys.executable, "-m", "errand", "run", "--at", f"{e.file}:{e.line}",
-                 "--root", str( root ), "--out", str( out_root ), "--env", env.name ]
+                 "--root", str( root ), "--env", env.name, *flags ]
         return ( e, values,
                  subprocess.Popen( argv, cwd = root, env = child, text = True,
                                    stdout = subprocess.PIPE, stderr = subprocess.STDOUT ) )
@@ -419,7 +464,7 @@ def run_in_processes( entries, combos, *, root, out_root, env, tags, how_many, r
     return report
 
 
-def run_one( at, *, root, out_root, env_name, tags, version, report, queued ):
+def run_one( at, *, root, out_root, env_name, tags, version, report, queued, ask = None ):
     """The child side of the above: exactly the entry at FILE:LINE."""
     from . import yamlish
 
@@ -432,50 +477,15 @@ def run_one( at, *, root, out_root, env_name, tags, version, report, queued ):
     values = json.loads( os.environ[ PARAMS ] ) if os.environ.get( PARAMS ) else { }
     run_entries( entries, modules, root = root, out_root = out_root, overrides = values,
                  env_name = env_name, tags = tags, version = version,
-                 report = report, queued = queued, quiet = True )
+                 report = report, queued = queued, quiet = True, ask = ask )
     return 1 if report.failed else 0
 
 
 # ── running, elsewhere ───────────────────────────────────────────────────────
 
-def run_here( known, command ):
-    """`errand shell [-x] -- <command>`: that command on this machine, once the queue
-    lets it, under a memory ceiling, and at low priority unless it is exclusive.
-    What `job` used to be: the machine is shared by every session and project."""
-    needs = { k: v for k, v in ( ( "cpus", known.cpus ), ( "ram", known.ram ) ) if v }
-    mem = known.mem or ( "24G" if known.exclusive else "8G" )
-    wrap = [ ]
-    scope = [ "systemd-run", "--user", "--scope", "-q", "-p", f"MemoryMax={mem}" ]
-    # Without a user bus ( ssh, cron, a changed XDG_RUNTIME_DIR ) the scope cannot
-    # be made; the command still runs, only without its ceiling.
-    if shutil.which( "systemd-run" ) and subprocess.run( scope + [ "true" ], capture_output = True ).returncode == 0:
-        wrap += scope
-    if not known.exclusive:
-        wrap += [ "nice", "-n", "5" ]
-    label = known.label or " ".join( command )
-    say = lambda m: None if known.quiet else print( m, file = sys.stderr, flush = True )
-    with queue.claim( needs, exclusive = known.exclusive, label = label,
-                      enabled = not known.no_queue, echo = say ) as granted:
-        env = { **os.environ, **( granted.env() if granted else { } ),
-                **( granted.handed_down() if granted else { } ),
-                "JOB_CLASS": "bench" if known.exclusive else "generic" }
-        say( f"[errand {os.getpid()} {'exclusive' if known.exclusive else 'shared'}] {label}" )
-        try:
-            if known.log:
-                with open( known.log, "w" ) as out:
-                    rc = subprocess.run( wrap + list( command ), env = env,
-                                         stdout = out, stderr = subprocess.STDOUT ).returncode
-            else:
-                rc = subprocess.run( wrap + list( command ), env = env ).returncode
-        except FileNotFoundError as err:
-            say( f"errand: {err}" )
-            rc = 127
-        say( f"[errand {os.getpid()}] done, code {rc}" )
-    return rc
-
-
-def run_there( known, command, *, root, interactive = False ):
-    """`errand shell --env X [-- <command>]`: that command, or a shell, in that environment.
+def run_there( known, command, *, root, interactive = False, targets = None ):
+    """`errand shell --env X`: a shell in that environment -- or a command in a
+    place errand itself does not run in ( a virtual machine ).
 
     Not a feature of the runner so much as of the environments. They are
     already declared here, once, with the layers that lead to them -- a venv, a
@@ -486,11 +496,12 @@ def run_there( known, command, *, root, interactive = False ):
     The first word is replaced by the interpreter of the place when it names an
     interpreter, and kept when it does not ( see `layers.under` ).
     """
-    try:
-        targets = _targets( known, config.tag_names() )
-    except ValueError as err:
-        print( bad( str( err ) ) )
-        return 1
+    if targets is None:
+        try:
+            targets = _targets( known, config.tag_names() )
+        except ValueError as err:
+            print( bad( str( err ) ) )
+            return 1
 
     rc = 0
     for env, tags in targets:
@@ -553,8 +564,8 @@ def plan_of( targets, entries, combos, *, root, out_root ):
                 runs.append( { "label": e.name, "file": e.file.name, "env": env.name,
                                "place": "?" if unknowable else R.place( env.name ),
                                "params": _plain_params( resolved ),
-                               "under": str( entry_root.relative_to( root ) ),
-                               "entry_root": str( entry_root.relative_to( root ) ) } )
+                               "under": R._under( entry_root, root ),
+                               "entry_root": R._under( entry_root, root ) } )
     return runs
 
 
@@ -775,7 +786,9 @@ def prepare_runners( entries, *, root, out_root, tags, env_name = None ):
         mine = [ e for e in entries if e.runner is p ]
         ctx = P.RunContext( root = root, out_dir = out_root, env = { },
                             build_dir = build_dir_for( root, env_name ) )
-        ctx.build_dir.mkdir( parents = True, exist_ok = True )
+        if p.builds_to_collect or getattr( p, "build", None ):
+            # Only for what builds: a command run here leaves no `build/` behind.
+            ctx.build_dir.mkdir( parents = True, exist_ok = True )
         why = p.prepare( mine, ctx )
         if why:
             out.append( ( p.name, why ) )
@@ -837,16 +850,16 @@ def print_entries( entries ):
 # the project and its output are -- are everybody's, and may stand before the
 # verb or after it.
 VERBS = {
-    "run"   : ( "run entries, and record what came of them",
-                [ "kind", "entry_tags", "jobs", "no_queue", "no_setup", "batch", "at", "phase",
-                  "from_plan", "submit_run" ] ),
-    "list"  : ( "what a pattern matches, with its parameters", [ "kind", "entry_tags", "no_setup" ] ),
-    "shell" : ( "a shell in an environment, or `-- cmd` run in it; nothing is recorded",
-                [ "pull", "no_queue", "no_setup", "exclusive", "cpus", "ram", "mem", "label",
-                  "quiet", "log" ] ),
+    "run"   : ( "run a file, a command or entries, in one or several environments",
+                [ "runner", "kind", "entry_tags", "jobs", "no_queue", "no_setup", "batch", "keep_out",
+                  "out", "pull", "exclusive", "cpus", "ram", "gpus", "mem", "label", "quiet", "log",
+                  "at", "phase", "from_plan", "submit_run" ] ),
+    "list"  : ( "what a target designates, with its parameters",
+                [ "runner", "kind", "entry_tags", "no_setup" ] ),
+    "shell" : ( "an interactive shell in an environment", [ "pull", "no_setup" ] ),
     "envs"  : ( "the declared environments, and the state they are in", [ ] ),
     "setup" : ( "build or update environments now, and nothing else", [ "force", "dry_run" ] ),
-    "init"  : ( "write an errand-project.py from what this directory holds", [ "force" ] ),
+    "init"  : ( "write a starting errand-envs.py, and suggest runners for what is here", [ "force" ] ),
     "tui"   : ( "the screen: tick what to run, watch each case as it talks", [ ] ),
     "queue" : ( "what this machine has, and what is holding it", [ ] ),
     "wait"  : ( "wait until nothing holds the machine", [ ] ),
@@ -855,7 +868,7 @@ VERBS = {
     "forget": ( "drop a submission from the list: errand forget ID", [ ] ),
     "vm"    : ( "the virtual machines kept warm between commands: errand vm stop", [ ] ),
 }
-COMMON = [ "env", "env_tags", "root", "out", "help", "version" ]
+COMMON = [ "env", "env_tags", "root", "help", "version" ]
 
 
 def build_parser( tag_names = ( ) ):
@@ -864,23 +877,29 @@ def build_parser( tag_names = ( ) ):
     # read as `--no-setup=2,3`, which is not a mistake anybody would have
     # thought to look for. An exact match, or nothing.
     p = argparse.ArgumentParser( prog = "errand", add_help = False, allow_abbrev = False )
-    p.add_argument( "pattern", nargs = "?", help = "path[::name] target(s): paths from the cwd, globs on both sides, comma-separated" )
+    p.add_argument( "pattern", nargs = "?", help = "what to run: a file, a command, or path::entry ( globs on both sides ), comma-separated" )
 
     # everybody's
     p.add_argument( "--env", default = None, help = "environment(s) by name, comma-separated" )
     p.add_argument( "-t", "--env-tags", default = None, help = "choose environments by tag expression" )
     p.add_argument( "--root", default = None, help = "project root (default: found from the cwd)" )
-    p.add_argument( "--out", default = None, help = "output tree (default: runs)" )
     p.add_argument( "-h", "--help", action = "store_true", help = "this help; after a verb, that verb's" )
     p.add_argument( "-V", "--version", action = "store_true", help = "which errand this is" )
 
     # run, list
+    p.add_argument( "-r", "--runner", default = None,
+                    help = "the runner that takes every target, by name ( errand.runners )" )
     p.add_argument( "-k", "--kind", action = "append", default = [ ],
                     help = "test, bench, experiment (repeatable)" )
     p.add_argument( "-e", "--entry-tags", default = None, help = "filter entries by tag expression" )
     p.add_argument( "-j", "--jobs", default = "1",
                     help = "how many entries at once: a number, or `auto`" )
     p.add_argument( "--batch", action = "store_true", help = "launch it and give the shell back" )
+    p.add_argument( "-o", dest = "keep_out", action = "store_true",
+                    help = "an output directory for each run, brought back: runs/… ( $ERRAND_OUT_DIR )" )
+    p.add_argument( "--out", default = None, metavar = "PATTERN",
+                    help = "the same, under another tree, or as a pattern: "
+                           "\"results/{env}/{when}\" ( {path} {name} {when} {place} {env} {params} )" )
     p.add_argument( "--at", default = None,
                     help = argparse.SUPPRESS )   # internal: run exactly the entry at FILE:LINE
     # internal: which phase this process is, when a command is run in two
@@ -892,19 +911,20 @@ def build_parser( tag_names = ( ) ):
     p.add_argument( "--no-queue", action = "store_true",
                     help = "do not wait for the machine to be free" )
     p.add_argument( "--no-setup", action = "store_true", help = "skip the freshness check" )
-
-    # shell
     p.add_argument( "--pull", action = "append", default = [ ], metavar = "DIR",
                     help = "on another machine: bring this directory ( relative to the project root ) back afterwards; may be repeated" )
-    p.add_argument( "-x", "--claim-exclusive", dest = "exclusive", action = "store_true",
-                    help = "with no --env: the machine to itself ( a benchmark )" )
-    p.add_argument( "--claim-cpus", dest = "cpus", default = None, help = "with no --env: cores the command needs" )
-    p.add_argument( "--claim-ram", dest = "ram", default = None, help = "with no --env: memory the command needs, e.g. 8G" )
-    p.add_argument( "-m", "--claim-mem", dest = "mem", default = None,
-                    help = "with no --env: memory ceiling of the command ( default 8G, 24G exclusive )" )
-    p.add_argument( "-n", "--claim-label", dest = "label", default = None, help = "with no --env: its name in the queue" )
-    p.add_argument( "-q", dest = "quiet", action = "store_true", help = "with no --env: no banner" )
-    p.add_argument( "-l", "--claim-log", dest = "log", default = None, help = "with no --env: stdout and stderr go there" )
+
+    # run: what it asks of the machine
+    p.add_argument( "-x", "--exclusive", dest = "exclusive", action = "store_true",
+                    help = "the machine to itself ( a benchmark )" )
+    p.add_argument( "--cpus", dest = "cpus", default = None, help = "cores it needs" )
+    p.add_argument( "--ram", dest = "ram", default = None, help = "memory it needs, e.g. 8G" )
+    p.add_argument( "--gpus", dest = "gpus", default = None, help = "cards it needs" )
+    p.add_argument( "-m", "--mem", dest = "mem", default = None,
+                    help = "memory ceiling of a command ( systemd-run, where there is one )" )
+    p.add_argument( "-n", "--label", dest = "label", default = None, help = "its name in the queue" )
+    p.add_argument( "-q", dest = "quiet", action = "store_true", help = "no banners" )
+    p.add_argument( "-l", "--log", dest = "log", default = None, help = "its output goes there too" )
 
     # setup, init
     p.add_argument( "--force", action = "store_true",
@@ -974,7 +994,8 @@ def print_help( parser, verb = None ):
 
     if verb is None:
         print( "usage: errand [options] <verb> [arguments]\n" )
-        print( "Run work here, in a container or on another machine, and bring back what it produced.\n" )
+        print( "Run your work in any environment -- built and kept current from what it declares,\n"
+               "here, in a container, on another machine -- with your files synced there and back.\n" )
         print( "verbs:" )
         for name, ( what, _ ) in VERBS.items():
             print( f"  {name:8s} {what}" )
@@ -989,7 +1010,7 @@ def print_help( parser, verb = None ):
     what, own = VERBS[ verb ]
     usage = { "run"   : "errand run [options] [target [what the target takes…]]",
               "list"  : "errand list [options] [target [what the target takes…]]",
-              "shell" : "errand shell [--env NAME] [-- command…]",
+              "shell" : "errand shell [--env NAME]",
               "setup" : "errand setup [--env NAME] [--force] [--dry-run]",
               "forget": "errand forget ID",
               "vm"    : "errand vm stop" }.get( verb, f"errand {verb}" )
@@ -999,6 +1020,11 @@ def print_help( parser, verb = None ):
         options( own )
     print( "\noptions everybody takes:" )
     options( COMMON )
+    if verb == "run":
+        print( dim( "\n  x.py and x run as they are ( a .py by the place's python ); x::y goes to the entry runners" ) )
+        runners = ", ".join( config.runners ) if config.runners else ""
+        if runners:
+            print( dim( f"  runners: {runners}" ) )
 
 
 def split_target( parser, rest ):
@@ -1008,6 +1034,12 @@ def split_target( parser, rest ):
     option's value. Before it, every option must be errand's: a parameter
     written there is a mistake worth hearing about, since it belongs to the
     target -- and after it, nothing is errand's, `--env` included.
+
+    Several FILES are several targets: `errand run tests/test_*.py`, the glob
+    left to the shell, hands errand one word per file, which is the same as
+    `tests/test_a.py,tests/test_b.py`. The files that follow a file target and
+    have its suffix are targets too, up to the first word that is not one;
+    such a file meant as an argument goes after a `--`.
     """
     takes = _takes_value( parser )
     i = 0
@@ -1026,8 +1058,23 @@ def split_target( parser, rest ):
                 i += 1
             i += 1
             continue
-        return rest[ : i ], token, rest[ i + 1 : ]
+        if not Path( token ).is_file():
+            return rest[ : i ], token, rest[ i + 1 : ]       # a pattern: its commas separate targets
+        j = i + 1
+        while j < len( rest ) and _same_kind_of_file( rest[ j ], token ):
+            j += 1
+        # files: a comma in a name is only a comma
+        return rest[ : i ], ",".join( t.replace( ",", "\\," ) for t in rest[ i : j ] ), rest[ j : ]
     return list( rest ), None, [ ]
+
+
+def _same_kind_of_file( word, first ):
+    """Whether `word`, after the target `first`, is one more target: an existing
+    file of the same suffix. Not for files without one: `./convert data` is a
+    program and its input."""
+    suffix = Path( first ).suffix
+    return ( not word.startswith( "-" ) and suffix and Path( word ).suffix == suffix
+             and Path( word ).is_file() )
 
 
 def own_part( parser, argv, lenient = False ):
@@ -1102,6 +1149,24 @@ def target_argv( e, resolved, values ) -> list:
     return declared + list( values.get( ARGS ) or [ ] )
 
 
+def output_tree( root: Path, known ) -> Path:
+    """Where runs are recorded: a tree of the project's when `-o` or `--out`
+    asked for one, errand's own state otherwise."""
+    out = getattr( known, "out", None )
+    R.pattern = out if out and "{" in out else None
+    if getattr( known, "keep_out", False ) or out:
+        tree = Path( out if out and not R.pattern else config.settings.out )
+        return tree if tree.is_absolute() else root / tree
+    return config.state( root ) / "runs"
+
+
+def _from_root( target: str, root: Path ) -> str:
+    """A target written from the project root, as one from the cwd."""
+    path, sep, name = target.partition( "::" )
+    moved = os.path.relpath( root / path, Path.cwd() ) if path else os.path.relpath( root, Path.cwd() )
+    return moved + sep + name
+
+
 def main( argv = None ):
     from . import __version__
 
@@ -1114,22 +1179,17 @@ def main( argv = None ):
 
     config.load( root, warn = lambda m: print( warn( f"  warning: {m}" ), file = sys.stderr ) )
 
-    out_root = Path( pre.out or config.settings.out )
-    if not out_root.is_absolute():
-        out_root = root / out_root
+    # Where each run is recorded: errand's own state when nobody asked for a
+    # directory -- the history, the screen and `--batch` read it there -- and a
+    # tree of the project's ( `runs/` ) when somebody did, with `-o` or `--out`.
+    out_root = output_tree( root, pre )
 
     parser = build_parser( config.tag_names() )
     verb, rest = split_verb( parser, argv )
 
-    # Everything after a bare `--` is a command to run IN the environment
-    # rather than arguments to errand: `errand shell --env gpu -- python -m
-    # loom.toolchain`. The environments are described here, once, with the
-    # layers that lead to them; being let into one is a smaller thing than a
-    # second tool that describes them again.
-    handed = None
     if verb == "shell" and "--" in rest:
-        at = rest.index( "--" )
-        rest, handed = rest[ : at ], rest[ at + 1 : ]
+        print( bad( "errand shell takes no command: `errand run [--env X] <command…>` runs one" ) )
+        return 2
 
     # errand's options, then the target, then what belongs to the target --
     # its own arguments, as `python script.py args…` has them.
@@ -1144,6 +1204,7 @@ def main( argv = None ):
     else:
         known, _ = parser.parse_known_args( rest )
     known.pattern, known.target_args = target, after
+    known.from_default = False
 
     if known.version and verb is None:
         # The version of the PACKAGE and the file it came out of: an editable
@@ -1193,7 +1254,7 @@ def main( argv = None ):
         # interpreter carries, and a missing screen must not cost the command
         # line.
         from . import tui
-        return tui.main( root = root, out_root = out_root )
+        return tui.main( root = root, out_root = out_root, also = [ root / config.settings.out ] )
 
     if verb == "init":
         from . import detect
@@ -1203,19 +1264,12 @@ def main( argv = None ):
         return print_envs( root )
 
     if verb == "shell":
-        if handed is None:
-            # Somebody types into it. Through the environment's own layers,
-            # the default one when none is named: a shell HERE is the one you
-            # typed this in. The user's own shell when the place has it -- a
-            # container rarely has the zsh of the machine outside it.
-            login = [ "sh", "-c", 'command -v "${SHELL:-}" >/dev/null 2>&1 && exec "$SHELL" -i; exec sh -i' ]
-            return run_there( known, login, root = root, interactive = True )
-        if not handed:
-            print( bad( "errand shell: nothing after `--`" ) )
-            return 2
-        if not ( known.env or known.env_tags or _tag_values( known ) ):
-            return run_here( known, handed )
-        return run_there( known, handed, root = root )
+        # Somebody types into it. Through the environment's own layers, the
+        # default one when none is named: a shell HERE is the one you typed
+        # this in. The user's own shell when the place has it -- a container
+        # rarely has the zsh of the machine outside it.
+        login = [ "sh", "-c", 'command -v "${SHELL:-}" >/dev/null 2>&1 && exec "$SHELL" -i; exec sh -i' ]
+        return run_there( known, login, root = root, interactive = True )
 
     if verb == "wait":
         return queue.wait_idle()
@@ -1270,7 +1324,20 @@ def main( argv = None ):
                         env_name = ( env_obj.name if env_obj else known.env or "default" ),
                         tags = _tags_from_env() or ( env_obj.tags if env_obj else { } ),
                         version = __version__, report = Report(),
-                        queued = not known.no_queue )
+                        queued = not known.no_queue, ask = Ask( known ) )
+
+    if target is None:
+        # What the project says "everything" is: its own targets, from its
+        # root. With none, there is nothing obvious to run, and guessing is
+        # exactly what errand does not do.
+        default = getattr( sys.modules[ "errand" ], "default_run", None )
+        if not default:
+            print_help( parser, verb )
+            print( dim( "\n  nothing to run by default: errand.default_run = [ \"tests/**::*\" ] "
+                        "in errand-project.py says what a bare `errand run` runs" ) )
+            return 2
+        target = ",".join( _from_root( t, root ) for t in ( [ default ] if isinstance( default, str ) else default ) )
+        known.pattern, known.from_default = target, True
 
     kinds = set()
     for k in known.kind:
@@ -1310,6 +1377,12 @@ def main( argv = None ):
     report = Report()
     rc, dispatched = 0, 0
     for env, tags in targets:
+        if inside is None and env.vm is not None and verb == "run":
+            # errand does not run inside a virtual machine: the command goes in
+            # as it is, and what `--pull` names comes back.
+            rc |= run_there( known, [ target, *after ], root = root, targets = [ ( env, tags ) ] )
+            dispatched += 1
+            continue
         if inside is None and env.wraps_anything( tags ):
             # This side only chooses where, and hands the command over as it
             # was typed: what it designates is for that place to say.
@@ -1320,7 +1393,7 @@ def main( argv = None ):
                     rc = 1
                     continue
             print( dim( f"\n  -> {env.name}  {env.describe()}" ), flush = True )
-            rc |= go_there( env, tags, verb, rest, root = root )
+            rc |= go_there( env, tags, verb, rest, root = root, pull = known.pull )
             dispatched += 1
             continue
         rc |= here( env, tags, verb, rest, known, root = root, out_root = out_root,
@@ -1338,13 +1411,15 @@ def main( argv = None ):
 
 # ── one environment, from inside it ──────────────────────────────────────────
 
-PLANS = ".errand/plans"
+def plans_rel( root ) -> str:
+    """The plans, in errand's state: named from the root, as on the other side."""
+    return os.path.join( config.state_rel( root ), "plans" )
 
 
 def plan_path( root, env_name ) -> Path:
     """Where the plan of this command in that environment is written: the same
     path on both sides of a dispatch, since both know the stamp and the name."""
-    return Path( root ) / PLANS / f"{R.stamp()}-{R.slug( env_name or 'default' )}.json"
+    return Path( root ) / plans_rel( root ) / f"{R.stamp()}-{R.slug( env_name or 'default' )}.json"
 
 
 def read_plan( root, env_name ):
@@ -1360,7 +1435,7 @@ def planned( root, stamp ) -> list:
     place whose plan is here -- written here, or brought back from there."""
     import json
     out = [ ]
-    for path in sorted( ( Path( root ) / PLANS ).glob( f"{stamp}-*.json" ) ):
+    for path in sorted( ( Path( root ) / plans_rel( root ) ).glob( f"{stamp}-*.json" ) ):
         if path.name.endswith( ".submitted.json" ):
             continue
         try:
@@ -1394,21 +1469,16 @@ def here( env, tags, verb, rest, known, *, root, out_root, report, kinds, inside
 
     _put_src_on_path( root )
 
-    if config.guessed and verb == "run" and inside is None:
-        from . import detect
-        print( dim( f"  {detect.announce( config.guessed )}   ( errand init writes it down )" ),
-               file = sys.stderr )
-
     # What can only be listed once built is built now, in this place -- except
     # in the run phase of two, which finds the preparation's build in place.
     context = P.RunContext( root = root, out_dir = out_root, env = { },
                             build_dir = build_dir_for( root, env.name ) )
-    context.build_dir.mkdir( parents = True, exist_ok = True )
     try:
         selected, modules, selectors = discovery.select(
             known.pattern, root, kinds = kinds, entry_tags = known.entry_tags,
-            bulk_only = not known.pattern and not kinds, exclude = config.settings.exclude,
+            bulk_only = known.from_default and not kinds, exclude = config.settings.exclude,
             runners = config.runners, context = context, build = not known.from_plan,
+            force = known.runner,
         )
     except ValueError as err:
         print( bad( str( err ) ) )
@@ -1440,7 +1510,7 @@ def here( env, tags, verb, rest, known, *, root, out_root, report, kinds, inside
         return 1
 
     if not selected:
-        print( bad( f"nothing matched {known.pattern!r}" if known.pattern else "nothing to run" ) )
+        print( bad( f"nothing matched {known.pattern!r}" ) )
         if discovery.broken:
             # "nothing to run" when in fact nothing could be READ is the kind of
             # answer that sends somebody looking in the wrong place.
@@ -1497,7 +1567,7 @@ def here( env, tags, verb, rest, known, *, root, out_root, report, kinds, inside
     if how_many > 1:
         run_in_processes( selected, combos, root = root, out_root = out_root, env = env,
                           tags = tags, how_many = how_many, report = report,
-                          out_prefix = R.place( env.name ) )
+                          out_prefix = R.place( env.name ), flags = Ask.flags( known ) )
         return 0
 
     for i, ( varied, values ) in enumerate( combos ):
@@ -1507,7 +1577,7 @@ def here( env, tags, verb, rest, known, *, root, out_root, report, kinds, inside
         run_entries( selected, modules, root = root, out_root = out_root,
                      overrides = values, env_name = env.name, tags = tags,
                      version = __version__, report = report,
-                     queued = not args.no_queue, selectors = selectors )
+                     queued = not args.no_queue, selectors = selectors, ask = Ask( known ) )
     return 0
 
 
@@ -1523,14 +1593,13 @@ def child_env_for( env, tags ) -> dict:
              "PYTHONUNBUFFERED": "1" }
 
 
-def go_there( env, tags, verb, rest, *, root ):
+def go_there( env, tags, verb, rest, *, root, pull = ( ) ):
     """The command, in `env`: one pass, or a preparation and then a run sized
     from the plan it wrote. -> the return code."""
     if env.vm is not None:
         # The child would be errand itself, over there -- and errand is a unix
-        # program. A command is what a virtual machine takes, for now.
-        print( bad( f"  {env.name} is a virtual machine: entries do not run in one yet -- "
-                    f"errand shell --env {env.name} -- <command>" ) )
+        # program. `errand run` hands a virtual machine the command itself.
+        print( bad( f"  {env.name} is a virtual machine: errand does not list entries in one" ) )
         return 1
 
     def through( phase, extra, needs = None ):
@@ -1555,10 +1624,11 @@ def go_there( env, tags, verb, rest, *, root ):
             L.fetch( paths, ssh.host, there, root, ssh.options )
 
     def bring_back( ):
-        fetch( [ PLANS ] )
+        fetch( [ plans_rel( root ) ] )
         plan = read_plan( root, env.name )
         if plan is not None:
             fetch( sorted( { r[ "under" ] for r in plan[ "runs" ] } ) )
+        fetch( list( pull ) )
         return plan
 
     if verb == "list":
@@ -1571,7 +1641,7 @@ def go_there( env, tags, verb, rest, *, root ):
         return rc
 
     rc = through( "prepare", [ "--phase", "prepare" ] )
-    fetch( [ PLANS ] )
+    fetch( [ plans_rel( root ) ] )
     plan = read_plan( root, env.name )
     if rc or plan is None:
         if plan is None and not rc:

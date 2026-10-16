@@ -24,7 +24,9 @@ there, **the arrival of a result file where the plan said one would be is itself
 signal.** Until a place has written its plan, `errand status` says it is *preparing*; where the run
 is sized from the plan, the preparation is what is submitted, and it submits the run when it knows.
 
-No protocol between the two sides, no daemon, nothing that can get out of sync.
+No protocol between the two sides, no daemon, nothing that can get out of sync. The tree is the
+[record](./output) every run leaves in `.errand/runs/` — or the visible one, with `-o` — so a detached
+run needs no output directory of its own to be followed.
 
 What is kept locally is only what the tree cannot say — which runs belong to one submission, and
 what handle each place was given. The side that expanded the matrix is the only one that ever knew

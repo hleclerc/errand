@@ -1,7 +1,7 @@
-"""A directory with no errand-project is read for what it holds, and the guess is written down on request.
+"""`errand init` reads a directory for what it holds, and writes suggestions down -- in comments.
 
-Nothing here runs a toolchain: detection lists directories and reads a few files, which is what
-lets it be announced before every run without costing one.
+Nothing here runs a toolchain, and nothing here decides what a run does: detection lists
+directories and reads a few files, and only `errand init` uses it.
 """
 import tempfile
 from pathlib import Path
@@ -31,7 +31,7 @@ if test( "a conventional layout is recognised, all three of them" ):
     assert got[ "pytest" ].line == "errand.runners.replace( errand.Pytest( dirs = [ 'tests' ] ) )"
     assert got[ "catch2" ].line == "errand.runners.replace( errand.Catch2( dir = 'cpp', build = 'make -C cpp' ) )"
     assert got[ "cargo" ].line == "errand.runners.replace( errand.Cargo( manifest = 'rust/Cargo.toml' ) )"
-    assert "pytest (tests/)" in detect.announce( list( got.values() ) )
+    assert got[ "pytest" ].targets == ( "tests/**::*", )
 
 
 if test( "files written in errand's own guard are not pytest's to collect" ):
@@ -44,15 +44,16 @@ if test( "a C++ file that never mentions Catch is not a Catch2 suite" ):
     assert detect.guess( root ) == [ ]
 
 
-if test( "`errand init` writes the guess down, makes runs/, and refuses to overwrite" ):
+if test( "`errand init` writes the suggestions down, in comments, and refuses to overwrite" ):
     root = project( { "tests/test_api.py": "def test_x():\n    pass\n", ".git/HEAD": "ref: x\n" } )
     rc, out = run_errand( root, "init" )
     assert rc == 0, out
     text = ( root / "errand-project.py" ).read_text()
-    assert "errand.runners.replace( errand.Pytest( dirs = [ 'tests' ] ) )" in text
+    assert "# errand.runners.replace( errand.Pytest( dirs = [ 'tests' ] ) )" in text
+    assert "# errand.default_run = [ 'tests/**::*' ]" in text
     compile( text, "errand-project.py", "exec" )
-    assert ( root / "runs" ).is_dir()
-    assert "runs/" in ( root / ".gitignore" ).read_text()
+    ignored = ( root / ".gitignore" ).read_text()
+    assert ".errand/" in ignored and "runs/" in ignored
 
     rc, out = run_errand( root, "init" )
     assert rc == 1 and "already exists" in out, out

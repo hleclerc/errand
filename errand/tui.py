@@ -1372,7 +1372,7 @@ def without_rep( ):
         pass
 
 
-def main( root: Path, out_root: Path ):
+def main( root: Path, out_root: Path, also = ( ) ):
     import sys
 
     if not sys.stdout.isatty():
@@ -1380,7 +1380,7 @@ def main( root: Path, out_root: Path ):
         return 2
     without_rep()
     try:
-        return curses.wrapper( loop, Screen( Session( root, out_root ).discover() ) ) or 0
+        return curses.wrapper( loop, Screen( Session( root, out_root, also ).discover() ) ) or 0
     finally:
         if OWN_MOUSE:                      # what `loop` switched on, whatever ended it
             os.write( 1, b"\x1b[?1006l\x1b[?1000l" )

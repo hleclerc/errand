@@ -29,11 +29,11 @@ export default defineConfig( {
     sidebar: {
       '/guide/': [
         {
-          text: 'Getting started',
+          text: 'Introduction',
           items: [
             { text: 'What errand is',    link: '/guide/what-is-errand' },
             { text: 'Installing',        link: '/guide/installing' },
-            { text: 'Start from what you have', link: '/guide/start' },
+            { text: 'Getting started',   link: '/guide/start' },
           ]
         },
         {
@@ -50,9 +50,8 @@ export default defineConfig( {
           text: 'Running work',
           items: [
             { text: 'Running it',        link: '/guide/running' },
-            { text: 'Parameters & matrices', link: '/guide/matrices' },
             { text: 'Runners',           link: '/guide/runners' },
-            { text: 'Writing entries',   link: '/guide/declaring-work' },
+            { text: 'Parameters & matrices', link: '/guide/matrices' },
           ]
         },
         {
@@ -69,6 +68,12 @@ export default defineConfig( {
             { text: 'Configuration',     link: '/guide/configuration' },
           ]
         },
+        {
+          text: 'Optional: errand\'s own entries',
+          items: [
+            { text: 'Writing entries',   link: '/guide/declaring-work' },
+          ]
+        },
       ],
 
       '/tutorials/': [
@@ -76,10 +81,10 @@ export default defineConfig( {
           text: 'Tutorials',
           items: [
             { text: 'All of them',               link: '/tutorials/' },
-            { text: '1 · errand\'s own entries',  link: '/tutorials/first-entry' },
-            { text: '2 · Four environments',     link: '/tutorials/environments' },
-            { text: '3 · Adopt an existing suite', link: '/tutorials/adopt-a-suite' },
-            { text: '4 · Numbers over two machines', link: '/tutorials/two-machines' },
+            { text: '1 · Four environments',     link: '/tutorials/environments' },
+            { text: '2 · Adopt an existing suite', link: '/tutorials/adopt-a-suite' },
+            { text: '3 · Numbers over two machines', link: '/tutorials/two-machines' },
+            { text: '4 · errand\'s own entries',  link: '/tutorials/first-entry' },
           ]
         }
       ],

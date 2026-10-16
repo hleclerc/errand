@@ -1,4 +1,4 @@
-# 4 · Numbers over two machines
+# 3 · Numbers over two machines
 
 This one is not an example directory — it is the thing the other three were building towards, done
 in a project of your own. The goal: **numbers, taken here and on another machine, in a form you
@@ -25,7 +25,7 @@ if p := bench( "cost", n      = Param( 100_000, help = "number of unknowns" ),
 
 `bench` means three things at once: the numbers are [kept](/guide/declaring-work#the-four-traits),
 the entry takes the machine to itself while it runs (these are timings, so it must), and a bare
-`errand` will not fire it by accident. For numbers that are not timings, `track` is the same without
+`errand run` will not fire it by accident. For numbers that are not timings, `track` is the same without
 the exclusivity.
 
 Check that errand sees it before going any further:
@@ -87,28 +87,29 @@ errand setup            # do it, and nothing else
 directly to find out:
 
 ```bash
-errand shell --env there -- python -c "import sys; print( sys.version )"
+errand run --env there python -c "import sys; print( sys.version )"
 ```
 
-Everything after `--` is a command to run *in* the environment. It is pushed, run over there and
+Everything after errand's options is a command to run *in* the environment. It is pushed, run over there and
 reported back — and the environment is prepared first, by the same rules as a run.
 
 ## Take the number, in both places
 
 ```bash
-errand run --env here,there bench/solvers.py::cost --n=100000
+errand run -o --env here,there bench/solvers.py::cost --n=100000
 ```
 
 ```text
   → bigbox.lab.example:/home/me/scratch/proj  env=there  tags=driver:cpu,remote
   rsync push → bigbox.lab.example:/home/me/scratch/proj
   ...
-  rsync pull ← bigbox.lab.example:/home/me/scratch/proj [runs/bench/solvers.py/cost]
+  rsync pull ← bigbox.lab.example:/home/me/scratch/proj [.errand/runs/bench/solvers.py/cost, runs/bench/solvers.py/cost]
 ```
 
 The comma is a [matrix](/guide/matrices); the two runs share one timestamp because they are one
 command. The remote side never sees a matrix — it is expanded here, into plain runs, and the paths
-to fetch back are worked out **before** anything starts.
+to fetch back are worked out **before** anything starts. Every run is recorded in `.errand/runs/`;
+`-o` asks for the same tree where you will look at it, under `runs/`:
 
 ```text
 runs/bench/solvers.py/cost/
@@ -161,7 +162,7 @@ sync.
 ## A month later
 
 ```bash
-errand run --env here,there bench/solvers.py::cost --n=100000
+errand run -o --env here,there bench/solvers.py::cost --n=100000
 cat runs/bench/solvers.py/cost/summary.yaml
 ```
 

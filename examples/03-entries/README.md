@@ -10,38 +10,44 @@ test_primes.py    five entries: two tests, two benchmarks, one experiment
 ## Try it
 
 ```bash
-cd examples/01-minimal
+cd examples/03-entries
 
-errand run                        # the tests, and only the tests
-errand run -e '!slow'             # skip the slow one
-errand run -k bench               # the benchmarks
-errand run test_primes.py::sieve  # one entry by name
-errand list                       # what matched, with the parameters it takes
+errand run -k test '**::*'             # the tests
+errand run -k test -e '!slow' '**::*'  # skip the slow one
+errand run -k bench '**::*'            # the benchmarks
+errand run test_primes.py::sieve       # one entry by name
+errand run '**::*'                     # every entry: tests, benchmarks, the experiment
+errand list '**::*'                    # what matched, with the parameters it takes
 ```
 
-A comma is a matrix, here and everywhere else:
+`'**::*'` is every entry under here. There is no `errand-project.py`, so no `errand.default_run`, and
+a bare `errand run` only prints the help.
+
+A comma on a parameter is a matrix:
 
 ```bash
-errand run -k bench . --n=100000,1000000,10000000
+errand run -o -k bench '**::*' --n=100000,1000000,10000000
 ```
 
-Three runs, three directories, and a summary at the entry's root with one row per size.
+Three runs, three directories — `-o` makes them visible under `runs/` — and a summary at the entry's
+root with one row per size.
 
 ## What you get back
 
 ```
-runs/
-  test_primes__sieve/
-    9f3c1a2b7e/                       <- n=100000
-      thishost/
-        2026-09-24/
-          result.yaml                 <- status, duration, RAM, params, results, tags
-        summary.yaml                  <- one row per date
-      summary.yaml                    <- one row per place
-    summary.yaml                      <- one row per parameter set: read this after a matrix
-  test_primes__gaps/
-    .../latest/gaps.svg               <- stable path, reload the tab
+runs/test_primes.py/sieve/
+  2026-09-24_18h04m11-default@thishost-n=100000/
+    result.yaml          <- status, duration, RAM, params, results, tags
+  2026-09-24_18h04m11-default@thishost-n=1000000/
+    result.yaml
+  latest -> the newest of them
+  summary.yaml           <- one row per run, and the extents: read this after a matrix
+
+runs/test_primes.py/gaps/latest/gaps.svg     <- stable path, reload the tab ( errand run -o test_primes.py::gaps )
 ```
+
+Without `-o`, the same tree is kept privately in `.errand/runs/`, which is what the screen and the
+history read.
 
 Nothing here is a special directory that `errand` knew about in advance. Every component is computed
 from the entry, its parameters, where it ran and when — which is also how the same path can be
@@ -65,5 +71,5 @@ it, read from the file that case is writing. `o` opens what a run produced.
   file. They are told apart by call site, so two entries may share a name.
 - **The benchmark that also asserts.** `bench( "sieve beats trial division" )` records two numbers
   and then checks one against the other. There is no rule that a benchmark may not fail.
-- **`errand` on its own never runs the benchmarks.** They are not `bulk`; you name them, or you ask
-  for `-k bench`. The experiment likewise.
+- **A bare `errand run` never runs the benchmarks**, even where `errand.default_run` names their
+  file. They are not `bulk`; you name them, or you ask for `-k bench`. The experiment likewise.

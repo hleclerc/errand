@@ -22,34 +22,34 @@ projects, no interference. It is a directory of claims, not a daemon.
 
 ```bash
 errand queue           # what the host has, and what is holding it
-errand run --no-queue  # this run does not wait, and does not hold
+errand run --no-queue ./x  # this run does not wait, and does not hold
 ```
 
 ## Any command, under the queue
 
-The queue is not only for entries. A bare `--` with no `--env` runs **that command, on this
-machine**, once the queue lets it:
+The queue is not only for entries. Every `errand run` takes a claim — shared unless asked
+otherwise — so a plain command runs **on this machine** (or in the `--env` named) once the queue
+lets it:
 
 ```bash
-errand shell -- make -j16                        # shared: it waits only if the machine is full
-errand shell -x -- ./bench --n 1e7               # a benchmark: the machine to itself
-errand shell --cpus 8 --ram 16G -- ./solve       # what it needs, so neighbours can be let in
-errand shell -l build.log -n "nightly" -- ./all  # a log file, and a name in the queue
-errand shell -q -- ./quiet                       # no banner
+errand run make -j16                        # shared: it waits only if the machine is full
+errand run -x ./bench --n 1e7               # a benchmark: the machine to itself
+errand run --cpus 8 --ram 16G ./solve       # what it needs, so neighbours can be let in
+errand run -l build.log -n "nightly" ./all  # a log file, and a name in the queue
+errand run -q ./quiet                       # no banner
 ```
 
 | flag | |
 |---|---|
 | `-x`, `--exclusive` | the machine to itself. This is what a measurement wants |
-| `--cpus`, `--ram` | what it needs, counted against the host |
-| `-m`, `--mem` | a memory *ceiling* for the command (default `8G`, `24G` exclusive) |
+| `--cpus`, `--ram`, `--gpus` | what it needs, counted against the host |
+| `-m`, `--mem` | a memory *ceiling* for the command |
 | `-n`, `--label` | its name in `errand queue` |
-| `-l`, `--log` | stdout and stderr go there |
-| `-q`, `--quiet` | no banner |
+| `-l`, `--log` | its output goes there too |
+| `-q` | no banner |
 
-A shared command is run at low priority (`nice -n 5`); an exclusive one is not, having nothing to
-be polite to. Where the user bus allows it, the command is put in a `systemd-run --user --scope`
-with `MemoryMax` set, so a runaway allocation takes down the command and not the machine. Without a
+With `-m`, where the user bus allows it, the command is put in a `systemd-run --user --scope` with
+`MemoryMax` set, so a runaway allocation takes down the command and not the machine. Without a
 bus — over ssh, from cron — the command still runs, only without its ceiling.
 
 ```bash

@@ -46,6 +46,12 @@ class Env:
     """
 
     def __init__( self, stack = ( ), **tags ):
+        for k, v in tags.items():
+            # A comma on the command line is several values: a tag value holding
+            # one could never be asked for.
+            if isinstance( v, str ) and "," in v:
+                raise ValueError( f"tag {k} = {v!r}: a tag value cannot hold a comma, which means "
+                                  f"several values on the command line" )
         if PHASE in tags:
             raise ValueError( f"`{PHASE}` is not a tag an environment can declare: it is which phase "
                               f"a layer's `when` is asked about ( {' or '.join( PHASES )} )" )
@@ -165,6 +171,10 @@ class Settings:
     # ( `build/<env>/` ): two environments never share a binary, so a number is
     # never measured on a binary built for somewhere else.
     build  : str = "build"
+    # errand's own record of what it did -- the runs nobody asked a directory
+    # for, the plans, the history, what was built. `ERRAND_STATE_DIR` overrides
+    # it for one machine ( a scratch disk, a shared filesystem ).
+    state  : str = ".errand"
 
 
 class Envs( dict ):
@@ -173,18 +183,38 @@ class Envs( dict ):
     def __setitem__( self, name, env ):
         if not isinstance( env, Env ):
             raise TypeError( f"envs[ {name!r} ] must be an errand.Env, not {type( env ).__name__}" )
+        if "," in name:
+            raise ValueError( f"envs[ {name!r} ]: an environment name cannot hold a comma, which "
+                              f"means several environments on the command line" )
         env.name = name
         super().__setitem__( name, env )
 
 
 settings  = Settings()
 envs      = Envs()
-# What runs which file: the runners that come with errand, which a project edits
-# in place ( `errand.runners.append`, `.remove`, `.replace` ).
-runners   = None            # a runners.Runners, filled below and by `reset`
-# What was GUESSED for a project with no config file of its own: [ detect.Guess ].
-# Kept apart so that it can be announced -- a guess is never silent.
-guessed   : list = [ ]
+# What runs what: name -> runner, filled with the ones that come with errand,
+# which a project edits in place ( `errand.runners[ "bench" ] = …`, `del`,
+# `.replace` ).
+runners   = None            # a runner.Runners, filled below and by `reset`
+
+
+STATE_ENV = "ERRAND_STATE_DIR"
+
+
+def state( root: Path ) -> Path:
+    """errand's own record for this project: `.errand/` unless said otherwise."""
+    import os
+    where = Path( os.environ.get( STATE_ENV ) or settings.state ).expanduser()
+    return where if where.is_absolute() else Path( root ) / where
+
+
+def state_rel( root: Path ) -> str:
+    """The same, relative to the root when it is under it -- which is how it is
+    named on another machine, where the root is somewhere else."""
+    import os
+    path = state( root )
+    rel = os.path.relpath( path, root )
+    return str( path ) if rel.startswith( ".." ) else rel
 
 
 def configure( **kw ):
@@ -200,18 +230,19 @@ def reset( ):
     global settings
     settings = Settings()
     sys.modules[ "errand" ].default_env = None
+    sys.modules[ "errand" ].default_run = None
     envs.clear()
     _default_runners()
-    guessed.clear()
 
 
 def _default_runners( ):
-    # The same list object throughout: `errand.runners` is handed out once.
+    # The same dict throughout: `errand.runners` is handed out once.
     from .runner import Runners, defaults
     global runners
     if runners is None:
         runners = Runners()
-    runners[ : ] = defaults()
+    runners.clear()
+    runners.update( defaults() )
 
 
 def load( root: Path, warn = None ) -> bool:
@@ -228,12 +259,6 @@ def load( root: Path, warn = None ) -> bool:
     files = config_files( root )
     local.reset( files, root )
     if not files:
-        # No declaration: look at what is there. Existing suites are adopted for
-        # this run only, and `cli` says so; `errand init` writes the guess down.
-        from . import detect
-        for g in detect.guess( root ):
-            guessed.append( g )
-            runners.replace( g.make() )
         _root_runners( root )
         return False
     for path in files:
@@ -248,7 +273,7 @@ def load( root: Path, warn = None ) -> bool:
 
 def _root_runners( root: Path ):
     """What a runner's own relative paths -- `dirs`, `manifest` -- are relative to."""
-    for r in runners:
+    for r in runners.values():
         r.root = Path( root )
 
 

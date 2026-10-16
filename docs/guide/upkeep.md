@@ -59,13 +59,14 @@ it has to work before any environment exists.
 ## Being let into one
 
 ```bash
-errand shell --env gpu -- python -m mypkg.toolchain  # that command, in that environment
-errand shell --env cluster -- nvidia-smi             # on the other machine, through ssh
-errand shell --driver torch -- python -c "import torch; print( torch.__version__ )"
+errand run --env gpu python -m mypkg.toolchain  # that command, in that environment
+errand run --env cluster nvidia-smi             # on the other machine, through ssh
+errand run --driver torch python -c "import torch; print( torch.__version__ )"
+errand shell --env gpu                          # a shell there, to type into
 ```
 
-Everything after a bare `--` is a command to run *in* the environment rather than arguments to
-errand.
+Everything from the first word that is not one of errand's options is a command to run *in* the
+environment rather than arguments to errand.
 
 The environments are already declared here, once, with the layers that lead to them — a venv, a
 container, another machine — so being let into one is a smaller thing than a second tool that would
@@ -73,8 +74,8 @@ have to describe them all over again. **Entering an environment prepares it too*
 as a run: what has drifted is brought up to date first.
 
 A first word that **names an interpreter** is replaced by the interpreter of the place; any other is
-a command in its own right and is kept. That is why `-- python -c …` runs the container's python and
-`-- nvidia-smi` runs nvidia-smi.
+a command in its own right, looked for on the place's `PATH`, and is kept. That is why `python -c …`
+runs the container's python and `nvidia-smi` runs nvidia-smi.
 
 ## Next
 

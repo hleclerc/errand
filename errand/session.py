@@ -37,8 +37,10 @@ TAIL = 64 * 1024           # how much of an output file is worth reading back
 
 
 class Session:
-    def __init__( self, root: Path, out_root: Path ):
+    def __init__( self, root: Path, out_root: Path, also = ( ) ):
+        # Where runs are recorded: errand's own state, and the trees `-o` wrote.
         self.root, self.out_root = root, out_root
+        self.trees = [ out_root, *also ]
         self.entries : list = [ ]
         self.broken  : list = [ ]        # ( path, the short of it, the traceback )
         self.noise   = ""                # whatever reading the project printed
@@ -67,7 +69,7 @@ class Session:
                 config.load( self.root, warn = lambda m: print( f"warning: {m}" ) )
                 cli._put_src_on_path( self.root )
                 self.entries, _, _ = discovery.select(
-                    None, self.root, bulk_only = False, exclude = config.settings.exclude,
+                    "**::*", self.root, bulk_only = False, exclude = config.settings.exclude,
                     runners = config.runners, cwd = self.root )
             except Exception as err:                  # a bad config, mostly
                 print( f"{type( err ).__name__}: {err}" )
@@ -120,7 +122,7 @@ class Session:
 
     def pattern_for( self, entries ):
         """`path::case` for each -- `path::{a,b}` for several of one file, and
-        `path` alone when every case of it was asked for: shorter, and it stays
+        `path::*` when every case of it was asked for: shorter, and it stays
         true when a case is added to it tomorrow. Paths are from the root, which
         is where the command is started from; names are escaped, so that a case
         called `grad_*` designates that case and no other."""
@@ -132,7 +134,7 @@ class Session:
             whole = [ e for e in self.entries if e.file == path ]
             shown = T.escape( os.path.relpath( path, self.root ) )
             if len( mine ) == len( whole ):
-                parts.append( shown )
+                parts.append( f"{shown}::*" )
             elif len( mine ) == 1:
                 parts.append( f"{shown}::{T.escape( mine[ 0 ] )}" )
             else:
@@ -158,7 +160,7 @@ class Session:
             out.append( "--batch" )
         # errand's options, then the target, then what belongs to the target:
         # the parameters are its arguments. Parameters with no case ticked are
-        # for everything here, which `.` says.
+        # for everything here, which `**::*` says.
         given = [ ]
         for name, values in sorted( ( params or { } ).items() ):
             values = values if isinstance( values, ( list, tuple ) ) else [ values ]
@@ -167,7 +169,7 @@ class Session:
                 given += [ f"--{name.replace( '_', '-' )}", joined ]
         pattern = self.pattern_for( list( entries ) )
         if pattern or given:
-            out.append( pattern or "." )
+            out.append( pattern or "**::*" )
         return out + given
 
     @staticmethod
@@ -244,10 +246,13 @@ class Session:
             before, pattern, after = cli.split_target( parser, argv )
             known, _ = parser.parse_known_args( before )
             kinds = { cli.KINDS[ k ] for k in known.kind if k in cli.KINDS }
+            default = pattern is None
+            if default:
+                pattern = ",".join( sys.modules[ "errand" ].default_run or [ ] )
             entries, _, _ = discovery.select(
                 pattern, self.root, kinds = kinds, entry_tags = known.entry_tags,
-                bulk_only = not pattern and not kinds, exclude = config.settings.exclude,
-                runners = config.runners, cwd = self.root )
+                bulk_only = default and not kinds, exclude = config.settings.exclude,
+                runners = config.runners, cwd = self.root, force = known.runner )
             declared = { }
             for e in entries:
                 declared.update( e.params )
@@ -256,7 +261,7 @@ class Session:
             parsed = known
             targets = cli._targets( parsed, config.tag_names() )
             return cli.plan_of( targets, entries, combos,
-                                root = self.root, out_root = self.out_root )
+                                root = self.root, out_root = cli.output_tree( self.root, known ) )
         except BaseException:
             # argparse says no by exiting, and a file that declares work is
             # allowed to talk while it is imported: neither may reach the screen.
@@ -363,7 +368,7 @@ class Session:
         if label in self._last:
             return self._last[ label ]
         best, when = None, -1.0
-        for path in ( self.out_root / label ).rglob( R.RESULT ):
+        for path in ( p for tree in self.trees for p in ( tree / label ).rglob( R.RESULT ) ):
             try:
                 seen = path.stat().st_mtime
             except OSError:

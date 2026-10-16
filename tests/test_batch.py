@@ -73,7 +73,7 @@ if test( "the shell comes straight back, and the work carries on", tags = [ "slo
         project = write_project( Path( tmp ) / "proj", "", { "bench_slow.py": SLOW } )
 
         started = time.perf_counter()
-        code, output = run_errand( project, "run", "--batch", "-k", "bench", ".", "--n=1,2" )
+        code, output = run_errand( project, "run", "-o", "--batch", "-k", "bench", "**::*", "--n=1,2" )
         handed_back = time.perf_counter() - started
 
         assert code == 0, output
@@ -96,7 +96,7 @@ if test( "the record holds only what the tree cannot say", tags = [ "slow" ] ):
     # could contradict the tree.
     with tempfile.TemporaryDirectory() as tmp:
         project = write_project( Path( tmp ) / "proj", "", { "bench_slow.py": SLOW } )
-        run_errand( project, "run", "--batch", "-k", "bench" )
+        run_errand( project, "run", "-o", "--batch", "-k", "bench", "**::*" )
         assert wait_for( lambda: list( ( project / "runs" ).rglob( "result.yaml" ) ) )
 
         records = B.load_all( project )
@@ -131,7 +131,7 @@ if test( "the record holds only what the tree cannot say", tags = [ "slow" ] ):
 if test( "a submission can be dropped from the list", tags = [ "slow" ] ):
     with tempfile.TemporaryDirectory() as tmp:
         project = write_project( Path( tmp ) / "proj", "", { "bench_slow.py": SLOW } )
-        run_errand( project, "run", "--batch", "-k", "bench" )
+        run_errand( project, "run", "-o", "--batch", "-k", "bench", "**::*" )
         assert wait_for( lambda: list( ( project / "runs" ).rglob( "result.yaml" ) ) )
 
         ident = B.load_all( project )[ 0 ][ "id" ]
@@ -166,7 +166,7 @@ if test( "a remote run is let go of, and collected later", tags = [ "ssh", "slow
             { "bench_slow.py": SLOW }, vendor = True )
 
         started = time.perf_counter()
-        code, output = run_errand( project, "run", "--batch", "-k", "bench", "--env", "over-there" )
+        code, output = run_errand( project, "run", "-o", "--batch", "-k", "bench", "--env", "over-there", "**::*" )
         handed_back = time.perf_counter() - started
         assert code == 0, output
         assert handed_back < 60, f"it waited for the work ({handed_back:.1f}s)"

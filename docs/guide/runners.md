@@ -2,49 +2,51 @@
 
 errand does not care what your tests are written in. An entry does not have to be a Python call
 site, and most of what you run will not be. What runs a file is a **runner**, and the ones that
-come with errand already know errand's own files, pytest, Catch2, cargo, python and shell scripts,
-and executables — with an output directory, summaries, environment matrices and remote
-repatriation for all of them, none of which they had before:
+come with errand already know errand's own files, pytest, Catch2, cargo, python scripts, and
+executables and commands — with a record, summaries, environment matrices and remote repatriation
+for all of them, none of which they had before:
 
 ```bash
-errand run                              # every suite found under here
-errand run tests/test_api.py            # the python ones
+errand run '**::*'                      # every suite found under here
+errand run "tests/test_api.py::*"       # the tests of that file
 errand run cpp/test_geometry.cpp::area  # one Catch2 case, by name
-errand run -e '!slow'                   # pytest marks are entry tags
-errand run --env local,old              # every suite, both python versions
+errand run -e '!slow' '**::*'           # pytest marks are entry tags
+errand run --env local,old '**::*'      # every suite, both python versions
 errand run scripts/plot.py              # a script, recorded like the rest
 ```
 
 ## Which runner takes a file
 
-Every runner says how well it fits a file, on one scale:
+**The command line says which kind of runner, never the directory.** A target with `::` goes to an
+**entry runner** — `Errand`, `Pytest`, `Catch2`, `Cargo` — which lists what is in a file. A target
+without one goes to a **file runner**: `Python` for a `.py`, run by the place's interpreter, and
+`Executable` for anything else — a file of the project, or a command on the place's `PATH`. A
+`.sh` is an executable like any other: it needs its execute bit and a shebang.
+
+Between entry runners, each says how well it fits a file, on one scale:
 
 | level | what it means | the runners that come with errand |
 |---|---|---|
 | `ERRAND` | a file declaring errand's own entries | `Errand`: a `.py` that imports errand |
 | `FRAMEWORK` | a suite of a framework errand adopts | `Pytest`, `Catch2`, `Cargo` |
-| `LANGUAGE` | a language errand knows how to run | `Python`, `Shell` |
-| `FALLBACK` | something that can be run at all | `Executable` |
 
-**The best fit wins, and the order of the list never decides.** A `test_*.py` that imports errand
-is errand's, not pytest's; a pytest file is pytest's before it is a python script; a python script
-is python's before it is an executable. Two runners at the same, highest level is an **error** that
-names them — never a coin toss settled by which was added first.
-
-**Only what declares itself as work is found by looking.** `ERRAND` and `FRAMEWORK` files are picked
-up by a glob, a directory, or a bare `errand run`. `LANGUAGE` and `FALLBACK` ones are taken only when
-named, path in full: otherwise `errand run '**/*.py'` would execute every module of a library as a
-script. `errand list` says which runner took each entry.
+**The best fit wins, and the order never decides.** A `test_*.py` that imports errand is errand's,
+not pytest's. Two runners at the same, highest level is an **error** that names them — never a coin
+toss settled by which was added first — and `-r NAME` settles it for one command. With `::`, a file
+no entry runner takes is skipped silently: a glob there is a filter. `errand list` says which runner
+took each entry.
 
 **One entry or several is the runner's to say**, since only it knows whether its ecosystem can list
 what is in a file without running it: pytest and cargo can, a script cannot, and a compiled suite
-can once it is built — which is why it is built during the preparation, where it runs. A file run as a whole is one case in the output tree,
-`runs/scripts/plot.py/`, with no level named after it a second time. A `::name` on it is handed to
-the file as its own filter when its runner takes one (Catch2, cargo), and refused otherwise.
+can once it is built — which is why it is built during the preparation, where it runs. A file run
+as a whole is one case, `runs/scripts/plot.py/` [with `-o`](./output), with no level named after it
+a second time. A `::name` on it is handed to the file as its own filter when its runner takes one
+(Catch2, cargo), and refused otherwise.
 
 ## The list is yours
 
-`errand.runners` is a plain list, filled with the runners above. A project edits it in
+`errand.runners` is a dict, name → runner, filled with the runners above under their own names
+(`errand`, `pytest`, `catch2`, `cargo`, `python`, `executable`). A project edits it in
 [`errand-project.py`](./configuration):
 
 ```python
@@ -53,12 +55,14 @@ import errand
 
 errand.runners.replace( errand.Pytest( dirs = [ "tests" ] ) )            # in place of the default one
 errand.runners.replace( errand.Catch2( dir = "cpp", build = "make -C cpp" ) )
-errand.runners.append( Mine( ) )                                          # one of your own
-errand.runners[ : ] = [ r for r in errand.runners if r.name != "executable" ]
+errand.runners[ "mine" ] = Mine( )                                        # one of your own
+errand.runners[ "bench" ] = errand.Pytest( dirs = [ "bench" ], args = [ "-x" ] )   # -r bench picks it
+del errand.runners[ "cargo" ]
 ```
 
-`replace` puts a configured runner where the default one of its kind was. `append` would put it
-*beside* the default one, the two would tie over every file, and errand would say so.
+`replace` puts a configured runner where the default one of its kind was. A second instance under
+another name sits *beside* it: where both take a file they tie, and errand says so — which is what
+`-r NAME` is for, two instances over the same files with different settings.
 
 ## What adopting them buys
 
@@ -90,17 +94,12 @@ A runner finds its own entries the way its ecosystem does — pytest's collectio
 `test_*.cpp` under a directory, cargo's targets. That is a guess about your layout, so it is a guess
 you write down.
 
-With no `errand-*.py` at all, `errand` reads the directory and **tells you what it guessed**
-before running anything:
-
-```text
-  no errand-*.py; guessed:  pytest (tests/)  ·  catch2 (cpp/)  ·  cargo (rust/)   ( errand init writes it down )
-```
-
-A guess is a configured runner put in place of a default one — `Pytest( dirs = [ "tests" ] )`
-rather than every `test_*.py` anywhere, `Catch2` with the `make -C cpp` that builds it.
-Convenient for a first look, never silent, and the cure is to write the line — which is what
-`errand init` does, with `runs/` made beside it, and an `errand-envs.py` for the environments. The rules it follows are in
+`errand run` never guesses: the built-in runners are active as they are, and nothing about the
+directory changes what a command means. **`errand init`** reads the directory and writes what it
+recognized into `errand-project.py`, **in comments** — a configured runner in place of a default
+one, `Pytest( dirs = [ "tests" ] )` rather than every `test_*.py` anywhere, `Catch2` with the
+`make -C cpp` that builds it — with a `default_run` to start from, and an `errand-envs.py` for the
+environments. Uncomment what fits. The rules it follows are in
 [Start from what you have](./start#what-it-looks-for). Every framework
 locates its tests by assuming something about your layout, so there is no version of this that does
 not guess. What `errand-project.py` changes is that the assumption is **visible, versioned, and
@@ -150,14 +149,16 @@ Full arguments in the [runner reference](/reference/runners).
 
 ## Scripts and executables
 
-A python script, a shell script or an executable is one entry: the whole file, run in the place —
-the environment's interpreter, through its layers, on its machine. Its output is the run's output,
-its exit code its status, and `ERRAND_OUT_DIR` the directory anything else it writes should go to,
-so that it lands beside `result.yaml`.
+A python script, an executable or a command is one entry: the whole file, run in the place — the
+environment's interpreter, through its layers, on its machine. Its output is the run's output, its
+exit code its status (77 is a skip). With `-o` or `--out`, `ERRAND_OUT_DIR` is the directory
+anything else it writes should go to, so that it lands beside `result.yaml`; without, it is not
+set.
 
 ## Writing one for something else
 
-`suitability` / `collect` / `run`, plus an optional `prepare` for the build — see the
+`suitability` / `collect` / `run`, plus an optional `prepare` for the build, registered with
+`errand.runners[ "name" ] = …` — see the
 [reference](/reference/runners#writing-one). Still to ship: GoogleTest, doctest, ctest, JavaScript.
 
 ## Next

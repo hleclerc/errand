@@ -1,13 +1,14 @@
 # Configuration
 
-None is needed. `errand run` with no configuration at all finds your entries and runs them in the
-interpreter you started it with.
+None is needed. `errand run <target>` with no configuration at all runs a file, a command or the
+entries named, in the interpreter you started it with.
 
-You do not have to write these files from a blank page: **`errand init`** reads the directory,
-writes the `errand-project.py` that says what errand would otherwise guess (see
-[Start from what you have](./start)), and an `errand-envs.py` holding a commented stack of layers
-ready to adapt. It makes `runs/`, adds it and `errand-envs.py` to `.gitignore` if there is a git
-here, and never overwrites.
+You do not have to write these files from a blank page: **`errand init`** reads the directory and
+writes an `errand-project.py` holding, in comments, the runner lines that would fit what it found
+and a `default_run` to start from (see [Start from what you have](./start)), and an
+`errand-envs.py` holding a commented stack of layers ready to adapt. Nothing is active until you
+uncomment it — `errand run` itself never guesses. It adds `.errand/`, `runs/` and `errand-envs.py` to
+`.gitignore` if there is a git here, and never overwrites.
 
 To declare what the project does, and where it runs, put **`errand-*.py`** files at the root of the
 project. `errand` reads every one of them, in name order; what you call them beyond the prefix is up
@@ -15,7 +16,7 @@ to you, and two names are the convention:
 
 | | |
 |---|---|
-| `errand-project.py` | what the **project** does: runners, compilation flags, `errand.configure`. Versioned |
+| `errand-project.py` | what the **project** does: runners, `errand.default_run`, compilation flags, `errand.configure`. Versioned |
 | `errand-envs.py` | where **you**, on **your machine**, run it: the environments. Not versioned — `errand init` adds it to `.gitignore` |
 
 They are ordinary Python, loaded once by path and under a private name, with no entry point to call
@@ -28,6 +29,7 @@ import errand
 
 errand.configure( out = "runs", src = [ "core/src", "app/src" ] )
 errand.runners.replace( errand.Catch2( dir = "tests/cpp" ) )
+errand.default_run = [ "tests/**::*", "bench/**::*" ]     # what a bare `errand run` runs
 ```
 
 ```python
@@ -52,20 +54,30 @@ The root of the project is the nearest directory, walking up from the current on
 import errand
 
 errand.configure(
-    out     = "runs",   # where the output tree goes
-    src     = [ ],      # paths prepended to every child's PYTHONPATH
-    exclude = [ ],      # directories discovery must not walk into
+    out     = "runs",     # where the visible output tree goes, with -o
+    state   = ".errand",  # errand's own record: every run, the plans, the history
+    src     = [ ],        # paths prepended to every child's PYTHONPATH
+    exclude = [ ],        # directories discovery must not walk into
 )
 ```
 
 | | |
 |---|---|
-| `out` | the one directory errand writes to. See [the output tree](./output) |
+| `out` | the tree `-o` writes to. See [the output tree](./output) |
+| `state` | errand's private record of every run, asked for or not. `ERRAND_STATE_DIR` overrides it for one machine — a scratch disk, a shared filesystem |
 | `src` | your package layout, so a child process can import your code without an install |
 | `exclude` | vendored code, fixtures, a copy of something that would be imported and should not be |
 
-`--out` and `--root` override the first and the project root respectively, which is what the
-children errand starts for itself use.
+`--out` overrides the first for one run, and `--root` the project root, which is what the children
+errand starts for itself use.
+
+## default_run
+
+`errand.default_run = [ … ]` is what a bare `errand run` runs: a list of targets, written from the
+project root, as they would be on the command line (`"tests/**::*"`, `"bench/solvers.py::*"`,
+`"make"`). Among errand's own entries, only the [bulk](./declaring-work#the-four-traits) ones are
+kept. With none, `errand run` alone prints the help: what everything is, for a project, is the
+project's to say.
 
 The default environment is not a setting: it is `errand.default_env = "name"`, or the first one
 declared.

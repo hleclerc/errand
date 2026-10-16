@@ -1,26 +1,27 @@
 # Runners
 
-A runner is what runs a kind of file. `errand.runners` holds the ones below, and a project edits it
-in [`errand-project.py`](/guide/configuration) — see [Runners](/guide/runners) for how a file is
+A runner is what runs a kind of file. `errand.runners` is a dict, name → runner, holding the ones
+below under the names in the first column, and a project edits it in
+[`errand-project.py`](/guide/configuration) — see [Runners](/guide/runners) for how a file is
 given to one, and why the suites behave differently.
 
-| runner | level | takes | one entry per |
-|---|---|---|---|
-| `Errand()` | `ERRAND` | a `.py` that imports errand | `if test( … ):` |
-| `Pytest()` | `FRAMEWORK` | `test_*.py`, `*_test.py` | test |
-| `Catch2()` | `FRAMEWORK` | `test_*.cpp` that mentions catch | test case, after a build |
-| `Cargo()` | `FRAMEWORK` | the source root of a test target of the nearest `Cargo.toml` | target |
-| `Python()` | `LANGUAGE` | a `.py`, named in full | file |
-| `Shell()` | `LANGUAGE` | a `.sh` ( run by `sh` ) or `.bash`, named in full | file |
-| `Executable()` | `FALLBACK` | anything executable, named in full | file |
+| name | runner | level | takes | one entry per |
+|---|---|---|---|---|
+| `errand` | `Errand()` | `ERRAND` | a `.py` that imports errand | `if test( … ):` |
+| `pytest` | `Pytest()` | `FRAMEWORK` | `test_*.py`, `*_test.py` | test |
+| `catch2` | `Catch2()` | `FRAMEWORK` | `test_*.cpp` that mentions catch | test case, after a build |
+| `cargo` | `Cargo()` | `FRAMEWORK` | the source root of a test target of the nearest `Cargo.toml` | target |
+| `python` | `Python()` | — | a `.py`, named without `::` | file |
+| `executable` | `Executable()` | — | anything else named without `::`: an executable file, or a command on the place's `PATH` | file |
 
-The highest level wins; a tie at the top is an error naming the runners. `ERRAND` and `FRAMEWORK`
-files are found by globs, directories and a bare `errand run`; the others only when named.
+The first four are **entry runners**, asked for a `path::name` target: the highest level wins, and a
+tie at the top is an error naming the runners, which `-r NAME` settles. The last two are **file
+runners**, asked for a target without `::`; levels do not concern them.
 
 ```python
-errand.runners.replace( runner )   # in place of the runners of its kind; -> runner
-errand.runners.append( runner )    # beside them
-errand.runners.remove( runner )    # and any other list operation
+errand.runners.replace( runner )            # in place of the runners of its kind; -> runner
+errand.runners[ "bench" ] = runner          # beside them, under a name -r can pick
+del errand.runners[ "cargo" ]               # and any other dict operation
 ```
 
 ## Pytest
@@ -64,7 +65,7 @@ and the binary is then asked for its cases ( `--list-tests --reporter xml`, or
 `--list-test-names-only` for Catch2 v2 ). A build that fails, or a binary that cannot list itself,
 costs its files' rows and nothing else.
 
-A `::name` in the pattern is handed to the binary as its own filter, so naming one case still
+A `::name` in the target is handed to the binary as its own filter, so naming one case still
 reaches one case.
 
 | | |
@@ -101,16 +102,18 @@ test still works: the `::name` part becomes the filter `cargo test` takes after 
 
 `cargo test` builds what it runs, so there is no `build` to declare.
 
-## Python, Shell, Executable
+## Python, Executable
 
 ```python
 Python( )        # sys.executable of the place it runs in
-Shell( )         # sh for a .sh, bash for a .bash
-Executable( )    # run as it is
+Executable( )    # run as it is: a file of the project, or a command of the place
 ```
 
-One entry each, the whole file, named after it; taken only when named in full. Output is the run's
-output, the exit code the status, and `ERRAND_OUT_DIR` is set to the directory of the run.
+One entry each, the whole file or command, named after it; taken for a target without `::`. A first
+word that names an interpreter ( `python`, `python3` ) is the place's. A `.sh` is an executable like
+any other: it needs its execute bit and a shebang. Output is the run's output, the exit code the
+status ( 77 is a skip ), and `ERRAND_OUT_DIR` is set to the directory of the run when `-o` or
+`--out` asked for one.
 
 ## Writing one
 
@@ -131,6 +134,7 @@ class Mine( errand.Runner ):
     def run( self, entry, ctx ) -> Outcome: ...
 ```
 
+Registered with `errand.runners[ "mine" ] = Mine( )`, under which name `-r mine` picks it.
 `level` is what lets a walk over a whole tree ask only the runners that could make a file
 discoverable. A runner with `builds_to_collect = True` has `prepare` called before `collect`, during
 the preparation, with `self.context.build_dir` saying where the build goes. `specs` are `( files, name_glob )` pairs over the files this runner won; `self.root` is

@@ -47,7 +47,7 @@ Four traits say how an entry should be treated:
 
 | trait | what it decides | default |
 |---|---|---|
-| `bulk` | picked up by `errand run` with no pattern | `True` |
+| `bulk` | picked up by a bare `errand run`, through [`errand.default_run`](./configuration#default-run) | `True` |
 | `keep` | its numbers are kept and compared date to date | `False` |
 | `exclusive` | it needs the machine to itself | `False` |
 | `stable_path` | `latest/` is what you are meant to open | `False` |
@@ -87,8 +87,9 @@ a timing taken while something else was running is not a timing. When the number
 timings, use `track`, or `bench( …, exclusive = False )` — they are the same thing.
 
 They are four lines of Python over `entry`, and you can write a fifth of your own the same way.
-Note that `errand run` with no pattern runs **only the tests**: a `bench`, a `track` or an `experiment` is named,
-or asked for with `-k bench` (both of the first two) / `-k exp`.
+Note that a bare `errand run` — the targets of `errand.default_run` — runs **only the tests**: a
+`bench`, a `track` or an `experiment` is named, or asked for with `-k bench` (both of the first two) /
+`-k exp`.
 
 Override a trait on the spot when the preset is not quite right:
 
@@ -122,7 +123,7 @@ if test( "the slow one", tags = [ "slow", "gpu" ] ):
 ```
 
 ```bash
-errand run -e 'slow & !gpu'
+errand run -e 'slow & !gpu' '**::*'
 ```
 
 `-e` picks *what* runs; `-t` picks *where* (see [Tags](./tags)). They take the same expressions.

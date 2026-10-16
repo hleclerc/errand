@@ -27,7 +27,8 @@ nothing to aim at, only a direction.
 | `esc` | clear the search, then leave | `F12` | leave |
 
 The screen has nothing of its own: it writes a command, and it reads
-[the output tree](./output). Everything it shows you could have got with `errand` and `ls`.
+[the record of every run](./output) — `.errand/runs/`, and `runs/` where `-o` made one. Everything it
+shows you could have got with `errand` and `ls`.
 
 ## cases — what do I run
 
@@ -98,7 +99,7 @@ of saying so.
 
 **Runs and history are one list**, because they are one thing: a command, and what it produced.
 Today's is at the top and still moving, yesterday's is three rows down, and both read the same way —
-both are read out of the output tree rather than remembered.
+both are read out of the record rather than remembered.
 
 Fold one open to see its cases; `F6` runs it again, and `F5` runs the last one again from either
 page. **The runs page is searched the same way**, over the commands: a history is only useful once

@@ -32,7 +32,7 @@ if test( "one file that will not import costs its own row, and nothing else" ):
             put_back( kept )
 
         # Tolerant, not silent: the runner says so, and fails over it.
-        code, output = run_errand( project, "run" )
+        code, output = run_errand( project, "run", "**::*" )
         assert code == 1, output
         assert "could not be read" in output and "test_absent.py" in output, output
         assert "PASS quick" in output, "the readable file still ran"
@@ -64,7 +64,7 @@ if test( "a file that declares work can import its neighbours" ):
         # Work is declared NEXT TO the code it exercises, so this is the
         # ordinary case -- and it must not depend on which directory errand was
         # started from. Here it is started two levels above `helper.py`.
-        code, output = run_errand( project, "run" )
+        code, output = run_errand( project, "run", "**::*" )
         assert code == 0, output
         assert "PASS the neighbour" in output, output
 
@@ -98,7 +98,7 @@ if test( "what was ticked becomes a command line" ):
             assert argv == [ "run", "--env", "plain,other", "--fp", "32,64", "-j", "4",
                              "test_demo.py::slow", "--method", "cg,direct" ], argv
             # Parameters with no case ticked still need a target to belong to.
-            assert session.command( params = { "n": [ "3" ] } ) == [ "run", ".", "--n", "3" ]
+            assert session.command( params = { "n": [ "3" ] } ) == [ "run", "**::*", "--n", "3" ]
         finally:
             put_back( kept )
 
@@ -108,7 +108,7 @@ if test( "every case of a file is the file" ):
         session, kept = a_session( a_project( tmp ) )
         try:
             # Shorter, and it stays true when a case is added tomorrow.
-            assert session.pattern_for( session.entries ) == "test_demo.py"
+            assert session.pattern_for( session.entries ) == "test_demo.py::*"
         finally:
             put_back( kept )
 

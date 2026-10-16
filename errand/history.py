@@ -1,6 +1,6 @@
 """What was run from here, so it can be run again.
 
-One command per line, oldest first, in `.errand/history`. Plain text on
+One command per line, oldest first, in `.errand/history` ( errand's state, see `config.state` ). Plain text on
 purpose: it is meant to be read, grepped and pasted into a shell, and the
 whole point of the file is that what it holds is a COMMAND -- not a record of
 some internal state that only errand could replay.
@@ -13,12 +13,13 @@ from __future__ import annotations
 import shlex
 from pathlib import Path
 
-HISTORY = ".errand/history"
+
 LIMIT   = 300
 
 
 def path( root: Path ) -> Path:
-    return root / HISTORY
+    from . import config
+    return config.state( root ) / "history"
 
 
 def load( root: Path ) -> list:

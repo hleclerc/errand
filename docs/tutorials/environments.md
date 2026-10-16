@@ -1,9 +1,9 @@
-# 2 · Four environments over three machines
+# 1 · Four environments over three machines
 
 Five environments, declared in one file, and one benchmark that does not mention any of them.
 
 ```bash
-cd examples/02-environments
+cd examples/01-environments
 ```
 
 ```
@@ -125,11 +125,15 @@ errand anything; the [`Vars` layer](/guide/tags#tags-only-select) is what puts t
 ## Choosing where
 
 ```bash
-errand run -k bench --env gpu            # by name
-errand run -k bench --driver cuda        # by tag; every tag name is a flag
-errand run -k bench --fp 32
-errand run -k bench -t 'cuda & !remote'  # by expression
+errand run --env gpu "bench_solver.py::*"            # by name
+errand run --driver cuda "bench_solver.py::*"        # by tag; every tag name is a flag
+errand run --fp 32 "bench_solver.py::*"
+errand run -t 'cuda & !remote' "bench_solver.py::*"  # by expression
+errand run --env gpu nvidia-smi                      # any command, in that place
 ```
+
+`bench_solver.py::*` is every entry of that file. Named without the `::`, `bench_solver.py` would
+be run as a plain script — which is what a `train.py` wants, and not what a file of entries does.
 
 Tags are the keyword arguments on `errand.Env( … )`. Nothing declares them in advance, and an environment
 that omits a name matches **any** value of it.
@@ -137,13 +141,14 @@ that omits a name matches **any** value of it.
 ## Running in several places at once
 
 ```bash
-errand run --env local,gpu bench_solver.py
-errand run --fp 32,64 bench_solver.py
-errand run --env local,gpu bench_solver.py --n=10000,100000  # 4 runs
-errand run -t 'cuda=True' bench_solver.py                    # every cuda environment there is
+errand run --env local,gpu "bench_solver.py::*"
+errand run --fp 32,64 "bench_solver.py::*"
+errand run -o --env local,gpu "bench_solver.py::*" --n=10000,100000  # 4 runs, kept under runs/
+errand run -t 'cuda=True' "bench_solver.py::*"                       # every cuda environment there is
 ```
 
-Each combination gets its own directory, so the results end up side by side:
+Each combination gets its own record, and with `-o` its own visible directory, so the results end
+up side by side:
 
 ```text
 runs/bench_solver.py/solve/
@@ -163,7 +168,7 @@ which is the whole reason you declared two.
 ## Leaving it to run
 
 ```bash
-errand run --batch -k bench --env gpu,cluster --fp 32,64
+errand run --batch --env gpu,cluster --fp 32,64 "bench_solver.py::*"
   submitted b7f3 · 8 runs · 4 on login.hpc (slurm 918273…918276), 4 local
 
 errand watch
@@ -193,5 +198,5 @@ else about the run changes — same paths, same queue, same output.
 
 ## Next
 
-[3 · Adopt an existing suite](./adopt-a-suite), or jump to
-[4 · A bench over two machines](./two-machines) to put this one to work.
+[2 · Adopt an existing suite](./adopt-a-suite), or jump to
+[3 · A bench over two machines](./two-machines) to put this one to work.

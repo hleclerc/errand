@@ -35,7 +35,7 @@ help:
 	@echo
 	@echo "  make venv        a virtual environment with errand installed in it, editable"
 	@echo "  make dev         pip install -e .  into the interpreter you are using now"
-	@echo "  make test        run the suite         ( make test ARGS=test_queue.py )"
+	@echo "  make test        run the suite         ( make test ARGS='test_queue.py::*' )"
 	@echo
 	@echo "  make site        the website, live reloading   ( docs/, VitePress )"
 	@echo "  make site-build  the website into docs/.vitepress/dist"

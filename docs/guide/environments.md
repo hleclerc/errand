@@ -146,7 +146,7 @@ errand run -k bench --env gpu            # by name
 errand run -k bench --driver cuda        # by tag; every tag name becomes a flag
 errand run -k bench --fp 32
 errand run -k bench -t 'cuda & !remote'  # by expression
-errand run -k bench --env gpu,cluster    # both: a comma is a matrix here too
+errand run -k bench --env gpu,cluster    # both: a comma is a matrix here too, so no name holds one
 ```
 
 Use `--env NAME` when you want exactly one and mean it. Everything else is in [Tags](./tags).

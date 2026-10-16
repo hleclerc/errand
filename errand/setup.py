@@ -16,13 +16,14 @@ from pathlib import Path
 
 from . import layers as L, yamlish
 
-STATE_DIR = ".errand"
+
 
 OK, STALE, MISSING, UNKNOWN = "ok", "stale", "not built", "unknown"
 
 
 def state_path( root: Path, env ) -> Path:
-    return root / STATE_DIR / f"env-{env.name}.yaml"
+    from . import config
+    return config.state( root ) / f"env-{env.name}.yaml"
 
 
 def wanted( env, ctx ) -> dict:

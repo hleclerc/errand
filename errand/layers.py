@@ -659,8 +659,13 @@ def _rsh( options ):
 def push( local_root: Path, host: str, remote_root: Path, options = ( ) ):
     subprocess.run( [ "ssh", *options, host, f"mkdir -p {shlex.quote( str( remote_root ) )}" ],
                     check = True )
+    # errand's own state is each side's: the records of the runs made over
+    # there, its plans, what it built. Excluded, so `--delete` leaves it be.
+    from . import config
+    state = config.state_rel( local_root )
+    own = [ f"/{state}" ] if not os.path.isabs( state ) else [ ]
     subprocess.run( [ "rsync", "-a", "--delete", *_rsh( options ),
-                      *[ f"--exclude={e}" for e in RSYNC_EXCLUDES ],
+                      *[ f"--exclude={e}" for e in RSYNC_EXCLUDES + own ],
                       f"{local_root}/", f"{host}:{remote_root}/" ], check = True )
 
 

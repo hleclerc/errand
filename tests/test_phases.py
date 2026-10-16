@@ -115,7 +115,7 @@ if test( "hello" ):
 if test( "two passes: the preparation writes the plan, the run checks it and runs it", tags = [ "slow" ] ):
     with tempfile.TemporaryDirectory() as tmp:
         project = write_project( Path( tmp ) / "proj", TWO.format(), { "test_a.py": WORK } )
-        code, output = run_errand( project, "run", "--no-queue", "--env", "two" )
+        code, output = run_errand( project, "run", "--no-queue", "--env", "two", "**::*" )
         assert code == 0, output
         assert "--phase prepare" in output and "--from-plan" in output, output
         assert "who run" in output, "the run phase goes through the run phase's layers"
@@ -133,7 +133,7 @@ if test( "a run phase that does not find what was prepared refuses to run it" ):
         # The two phases by hand, as a dispatch would start them: one stamp, inside `two`.
         env = { **os.environ, "ERRAND_STAMP": "2026-01-01_00h00m00", cli.IN_ENV: "two",
                 "PYTHONPATH": str( Path( errand.__file__ ).resolve().parent.parent ) }
-        phase = lambda *extra: subprocess.run( [ sys.executable, "-m", "errand", "run", *extra, "--no-queue" ],
+        phase = lambda *extra: subprocess.run( [ sys.executable, "-m", "errand", "run", *extra, "--no-queue", "**::*" ],
                                                cwd = project, env = env, capture_output = True, text = True )
         got = phase( "--phase", "prepare" )
         assert got.returncode == 0, got.stdout + got.stderr

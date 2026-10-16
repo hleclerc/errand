@@ -16,10 +16,10 @@ errand.configure( src = [ "src" ] )
 
 
 # The existing suites. `errand.Pytest()` collects with pytest's own rules; pass
-# `dirs`/`args` to say something else. Without this file at all, errand would
-# have found them anyway and SAID SO before running -- this line is how you
-# stop it from guessing. `replace`, not `append`: two pytest runners would both
-# claim every test file, and errand refuses to choose between them.
+# `dirs`/`args` to say something else. Without this file, the default runners
+# would still take these files -- this line says where to look. `replace`, not
+# a second name: two pytest runners would both claim every test file, and
+# errand refuses to choose between them ( unless `-r NAME` says which ).
 
 errand.runners.replace( errand.Pytest( dirs = [ "tests" ] ) )
 

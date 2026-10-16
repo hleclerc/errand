@@ -5,6 +5,9 @@ __pycache__/
 dist/
 errand-envs.py
 .errand/
+*.exe
+build/
+
 
 # what the examples build when you run them
 examples/*/cpp/test_*

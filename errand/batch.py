@@ -33,13 +33,15 @@ from pathlib import Path
 
 from . import layers as L, yamlish
 
-BATCH_DIR = ".errand/batch"
+def batch_rel( root ) -> str:
+    from . import config
+    return os.path.join( config.state_rel( root ), "batch" )
 
 PENDING, PREPARING, RUNNING, DONE, LOST = "pending", "preparing", "running", "done", "lost"
 
 
 def batch_dir( root: Path ) -> Path:
-    d = root / BATCH_DIR
+    d = Path( root ) / batch_rel( root )
     d.mkdir( parents = True, exist_ok = True )
     return d
 
@@ -131,8 +133,8 @@ def detach( env, tags, argv, *, root, log: Path, child_env: dict, phase = "run",
 
     L.push( root, ssh.host, work.root, ssh.options )
 
-    remote_log = f"{work.root}/{BATCH_DIR}/{log.name}"
-    line = ( f"mkdir -p {work.root}/{BATCH_DIR} && cd {work.root} && "
+    remote_log = f"{work.root}/{batch_rel( root )}/{log.name}"
+    line = ( f"mkdir -p {work.root}/{batch_rel( root )} && cd {work.root} && "
              f"{wrapped.shell()}" )
 
     if batch is not None:

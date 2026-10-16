@@ -173,7 +173,7 @@ if test( "a config file is loaded by path, never as a module named errand" ):
         assert "errand" not in [ m for m in sys.modules if m == "_errand_errand_exec" ]
 
 
-if test( "`errand shell --env x -- cmd` runs that command in that environment", tags = [ "slow" ] ):
+if test( "`errand run --env x cmd` runs that command in that environment", tags = [ "slow" ] ):
     import sys
     import tempfile
 
@@ -185,13 +185,13 @@ if test( "`errand shell --env x -- cmd` runs that command in that environment", 
         # The environments are declared here, once, with the layers that lead
         # to them -- so being let into one is errand's business too, and not a
         # second tool's. `plain` sets DEMO=1; the command is the proof.
-        code, output = run_errand( project, "shell", "--env", "plain", "--",
+        code, output = run_errand( project, "run", "--no-queue", "--env", "plain",
                                    sys.executable, "-c",
                                    "import os; print( 'DEMO is', os.environ[ 'DEMO' ] )" )
         assert code == 0, output
         assert "DEMO is 1" in output, output
         # And the environment's tags cross with it, as they do for the work.
-        code, output = run_errand( project, "shell", "--env", "plain", "--",
+        code, output = run_errand( project, "run", "--no-queue", "--env", "plain",
                                    sys.executable, "-c",
                                    "import os; print( os.environ[ 'ERRAND_TAGS' ] )" )
         assert code == 0 and "fp=" in output, output
@@ -241,12 +241,10 @@ if test( "being let in prepares the place, like any other command", tags = [ "sl
         # where you MOST want it built: nothing else is about to do it. Here
         # the interpreter cannot be made, so the answer has to be that -- and
         # not a command silently run somewhere else.
-        code, output = run_errand( project, "shell", "--env", "made", "--", sys.executable, "-c", "pass" )
+        code, output = run_errand( project, "run", "--env", "made", sys.executable, "-c", "pass" )
         assert code != 0, output
         assert "made" in output, output
-        # ...and saying not to skips the question. ( `echo` is not an
-        # interpreter, so the layer leaves it alone -- which is the other half
-        # of the same rule. )
-        code, output = run_errand( project, "shell", "--env", "made", "--no-setup", "--",
-                                   "echo", "ran anyway" )
-        assert code == 0 and "ran anyway" in output, output
+        # ...and saying not to skips the question: what fails then is the
+        # place itself, not the preparing of it.
+        code, output = run_errand( project, "run", "--env", "made", "--no-setup", "echo", "ran anyway" )
+        assert "bringing up to date" not in output, output

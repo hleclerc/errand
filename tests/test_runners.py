@@ -129,7 +129,7 @@ if test( "a Catch2 suite, compiled and run", tags = [ "cpp", "slow" ] ):
                                  CATCH_PROJECT.format( build = build ),
                                  { "cpp/test_math.cpp": CATCH_SOURCE } )
 
-        code, output = run_errand( project, "run", timeout = 900 )
+        code, output = run_errand( project, "run", "-o", "**::*", timeout = 900 )
         assert code == 0, output
         assert "PASS adds" in output and "PASS multiplies" in output, output
 
@@ -189,7 +189,7 @@ if test( "a cargo crate, built and run", tags = [ "rust", "slow" ] ):
         project = write_project( Path( tmp ) / "proj", CARGO_PROJECT,
                                  { "Cargo.toml": CARGO_TOML, "src/lib.rs": CARGO_LIB } )
 
-        code, output = run_errand( project, "run", timeout = 900 )
+        code, output = run_errand( project, "run", "-o", "**::*", timeout = 900 )
         assert code == 0, output
         assert "PASS demo" in output, output
 
@@ -239,7 +239,7 @@ if test( "a pytest suite, collected by pytest itself", tags = [ "pytest", "slow"
         assert subprocess.run( [ venv / "bin" / "python", "-c", "import pytest" ],
                                capture_output = True ).returncode != 0
 
-        code, output = run_errand( project, "list", timeout = 900 )
+        code, output = run_errand( project, "list", "**::*", timeout = 900 )
         if "could not install" in output:
             skip( "pip could not reach an index from here",
                   "the runner installs what it needs; this machine cannot fetch it" )
@@ -251,7 +251,7 @@ if test( "a pytest suite, collected by pytest itself", tags = [ "pytest", "slow"
         # ...and it said what it was doing to somebody's environment
         assert "installing pytest" in output, output
 
-        code, output = run_errand( project, "run", "-e", "!slow", timeout = 900 )
+        code, output = run_errand( project, "run", "-e", "!slow", "**::*", timeout = 900 )
         assert "test_slow" not in output, output
         assert code == 1 and "test_no" in output, output          # the failing one is real
         assert "assert 1 == 2" in output, "pytest's own words, not `exit 1`"
@@ -292,7 +292,7 @@ if test( "a build runs once, not once per entry" ):
             ( root / "cpp" / name ).write_text( "// catch2\nint main(){return 0;}\n" )
         runner = Counting( build = "make -C cpp" )
         runner.root = root
-        discovery.select( None, root, runners = [ runner ], cwd = root,
+        discovery.select( "**::*", root, runners = [ runner ], cwd = root,
                           context = P.RunContext( root = root, out_dir = root, build_dir = root / "b" ) )
         # Nothing was built for real, so both files say so -- each its own row.
         assert sorted( p.name for p, _, _ in discovery.broken ) == [ "test_a.cpp", "test_b.cpp" ]
@@ -347,8 +347,8 @@ def a_tree( tmp ):
     files = {
         "tests/test_own.py"   : "from errand import test\nif test( 'own' ):\n    pass\n",
         "tests/test_plain.py" : "def test_x( ):\n    assert True\n",
-        "scripts/plot.py"     : "import os\nprint( 'plotted', os.path.isdir( os.environ[ 'ERRAND_OUT_DIR' ] ) )\n",
-        "scripts/go.sh"       : "echo went\nexit 3\n",
+        "scripts/plot.py"     : "import os\nd = os.environ.get( 'ERRAND_OUT_DIR' )\nprint( 'plotted', bool( d ) and os.path.isdir( d ) )\n",
+        "scripts/go.sh"       : "#!/bin/sh\necho went\nexit 3\n",
         "scripts/tool"        : "#!/bin/sh\necho tooled\n",
         "notes.txt"           : "nothing to run\n",
     }
@@ -356,58 +356,69 @@ def a_tree( tmp ):
         ( root / rel ).parent.mkdir( parents = True, exist_ok = True )
         ( root / rel ).write_text( text )
     ( root / "scripts" / "tool" ).chmod( 0o755 )
+    ( root / "scripts" / "go.sh" ).chmod( 0o755 )
     return root
 
 
-if test( "a file goes to the runner that fits it best, whatever the order of the list" ):
+if test( "an entry target goes to the entry runner that fits it best, whatever the order" ):
     from errand import discovery
     with tempfile.TemporaryDirectory() as tmp:
         root = a_tree( tmp )
-        for runners in ( P.defaults(), list( reversed( P.defaults() ) ) ):
+        defaults = list( P.defaults().values() )
+        for runners in ( defaults, list( reversed( defaults ) ) ):
             level, who = discovery.owners( root / "tests" / "test_own.py", runners )
             assert ( level, who[ 0 ].name ) == ( P.ERRAND, "errand" ), ( level, who )
             level, who = discovery.owners( root / "tests" / "test_plain.py", runners )
             assert ( level, who[ 0 ].name ) == ( P.FRAMEWORK, "pytest" ), ( level, who )
-            level, who = discovery.owners( root / "scripts" / "plot.py", runners )
-            assert ( level, who[ 0 ].name ) == ( P.LANGUAGE, "python" ), ( level, who )
-            level, who = discovery.owners( root / "scripts" / "tool", runners )
-            assert ( level, who[ 0 ].name ) == ( P.FALLBACK, "executable" ), ( level, who )
+            # A script is no entry runner's: it is run as it is, when named.
+            assert discovery.owners( root / "scripts" / "plot.py", runners )[ 0 ] == P.NONE
             assert discovery.owners( root / "notes.txt", runners )[ 0 ] == P.NONE
 
 
-if test( "looking finds work; a script or an executable is taken only when named" ):
+if test( "a bare target is a file or a command, read from the command line alone" ):
     from errand import discovery
     with tempfile.TemporaryDirectory() as tmp:
         root = a_tree( tmp )
         found = [ str( p.relative_to( root ) ) for p in discovery.candidates( root, runners = P.defaults() ) ]
         assert found == [ "tests/test_own.py", "tests/test_plain.py" ], found
-        try:
-            discovery.select( "scripts/*", root, runners = P.defaults(), cwd = root )
-            raise AssertionError( "a glob took a script" )
-        except ValueError as err:
-            assert "only when named" in str( err ), err
-        got, _, _ = discovery.select( "scripts/plot.py,scripts/go.sh,scripts/tool", root,
-                                      runners = P.defaults(), cwd = root )
+        # A glob with no `::` runs every file it matches that can be run, each its own run.
+        got, _, _ = discovery.select( "scripts/*", root, runners = P.defaults(), cwd = root )
         assert sorted( ( e.name, e.runner.name ) for e in got ) == \
-            [ ( "go.sh", "shell" ), ( "plot.py", "python" ), ( "tool", "executable" ) ]
+            [ ( "go.sh", "executable" ), ( "plot.py", "python" ), ( "tool", "executable" ) ]
+        # A word that is no file is a command of the place.
+        got, _, _ = discovery.select( "scripts/plot.py,echo", root, runners = P.defaults(), cwd = root )
+        assert sorted( ( e.name, e.runner.name ) for e in got ) == [ ( "echo", "executable" ), ( "plot.py", "python" ) ]
+        for target, said in ( ( "notes.txt", "notes.txt::*" ), ( "tests", "tests/**::*" ),
+                              ( "nope.py", "no such file" ), ( "no-such-command-here", "no such command" ) ):
+            try:
+                discovery.select( target, root, runners = P.defaults(), cwd = root )
+                raise AssertionError( f"{target} designated something" )
+            except ValueError as err:
+                assert said in str( err ), err
 
 
-if test( "two runners at the same level is an error that names them, never a coin toss" ):
+if test( "two entry runners at the same level is an error that names them; `-r` picks one" ):
     from errand import discovery
     with tempfile.TemporaryDirectory() as tmp:
         root = a_tree( tmp )
-        twice = P.defaults() + [ P.Python() ]
+        mine = P.Runners( P.defaults() )
+        mine[ "again" ] = P.Errand()
         try:
-            discovery.select( "scripts/plot.py", root, runners = twice, cwd = root )
+            discovery.select( "tests/test_own.py::*", root, runners = mine, cwd = root )
             raise AssertionError( "a tie was settled silently" )
         except ValueError as err:
-            assert "python and python" in str( err ) and "replace" in str( err ), err
+            assert "errand and again" in str( err ) and "-r NAME" in str( err ), err
+        got, _, _ = discovery.select( "tests/test_own.py::*", root, runners = mine, cwd = root,
+                                      force = "again" )
+        assert [ e.name for e in got ] == [ "own" ]
+        try:
+            discovery.select( "tests/test_own.py::*", root, runners = mine, cwd = root, force = "agian" )
+            raise AssertionError( "an unknown runner was accepted" )
+        except ValueError as err:
+            assert "again" in str( err ), err
         # ...and `replace` is how a configured runner takes the default one's place.
-        mine = P.Runners( P.defaults() )
         mine.replace( P.Python() )
-        assert sum( isinstance( r, P.Python ) for r in mine ) == 1
-        got, _, _ = discovery.select( "scripts/plot.py", root, runners = mine, cwd = root )
-        assert [ e.name for e in got ] == [ "plot.py" ]
+        assert sum( isinstance( r, P.Python ) for r in mine.values() ) == 1 and "python" in mine
 
 
 if test( "a `::name` on a file run as a whole is refused, unless its runner takes one" ):
@@ -416,6 +427,11 @@ if test( "a `::name` on a file run as a whole is refused, unless its runner take
         root = a_tree( tmp )
         try:
             discovery.select( "scripts/plot.py::x", root, runners = P.defaults(), cwd = root )
+            raise AssertionError( "a script was taken for a file of entries" )
+        except ValueError as err:
+            assert "no entry runner takes it" in str( err ), err
+        try:
+            discovery.select( "scripts/plot.py::x", root, runners = P.defaults(), cwd = root, force = "python" )
             raise AssertionError( "a name was dropped on the floor" )
         except ValueError as err:
             assert "run as a whole" in str( err ), err
@@ -426,12 +442,16 @@ if test( "a script runs in the place, its exit code is its status, and it is one
     with tempfile.TemporaryDirectory() as tmp:
         root = a_tree( tmp )
         ( root / "errand-project.py" ).write_text( "import errand\n" )
-        code, output = run_errand( root, "run", "--no-queue", "scripts/plot.py" )
+        code, output = run_errand( root, "run", "-o", "--no-queue", "scripts/plot.py" )
         assert code == 0 and "plotted True" in output, output
         # No level named after the file a second time.
         assert ( root / "runs" / "scripts" / "plot.py" / "latest" / "result.yaml" ).exists()
-        code, output = run_errand( root, "run", "--no-queue", "scripts/go.sh" )
+        code, output = run_errand( root, "run", "-o", "--no-queue", "scripts/go.sh" )
         assert code == 1 and "went" in output and "exit 3" in output, output
+        # With no directory asked for, none is handed over, and none is made in the project.
+        code, output = run_errand( root, "run", "--no-queue", "scripts/plot.py" )
+        assert code == 0 and "plotted False" in output, output
+        assert list( ( root / ".errand" / "runs" / "scripts" / "plot.py" ).glob( "*/result.yaml" ) )
 
 
 if test( "a build goes to the environment's own directory, and is told where" ):
@@ -483,11 +503,11 @@ if test( "a compiled suite is built where it runs, then asked for its cases" ):
                                  { "cpp/test_math.cpp": "#include <catch2/catch_test_macros.hpp>\n",
                                    "cpp/fake.sh": FAKE_CATCH2 } )
 
-        code, output = run_errand( project, "list" )
+        code, output = run_errand( project, "list", "**::*" )
         assert code == 0 and "adds" in output and "multiplies" in output, output
         assert "tags: catch2, math, slow" in output, output
 
-        code, output = run_errand( project, "run", "--no-queue" )
+        code, output = run_errand( project, "run", "-o", "--no-queue", "**::*" )
         assert code == 0, output
         assert "PASS adds" in output and "PASS multiplies" in output, output
         # One entry per case, each with a directory of its own...
@@ -497,7 +517,7 @@ if test( "a compiled suite is built where it runs, then asked for its cases" ):
 
         code, output = run_errand( project, "run", "--no-queue", "cpp/test_math.cpp::mult*" )
         assert code == 0 and "PASS multiplies" in output and "adds" not in output, output
-        code, output = run_errand( project, "run", "--no-queue", "-e", "!slow" )
+        code, output = run_errand( project, "run", "--no-queue", "-e", "!slow", "**::*" )
         assert code == 0 and "PASS adds" in output and "multiplies" not in output, output
 
 
@@ -506,6 +526,6 @@ if test( "a build that fails costs its files' rows, and says why" ):
         project = write_project( Path( tmp ) / "proj",
                                  "import errand\nerrand.runners.replace( errand.Catch2( build = \"false\" ) )\n",
                                  { "cpp/test_math.cpp": "#include <catch2/catch_test_macros.hpp>\n" } )
-        code, output = run_errand( project, "run", "--no-queue" )
+        code, output = run_errand( project, "run", "--no-queue", "**::*" )
         assert code == 1 and "could not be read" in output and "test_math.cpp" in output, output
         assert "the build failed" in output, output

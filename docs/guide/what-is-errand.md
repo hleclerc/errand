@@ -1,91 +1,74 @@
 # What errand is
 
-> **Run a piece of work — here, in that environment, in that container, on that machine — and bring
-> back everything it produced, into a path you can predict.**
+> **errand runs your work in any environment — a conda or uv env, a container, another machine
+> over ssh, a Slurm allocation, any stack of them — building and updating it from what it
+> declares, and syncing your files there and back.**
 
-An *errand* is a trip you take on someone's behalf and come home from with the things. That is the
-whole model. You say what to run and where it may run; `errand` makes sure that place is ready, goes
-in — through ssh, through a Slurm allocation, through a container, whatever the way is — runs it,
-in several places at once if you ask, and repatriates what it produced.
+An *errand* is a trip made on someone's behalf: go there, do the thing, come back with what it
+produced. You say what to run and where it may run; errand makes sure that place is ready, goes in
+— through ssh, a Slurm allocation, a container, whatever the way is — runs it, in several places at
+once if you ask, and brings back what you asked for.
 
-What you run is **yours**. A pytest suite, a Catch2 binary, a cargo project, a Makefile target, a
-script: `errand` starts it, and does not need to know what language it is in.
+What you run is **yours**: what follows `errand run` is what you would have typed — `make check`,
+`python train.py`, `./bench`, `pytest`. errand does not need to know what language it is in.
 
-## Not just a way to launch commands
-
-An environment manager gets you *into* a place; a launcher runs a command *in* it. Neither remembers
-what happened. errand is about the other half of the sentence: the run is **tested, experimented
-with and measured**, and the outcome is kept — status, numbers, files — under a path computed from
-what was run, where and when.
-
-That is why environments and entries live in the same tool. A number means nothing without the place
-it was taken in — the same code on a laptop and on a GPU node gives two different numbers — and a
-place is only worth declaring once, carefully, if what comes out of it is recorded against its name.
-So errand holds both ends: the *where* (layers, built and checked before each run, the queue that
-keeps the machine to yourself) and the *what came of it* (the output tree, `result.yaml`, the
-summaries above them). Take either away and you are back to a shell script and a folder of files
-named `results_final2`.
-
-## The three legs
-
-It stands on three, and you want all three.
-
-### Where and how it runs
+## Environments, built and kept current
 
 This is the part that is hard to do by hand and tedious to do twice. An environment is a **stack of
 layers**: micromamba, conda, uv, a venv, Nix or Guix, `module load`, a Docker, Podman or Apptainer
-container, another machine over ssh, a Slurm or OAR allocation — in any combination. Read it
-outside in: *that machine, an allocation on it, a container, your command.*
+container, another machine over ssh, a Slurm or OAR allocation, a Windows virtual machine — in any
+combination. Read it outside in: *that machine, an allocation on it, a container, your command.*
 
 <Term scene="stack" caption="errand run --env cluster train.py: three layers, declared once, crossed by one flag." />
 
 The shell script that does `ssh`, then `sbatch`, then `apptainer exec`, then rsyncs the results
-back — and that nobody else can run — is replaced by three lines in a file. `errand` *builds* each
-layer from what it says it needs, checks before every run that it still matches what was declared,
-and runs the same work across a matrix of them in one go. Anything can be launched and left to
-finish on its own.
+back — and that nobody else can run — is replaced by three lines in a file. And each line is more
+than a way in:
+
+- **It is built from what it declares.** A layer says what it needs — a Python version, a
+  `requirements.txt`, a channel list, a container recipe, a pip list — and the first run that needs
+  it creates it, installs into it, builds the image.
+- **It is kept current.** Before every run errand compares a fingerprint of the declaration with
+  what it last built, and brings the place up to date when they have drifted: a new pip spec, an
+  edited recipe. What already exists the first time errand meets it is adopted as it is — an
+  environment somebody has been working in for months is never the collateral of a first command.
+- **Files cross with the work.** Over `Ssh` the project is rsynced there before the command runs;
+  `--pull DIR` brings a directory back afterwards, `-o` gives each run an output directory over
+  there and fetches it, and `also` pushes the sibling checkouts the work needs.
+- **Several at once.** `--env local,cluster` is two runs; a tag picks every environment that has
+  it, and one environment can cover several values of a tag.
 
 → [Environments](./environments), [Keeping them current](./upkeep), [Tags](./tags),
 [Running elsewhere](./remote)
 
-### Sharing the machine
+## What you also get
 
-Work says what it needs — a core, eight of them, a GPU, the whole machine — and `errand` holds a
-queue per host so that two invocations, in two terminals, on two projects, do not trample each
-other. A timing taken while something else was running is not a timing.
+Nothing to declare for any of it:
 
-→ [Sharing the machine](./machine)
+- **The machine to yourself when it matters.** A queue per host, outside the process, shared by
+  every errand on the machine: `errand run -x ./bench` waits for what is running and holds
+  everything else back. A timing taken while something else was running is not a timing.
+  → [Sharing the machine](./machine)
+- **Let it run.** `--batch` launches the work and gives the shell back; `errand status` and
+  `errand watch` say how it is going. → [Detached runs](./detached)
+- **A record of every run** — what ran, where, when, how it ended, what it said — kept in errand's
+  own state, `.errand/`. With `-o`, a directory per run whose path is computed from the work, the
+  place and the date, so that comparison between dates and machines falls out of the tree.
+  → [Where the output goes](./output)
+- **One screen for all of it**: `errand tui`. → [The screen](./tui)
 
-### What comes back
+## Suites, and errand's own entries
 
-Every run gets an output directory whose path is computed, not invented — from the work, its
-parameters, its environment and its date. Logs, files, status and any numbers worth following land
-there, and comparison between dates, machines and parameter sets falls out of the directory tree.
+A plain `errand run tests/` is a directory, not a command. `errand run 'tests/**::*'` is: the `::`
+hands the files to an **entry runner** — pytest, Catch2, cargo — which collects one entry per test
+and records each. A suite keeps everything that makes it itself: `pytest tests/` still works exactly
+as before, and a `@pytest.mark.slow` becomes an entry tag that `-e '!slow'` filters on.
 
-→ [Where the output goes](./output)
+For work that has no framework of its own — a number to follow, a picture to look at — errand has
+a small declaration that sits beside the code, `if track( "cost" ):`. It is one more way to give
+errand something to run, not the way in.
 
-## Your tools, as they are
-
-`errand` runs what you already have. With no configuration it looks at the directory and says what
-it found; `errand init` writes that down as an `errand-project.py`.
-
-| you have | errand uses |
-|---|---|
-| a `tests/` directory of pytest | `Pytest( )`: one entry per test, marks become entry tags |
-| `test_*.cpp` using Catch2 | `Catch2( )`: one entry per test case, built once with the command you build with |
-| a `Cargo.toml` | `Cargo( )`: one entry per test target |
-| anything else | `errand shell --env X -- <command>`, or an [entry](./declaring-work) that calls it |
-
-→ [Start from what you have](./start), [Runners](./runners)
-
-## Optionally: errand's own entries
-
-For work that has no framework of its own — a number to follow, a picture to look at, a step to run
-on the cluster — errand has a small declaration that sits beside the code, `if track( "cost" ):`.
-It is one more way to give errand something to run, **not** the way in: everything above works
-without it, and a project can use both.
-
-→ [Writing entries](./declaring-work)
+→ [Running it](./running), [Runners](./runners), [Writing entries](./declaring-work)
 
 ## What it is not
 
@@ -93,38 +76,34 @@ without it, and a project can use both.
 command you already build with, once, before any of its entries. Your compiler, your flags and your
 layout stay yours.
 
-**It is not a replacement for your test runner.** `pytest tests/` still works exactly as before;
-what the suite gains is everything that happens *around* the run.
+**It is not a replacement for your test runner.** What a suite gains is everything that happens
+*around* the run.
 
 **It is not a scheduler.** Inside a Slurm, PBS, OAR or LSF allocation it does not queue at all —
-the scheduler has already decided what this process may have, and a second queue on top of it would
-only wait for itself. Outside one, `Slurm` is a layer that *submits* to the scheduler for you.
+the scheduler has already decided what this process may have. Outside one, `Slurm` is a layer that
+*submits* to the scheduler for you.
 
 **It does not decide what may be compared to what.** A matrix that spans a laptop and a cluster
-partition at once will produce numbers that are not comparable, and `errand` will not stop you. It
-runs what you ask where you ask and records where each number came from; the judgement is yours.
+partition will produce numbers that are not comparable, and errand will not stop you. It records
+where each number came from; the judgement is yours.
 
 ## The shape of a project
 
-Nothing is required. `errand run` with no configuration at all reads the directory, runs what it
-finds in the interpreter you started it with, and says what it guessed:
+Nothing is required: `errand run make` works in an empty directory, in the interpreter and on the
+machine you started it from. Once you want to say *where* things run, files at the root say it —
+errand reads every `errand-*.py`:
 
 ```
-tests/test_api.py      the work: a pytest suite, untouched
-src/…                  the code
-```
-
-Once you want to say *where* things run, files at the root say it — errand reads every `errand-*.py`:
-
-```
-errand-project.py      runners, project settings                  ← errand init
-errand-envs.py         environments, and what only this machine can supply — untracked
-runs/                  the output tree, which errand writes and you read
+errand-envs.py         the environments — versioned when it names no machine   ← errand init
+errand-project.py      runners, what a bare `errand run` runs, settings        ← errand init
+errand-vars.py         what only this machine knows — never versioned
+.errand/               errand's own record of what it did
+runs/                  the output directories you asked for with -o
 ```
 
 → [Configuration](./configuration)
 
 ## Next
 
-[Installing](./installing) · [Start from what you have](./start) · or look at the layers at work in
+[Installing](./installing) · [Getting started](./start) · or look at the layers at work in
 [Four environments](/tutorials/environments).

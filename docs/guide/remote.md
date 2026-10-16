@@ -14,14 +14,14 @@ errand.envs[ "box" ] = errand.Env( [ errand.Ssh( host = "gpu-box", root = "/home
 ```
 
 ```bash
-errand run -k bench --env box
+errand run -k bench --env box "bench/**::*"
 ```
 
 ```text
   → gpu-box:/home/me/proj  env=box  tags=cuda
   rsync push → gpu-box:/home/me/proj
   ...
-  rsync pull ← gpu-box:/home/me/proj [runs/bench/solvers.py/cost]
+  rsync pull ← gpu-box:/home/me/proj [.errand/runs/bench/solvers.py/cost]
 ```
 
 ## The paths are computed before the run happens
@@ -31,7 +31,8 @@ This is the whole trick, and everything else follows from it.
 The same rules applied to the same entries and parameters give the same answer on both sides, so
 **nothing has to be declared at runtime**, and the rest of the remote tree — which holds unrelated
 runs from other days — stays put. Only the directories this invocation was going to write are
-pulled back.
+pulled back: its record in `.errand/runs/`, and its visible directory under `runs/` when `-o` asked
+for one. Anything else the command writes comes back with `--pull DIR`.
 
 Matrices are expanded on **this** side, one plain run per combination, each value crossing already
 split. The remote side never sees a matrix; it sees plain runs.

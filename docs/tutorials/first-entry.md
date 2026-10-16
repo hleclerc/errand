@@ -1,8 +1,8 @@
-# 1 · errand's own entries
+# 4 · errand's own entries
 
 ::: tip You may not need this tutorial
 This one writes work in errand's own declaration, which is optional. With a pytest, Catch2 or
-cargo project, start with [3 · Adopt an existing suite](./adopt-a-suite); with only a command, see
+cargo project, start with [2 · Adopt an existing suite](./adopt-a-suite); with only a command, see
 [Start from what you have](/guide/start). Come back when you have numbers to follow or a picture to
 look at.
 :::
@@ -10,7 +10,7 @@ look at.
 Two files, no configuration. `errand` runs in whatever interpreter you started it with.
 
 ```bash
-cd examples/01-minimal
+cd examples/03-entries
 ```
 
 ```
@@ -99,29 +99,37 @@ if p := experiment( "gaps", n = Param( 100_000 ) ):
     p.results[ "largest_gap" ] = max( gaps )
 ```
 
-`p.out_dir` is this run's own directory, already created. An experiment gets a stable `latest/`
+`p.out_dir` is this run's own directory, already created — in errand's private record,
+`.errand/runs/`, or under `runs/` when the run was given `-o`. An experiment gets a stable `latest/`
 symlink beside the stamped ones, so a tab left open on `latest/gaps.svg` keeps working.
 
 ## Try it
 
 ```bash
-errand run                        # the tests, and only the tests
-errand run -e '!slow'             # skip the slow one
-errand run -k bench               # the benchmarks
-errand run test_primes.py::sieve  # one entry by name
-errand list                       # what matched, with the parameters it takes
+errand run -k test '**::*'             # the tests
+errand run -k test -e '!slow' '**::*'  # skip the slow one
+errand run -k bench '**::*'            # the benchmarks
+errand run test_primes.py::sieve       # one entry by name
+errand run '**::*'                     # every entry named: tests, benchmarks, the experiment
+errand list '**::*'                    # what matched, with the parameters it takes
 ```
 
-**`errand` on its own never runs the benchmarks.** They are not `bulk`; you name them, or you ask
-for `-k bench`. The experiment likewise. Numbers worth keeping are not something you want produced by accident.
+`'**::*'` is every entry of every file under here; `test_primes.py::*` would be those of that file.
+A bare `errand run`, with no target, runs what the project declares in `errand.default_run` — and
+this directory declares nothing, so it only prints the help.
 
-A comma is a matrix, here and everywhere else:
+**A bare `errand run` never runs the benchmarks**, even where `default_run` names their file: they
+are not `bulk`, so you name them, or ask for `-k bench`. The experiment likewise. Numbers worth
+keeping are not something you want produced by accident.
+
+A comma on a parameter is a matrix:
 
 ```bash
-errand run -k bench . --n=100000,1000000,10000000
+errand run -o -k bench '**::*' --n=100000,1000000,10000000
 ```
 
-Three runs, three directories, and a summary at the entry's root with one row per size.
+Three runs, three directories — `-o` asks for them to be visible, under `runs/` — and a summary at
+the entry's root with one row per size.
 
 ## What you get back
 
@@ -134,8 +142,10 @@ runs/test_primes.py/sieve/
   latest -> the newest of them
   summary.yaml           <- one row per run, and the extents: read this after a matrix
 
-runs/test_primes.py/gaps/latest/gaps.svg     <- stable path, reload the tab
+runs/test_primes.py/gaps/latest/gaps.svg     <- stable path, reload the tab ( errand run -o test_primes.py::gaps )
 ```
+
+Without `-o`, the same tree is kept in `.errand/runs/` — the record the screen and the history read.
 
 Nothing here is a special directory that `errand` knew about in advance. Every component is computed
 from the entry, its parameters, where it ran and when — which is also how the same path can be
@@ -170,5 +180,5 @@ writing. `F8` hands what a run produced to the desktop, so `gaps.svg` is two key
 
 ## Next
 
-[2 · Four environments over three machines](./environments) — where the work stops being the
+[1 · Four environments over three machines](./environments) — where the work stops being the
 interesting part.

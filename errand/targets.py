@@ -3,14 +3,15 @@
     errand run tests/test_ot.py::basic
     errand run '**/test_*.py::grad_*'
     errand run 'tests/{ot,shapes}/test_*.py::{basic,quick}'
-    errand run tests/ot,bench/fft.py
+    errand run 'tests/**::*',bench/fft.py
 
 A target is a PATH, relative to the directory errand is started from, extension
 included -- what the shell completes and what pytest prints -- then optionally
 `::` and an entry name. Both sides are globs, the same globs on both sides:
 `*` and `?` within a name, `[…]` a class, `{a,b}` alternatives, and `**` any
-depth of directories on the path side. A path that names a directory means
-everything under it.
+depth of directories on the path side. With `::`, a path that names a directory
+means everything under it. This module resolves the targets with `::`; the
+others are files and commands, see `discovery`.
 
 A comma outside braces separates targets, as it separates the values of every
 other axis; `\\,` is a comma that is only a comma.
@@ -275,10 +276,9 @@ def _nothing( text, missing, idle, suggest ) -> str:
     if missing and not idle:
         why = f"{missing[ 0 ]}: no such file or directory"
     elif idle:
-        why = f"{idle[ 0 ]}: no runner takes it ( see errand.runners )"
+        why = f"{idle[ 0 ]}: no entry runner takes it ( see errand.runners, or -r NAME )"
     else:
-        why = (f"'{text}' matches no file that declares work -- a script or an executable "
-               f"runs only when named in full")
+        why = f"'{text}' matches no file an entry runner takes"
     near = suggest( text.partition( "::" )[ 0 ] ) if suggest else [ ]
     if near:
         why += "\n  did you mean:  " + "  ".join( near )

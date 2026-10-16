@@ -1,10 +1,10 @@
-# 3 · Adopt an existing suite
+# 2 · Adopt an existing suite
 
 A pytest suite, a Catch2 suite and a cargo one, none of them modified. Three lines in
 `errand-project.py` put all three under `errand`.
 
 ```bash
-cd examples/03-existing-suite
+cd examples/02-existing-suite
 ```
 
 ```
@@ -32,17 +32,24 @@ errand.runners.replace( errand.Catch2( dir = "cpp", build = "make -C cpp" ) )
 errand.runners.replace( errand.Cargo( manifest = "rust/Cargo.toml" ) )
 ```
 
-That is the whole adoption. Nothing below it changes a single line of the existing tests.
+That is the whole adoption — and pytest, Catch2 and cargo are runners already, active with no
+configuration: these lines only say where to look and how to build. Nothing below them changes a
+single line of the existing tests.
 
 ## Try it
 
 ```bash
-errand run                              # all three suites
-errand run tests/test_api.py            # the python ones
+errand run '**::*'                      # all three suites
+errand run "tests/test_api.py::*"       # the python ones
 errand run cpp/test_geometry.cpp::area  # one Catch2 case, by name
-errand run -e '!slow'                   # pytest marks are entry tags
-errand run --env local,old              # every suite, both python versions
+errand run -e '!slow' '**::*'           # pytest marks are entry tags
+errand run --env local,old '**::*'      # every suite, both python versions
+errand run pytest tests/                # the pytest command itself, in the place, recorded
 ```
+
+The `::` is what sends a target to the suites' runners; without it, `pytest` is just a command.
+`errand.default_run = [ "**::*" ]` in `errand-project.py` would make a bare `errand run` mean all
+three.
 
 ## What adopting them buys
 
@@ -60,7 +67,7 @@ The Catch2 benchmark in `cpp/test_geometry.cpp` is the clearest case: it already
 and the measurement went to the terminal and died there. Now:
 
 ```bash
-errand run --batch -k bench --env local -e '!legacy'
+errand run --batch -k bench --env local -e '!legacy' '**::*'
 errand watch
 ```
 
@@ -68,29 +75,25 @@ and the numbers accumulate per machine and per date, next to the Python ones, in
 
 ## Guessing, and writing the guess down
 
-Run `errand` in a project with no `errand-*.py` at all and it will find these suites by itself —
-and say so before running anything:
-
-```text
-  no errand-*.py; guessed:  pytest (tests/)  ·  catch2 (cpp/)  ·  cargo (rust/)   ( errand init writes it down )
-```
+`errand run` never guesses: with no `errand-*.py` at all, the built-in runners take these suites
+as they are, pytest's files anywhere, Catch2 sources with no build to run first. What fits this
+layout is for `errand init` to suggest, and for you to write down.
 
 Every framework locates its tests by assuming something about your layout, so there is no version of
 this that does not guess. What `errand-project.py` changes is that the assumption is **visible,
 versioned, and arguable** — `Pytest( dirs = [ "tests" ] )` says exactly what will be looked at, and
 takes arguments to say something else.
 
-Try it. Move the file aside, look at what errand makes of the bare directory, then have it write the
-file back:
+Try it. Move the file aside and have errand write one from the bare directory:
 
 ```bash
 mv errand-project.py errand-project.bak
-errand list  # the guess, announced; nothing run
-errand init  # errand-project.py again, from what was found
+errand init  # errand-project.py again, the runner lines in comments, and an errand-envs.py
 ```
 
-The `errand.configure( src = … )` line is not in what `errand init` writes — it is not a thing a directory can
-tell: it is yours to add.
+What it found is written **in comments**, with a `default_run` to start from: nothing is active until
+you uncomment it. The `errand.configure( src = … )` line is not in what `errand init` writes — it is
+not a thing a directory can tell: it is yours to add.
 
 ## Compiling, and finding the binary
 
@@ -129,4 +132,4 @@ without building anything at all.
 
 ## Next
 
-[4 · A bench over two machines](./two-machines).
+[3 · A bench over two machines](./two-machines).

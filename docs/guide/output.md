@@ -1,5 +1,20 @@
 # Where the output goes
 
+Every run is **recorded**, whether anybody asked or not: command, environment, place, date, status,
+duration, output, results — what the history, [the screen](./tui), `errand status` and `--batch`
+read. That record is errand's own, in its state directory, `.errand/runs/…`.
+
+A **visible** directory is made only on request: `-o` puts it in the project's tree, `runs/`, and
+`--out` somewhere else — another tree, or a pattern of your own with `{path}` `{name}` `{when}`
+`{place}` `{env}` `{params}`:
+
+```bash
+errand run -o "bench/solvers.py::cost" --n=1000,5000   # runs/bench/solvers.py/cost/…
+errand run --out "results/{env}/{when}" train.py       # results/gpu/2026-09-25_18h04m11/
+```
+
+Either way it is laid out the same, and the rest of this page describes it.
+
 **The file's path and the case's name to find a case, then one flat list of its runs**, each cleared and recreated as it
 starts. Only the run directory is cleared; everything above it accumulates.
 
@@ -10,6 +25,9 @@ runs/{path}/{name}/latest -> the newest of them
 runs/bench/solvers.py/cost/2026-09-25_18h04m11-gpu@gpu-box-method=newton,n=5000/
 runs/bench/solvers.py/cost/2026-09-25_18h11m02-local@laptop-method=cg,n=5000/
 ```
+
+A plain command has no file and no case: it is `runs/{first word}/{when}-{place}[-{args}]/` —
+`errand run -o make -j16` lands in `runs/make/…-local@laptop--j16/`.
 
 The file's path — from the project root, extension included — and the name are how you *look* for
 work: they are what you typed to run it, so they are directories. Two `test_ot.py` in two
@@ -75,7 +93,9 @@ day land in the same directory, and `date` is what tells them apart.
 over there, or beside seven others under `-j`, says anything at all. So `tail -f` works on it, and
 so does [the screen](./tui), which is the same thing.
 
-Write anything else you like into the same directory — an `.svg`, a `.vtu`, a folder of frames:
+Write anything else you like into the same directory — an `.svg`, a `.vtu`, a folder of frames.
+For an errand entry, `p.out_dir` is that directory; a script or a command gets it as
+`ERRAND_OUT_DIR`, set only with `-o` or `--out`:
 
 ```python
 if p := experiment( "the shape of it" ):
@@ -102,9 +122,11 @@ a machine got slower is a different question, and one that wants to know somethi
 
 ## Where the tree goes
 
-`errand.configure( out = "runs" )` — see [Configuration](./configuration). It is the one path errand
-writes to, and it is the whole state: there is no database, no ledger and no daemon. Delete `runs/`
-and you have deleted your results, nothing else.
+The visible tree is `errand.configure( out = "runs" )`, the private record
+`errand.configure( state = ".errand" )` — overridden for one machine by `ERRAND_STATE_DIR`, a
+scratch disk or a shared filesystem. See [Configuration](./configuration). Those are the paths errand
+writes to, and they are the whole state: there is no database, no ledger and no daemon. Delete
+`runs/` and you have deleted the results you asked to see, nothing else.
 
 ## Next
 

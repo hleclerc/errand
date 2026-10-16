@@ -26,15 +26,18 @@ from .local import Skipped, have, need, skip, value   # noqa: F401
 
 # Read by errand when it needs a default: `errand.default_env = "gpu"` in an `errand-*.py`.
 default_env: str | None = None
+# What a bare `errand run` runs: `errand.default_run = [ "tests/**::*" ]`, targets
+# from the project root. With none, a bare `errand run` says what there is.
+default_run: list | None = None
 
 __all__ = [
     "Args", "Param", "Skipped", "bench", "entry", "experiment", "has_tag", "have",
     "need", "out_dir", "skip", "tag", "test", "track",
-    "configure", "default_env", "Env", "envs", "runners", "main", "value",
+    "configure", "default_env", "default_run", "Env", "envs", "runners", "main", "value",
     "Vars", "Venv", "Micromamba", "Conda", "Uv", "Nix", "Guix", "Module",
     "Apptainer", "Docker", "Podman", "Ssh", "Slurm", "Windows",
     "Runner", "Level", "Outcome", "RunContext", "Errand", "Pytest", "Catch2", "Cargo",
-    "Python", "Shell", "Executable",
+    "Python", "Executable",
 ]
 
 # Everything past the declaration surface is reached lazily: an entry file
@@ -69,7 +72,6 @@ _LAZY = {
     "Catch2"    : "errand.runner",
     "Cargo"     : "errand.runner",
     "Python"    : "errand.runner",
-    "Shell"     : "errand.runner",
     "Executable": "errand.runner",
 }
 
@@ -83,7 +85,7 @@ if TYPE_CHECKING:
         Apptainer, Conda, Docker, Guix, Micromamba, Module, Nix, Podman, Slurm, Ssh, Uv, Vars, Venv,
     )
     from .runner import (
-        Cargo, Catch2, Errand, Executable, Level, Outcome, Pytest, Python, RunContext, Runner, Shell,
+        Cargo, Catch2, Errand, Executable, Level, Outcome, Pytest, Python, RunContext, Runner,
     )
     from .vm import Windows
 

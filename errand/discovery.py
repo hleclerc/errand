@@ -1,12 +1,10 @@
-"""Finding the files that hold work, and the entries inside them.
+"""Finding what a target designates, and the entries inside it.
 
-A pattern is a comma-separated list of `path[::name]` targets, paths relative
-to the cwd and both sides globs: see `targets`.
-
-Which runner a file is for is asked of every runner in `errand.runners`, and
-the one that fits it best takes it ( see `runners` ). Walking the tree finds
-only what declares itself as work -- errand's own files and the suites of a
-framework; a script or an executable is taken only when it is named.
+A pattern is a comma-separated list of targets, paths relative to the cwd. One
+with `::` -- `path::name`, both sides globs, see `targets` -- is for the entry
+runners: which one takes a file is asked of each of them, and the one that fits
+it best takes it ( see `runner` ). One without is for a file runner: a `.py`,
+an executable, a command of the place.
 
 Candidate files of errand's own are found by a text check rather than by
 importing everything: a file is one if it IMPORTS `errand`. Without that, a
@@ -61,18 +59,14 @@ def _runners( runners ):
     if runners is None:
         from . import config
         runners = config.runners
-    return list( runners )
+    return list( runners.values() ) if isinstance( runners, dict ) else list( runners )
 
 
-def owners( path: Path, runners, at_least = R.NONE ):
-    """-> ( the best level, [ the runners at it ] ) for one file.
-
-    `at_least` leaves out the runners that could not reach it anyway: walking a
-    whole tree asks only the ones that could make a file discoverable.
-    """
+def owners( path: Path, runners ):
+    """-> ( the best level, [ the entry runners at it ] ) for one file."""
     best, who = R.NONE, [ ]
     for r in runners:
-        if r.level < max( at_least, best, R.FALLBACK ):
+        if not r.takes_entries or r.level < max( best, R.FALLBACK ):
             continue
         got = R.Level( r.suitability( path ) )
         if got > best:
@@ -83,13 +77,12 @@ def owners( path: Path, runners, at_least = R.NONE ):
 
 
 def pool( root: Path, exclude = ( ), runners = None ) -> dict:
-    """{ path: ( level, [ runners ] ) } for every file found by walking: the
-    ones that declare themselves as work."""
+    """{ path: ( level, [ runners ] ) } for every file an entry runner takes."""
     runners = _runners( runners )
     out = { }
     for f in iter_files( root, exclude ):
-        level, who = owners( f, runners, R.FRAMEWORK )
-        if level.discoverable:
+        level, who = owners( f, runners )
+        if level > R.NONE:
             out[ f ] = ( level, who )
     return out
 
@@ -222,9 +215,79 @@ def select_at( path: Path, line: int, root: Path ):
     return [ ], modules
 
 
+def _file_runner( path: Path, runners ):
+    """The file runner for a bare target that is a file, or None."""
+    by_name = { r.name: r for r in runners if not r.takes_entries }
+    if path.suffix == ".py":
+        return by_name.get( "python" )
+    if os.access( path, os.X_OK ):
+        return by_name.get( "executable" )
+    return None
+
+
+def _bare( text: str, root: Path, cwd: Path, runners, exclude, suggest ):
+    """A target with no `::` -> [ ( file runner, Spec ) ].
+
+    A file is run by the runner of its kind; a glob runs each file it matches
+    that can be run; a word that is no file is a command of the place."""
+    alternatives = T.expand( text.strip() )
+    if len( alternatives ) > 1:
+        return [ got for alt in alternatives
+                 for got in _bare( alt, root, cwd, runners, exclude, suggest ) ]
+    return _bare_one( alternatives[ 0 ], root, cwd, runners, exclude, suggest )
+
+
+def _bare_one( text, root, cwd, runners, exclude, suggest ):
+    import shutil
+
+    path_part = text.strip()
+    absolute = Path( os.path.normpath( os.path.join( cwd, path_part ) ) )
+    if T.is_glob( path_part ):
+        rx = T.path_regex( str( absolute ) )
+        out = [ ]
+        for f in iter_files( root, exclude ):
+            r = _file_runner( f, runners ) if rx.match( T.real( f ) ) else None
+            if r is not None:
+                out.append( ( r, T.Spec( [ f ], None, text ) ) )
+        if not out:
+            raise ValueError( f"'{text}' matches no file that can be run -- the entries of the "
+                              f"files it matches are `{text}::*`" )
+        if any( r.name == "python" and R.MARKER.search( R._read( spec[ 0 ][ 0 ] ) ) for r, spec in out ):
+            # Run as scripts, files of entries do nothing: worth a word.
+            print( f"  '{text}' runs each file as a script; the entries they declare are `{text}::*`",
+                   file = sys.stderr )
+        return out
+    if absolute.is_dir():
+        raise ValueError( f"{path_part} is a directory: `{path_part.rstrip( '/' )}/**::*` runs "
+                          f"the entries under it" )
+    if absolute.is_file():
+        r = _file_runner( absolute, runners )
+        if r is None:
+            raise ValueError( f"{path_part}: not a .py and not executable -- the entries it holds "
+                              f"are `{path_part}::*`" )
+        if r.name == "python" and R.MARKER.search( R._read( absolute ) ):
+            # Run as a script, a file of entries does nothing: worth a word.
+            print( f"  {path_part} is run as a script; the entries it declares are `{path_part}::*`",
+                   file = sys.stderr )
+        return [ ( r, T.Spec( [ absolute ], None, text ) ) ]
+    if path_part.endswith( ".py" ) or os.sep in path_part:
+        near = suggest( path_part ) if suggest else [ ]
+        raise ValueError( f"{path_part}: no such file"
+                          + ( "\n  did you mean:  " + "  ".join( near ) if near else "" ) )
+    # A command of the place: looked for here, which is the place.
+    r = { x.name: x for x in runners if not x.takes_entries }.get( "executable" )
+    if r is None:
+        raise ValueError( f"{path_part}: no runner for a command ( errand.runners[ 'executable' ] )" )
+    if path_part not in R.INTERPRETERS and shutil.which( path_part ) is None:
+        raise ValueError( f"{path_part}: no such file, and no such command here" )
+    return [ ( r, T.Spec( [ Path( path_part ) ], None, text ) ) ]
+
+
 def select( pattern, root, kinds = None, entry_tags = None, bulk_only = False, exclude = ( ),
-            runners = None, cwd = None, context = None, build = True ):
+            runners = None, cwd = None, context = None, build = True, force = None ):
     """Everything the command line asked for: ( entries, modules, selectors ).
+
+    `force` names the runner that takes every target, claiming nothing.
 
     Raises ValueError when a target designates nothing, when two runners claim
     a file equally, or when a `::name` matches no entry of the files it is
@@ -232,35 +295,78 @@ def select( pattern, root, kinds = None, entry_tags = None, bulk_only = False, e
     """
     from .expr import matches
 
+    named_runners = runners
     runners = _runners( runners )
     cwd = Path( cwd or os.getcwd() )
     broken.clear()
     built.clear()
-    found = pool( root, exclude, runners )
 
-    def explicit( path: Path ) -> bool:
-        # Named in full: whatever can run it at all may, a script included.
-        level, who = owners( path, runners )
-        if level == R.NONE:
-            return False
-        found[ path ] = ( level, who )
-        return True
+    forced = None
+    if force:
+        by_name = named_runners if isinstance( named_runners, dict ) else { r.name: r for r in runners }
+        forced = by_name.get( force )
+        if forced is None:
+            from . import fuzzy
+            near = [ n for n, _, _ in fuzzy.rank( force, list( by_name ), lambda n: { "name": ( n, 1.0 ) } )[ : 3 ] ]
+            raise ValueError( f"-r {force}: no such runner -- there are: {', '.join( by_name )}"
+                              + ( f"\n  did you mean:  {'  '.join( near )}" if near else "" ) )
 
-    files = sorted( found, key = str )
-    specs = T.resolve( pattern, files, cwd = cwd, root = root, explicit = explicit,
-                       suggest = _near( files, root, cwd ) )
-    wanted = list( dict.fromkeys( f for matched, _ in specs for f in matched ) )
+    texts = T.split( pattern ) if pattern else [ ]
+    if not texts:
+        raise ValueError( "nothing to run" )
+    with_entries = [ t for t in texts if "::" in t or ( forced is not None and forced.takes_entries ) ]
+    bare = [ t for t in texts if t not in with_entries ]
 
-    by_runner = { }
-    for f in wanted:
-        level, who = found[ f ]
-        if len( who ) > 1:
-            names = " and ".join( r.name for r in who )
-            raise ValueError(
-                f"{os.path.relpath( f, cwd )}: {names} both take it, at level {level.name} -- "
-                f"keep one ( errand.runners.replace( … ) puts a configured runner in place of "
-                f"the default one, errand.runners.remove( … ) takes one out )" )
-        by_runner.setdefault( id( who[ 0 ] ), ( who[ 0 ], [ ] ) )[ 1 ].append( f )
+    # ( runner, [ files ] ) and the specs, whoever runs them.
+    by_runner, specs, found = { }, [ ], { }
+
+    for text in bare:
+        # Suggestions walk the whole tree: only when something went wrong.
+        suggest = lambda typed: _near( sorted( iter_files( root, exclude ), key = str ),
+                                       root, cwd )( typed )
+        for r, spec in _bare( text, root, cwd, [ forced ] if forced is not None else runners,
+                              exclude, suggest ):
+            specs.append( spec )
+            for f in spec[ 0 ]:
+                found[ f ] = ( R.NONE, [ r ] )
+                files = by_runner.setdefault( id( r ), ( r, [ ] ) )[ 1 ]
+                if f not in files:
+                    files.append( f )
+
+    if with_entries:
+        if forced is not None:
+            claimed = { f: ( R.ERRAND, [ forced ] ) for f in iter_files( root, exclude )
+                        if forced.suitability( f ) > R.NONE }
+        else:
+            claimed = pool( root, exclude, runners )
+
+        def explicit( path: Path ) -> bool:
+            # Named in full: `-r` takes it whatever it is; otherwise it has to
+            # be something an entry runner takes.
+            if forced is not None:
+                claimed[ path ] = ( R.ERRAND, [ forced ] )
+                return True
+            level, who = owners( path, runners )
+            if level == R.NONE:
+                return False
+            claimed[ path ] = ( level, who )
+            return True
+
+        files = sorted( claimed, key = str )
+        entry_specs = T.resolve( ",".join( with_entries ), files, cwd = cwd, root = root,
+                                 explicit = explicit, suggest = _near( files, root, cwd ) )
+        specs += entry_specs
+        for f in dict.fromkeys( f for matched, _ in entry_specs for f in matched ):
+            level, who = claimed[ f ]
+            found[ f ] = ( level, who )
+            if len( who ) > 1:
+                names = " and ".join( r.name for r in who )
+                raise ValueError(
+                    f"{os.path.relpath( f, cwd )}: {names} both take it, at level {level.name} -- "
+                    f"say which with `-r NAME`, or keep one ( errand.runners.replace( … ) puts a "
+                    f"configured runner in place of the default one, del errand.runners[ … ] "
+                    f"takes one out )" )
+            by_runner.setdefault( id( who[ 0 ] ), ( who[ 0 ], [ ] ) )[ 1 ].append( f )
 
     def mine( files ):
         # The specs again, over this runner's files only.
@@ -280,6 +386,8 @@ def select( pattern, root, kinds = None, entry_tags = None, bulk_only = False, e
             # What it holds can only be listed once it is built: so it is
             # built now, here, once -- and a failed build costs its files'
             # rows, not the run.
+            if context.build_dir is not None:
+                Path( context.build_dir ).mkdir( parents = True, exist_ok = True )
             why = r.prepare( [ ], context )
             built.append( r )
             if why:

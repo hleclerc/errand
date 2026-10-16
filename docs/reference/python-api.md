@@ -14,7 +14,7 @@ And everything a project file needs:
 import errand       # then errand.configure, errand.envs, errand.Env, errand.default_env,
                     # errand.runners, errand.value, and the layers and runners by name:
                     # Vars Venv Micromamba Conda Uv Nix Guix Module Apptainer Docker Podman
-                    # Ssh Slurm  --  Runner Level Errand Pytest Catch2 Cargo Python Shell
+                    # Ssh Slurm  --  Runner Level Errand Pytest Catch2 Cargo Python Executable
                     # Executable Outcome RunContext
 ```
 
@@ -43,7 +43,7 @@ if p := entry( "solve", n = Param( 1000 ), keep = True, cpus = 4 ):
 
 | traits | default | |
 |---|---|---|
-| `bulk` | `True` | picked up by `errand run` with no pattern |
+| `bulk` | `True` | picked up by a bare `errand run`, through `errand.default_run` |
 | `keep` | `False` | its numbers are kept and compared date to date |
 | `exclusive` | `False` | it needs the machine to itself |
 | `stable_path` | `False` | `latest/` is what you are meant to open |
@@ -214,8 +214,18 @@ not exist is an error.
 
 ```python
 errand.runners.replace( runner ) -> runner
-errand.runners.append( runner )
+errand.runners[ "name" ] = runner
 ```
 
-What runs which file: a list, filled with the runners that come with errand. `replace` puts a
-configured runner in place of the default one of its kind — see the [runner reference](./runners).
+What runs what: a dict, name → runner, filled with the runners that come with errand. A name of
+the project's own is what `-r NAME` picks; `replace` puts a configured runner in place of the
+default one of its kind — see the [runner reference](./runners).
+
+### default_run
+
+```python
+errand.default_run = [ "tests/**::*" ]
+```
+
+What a bare `errand run` runs: targets from the project root. With none, a bare `errand run`
+prints the help.

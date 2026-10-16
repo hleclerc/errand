@@ -1,16 +1,10 @@
-"""What a directory is made of, read from its content -- and the errand-project.py that says so.
+"""What `errand init` suggests: a starting `errand-envs.py`, and an `errand-project.py`
+with the runner lines that would fit what is in the directory.
 
-errand with no `errand-project.py` still has to find the work. For entries that are
-errand's own that is a text check ( see `discovery` ); for a suite that already
-exists it is a guess about the layout, because every framework locates its
-tests by assuming something. This module makes that guess, cheaply -- it lists
-directories and reads a few files, and runs nothing -- so that it can be
-
-* announced before a run ( the guess is never silent ), and
-* written down by `errand init`, which is how a guess becomes a declaration.
-
-A guess is a `Guess`: the configured runner to use, the line of `errand-project.py` that
-would build it, and a short label for the announcement.
+Nothing here is used to RUN anything: what a target means is read from the
+command line alone. A suggestion is only ever written down, in comments, for
+somebody to read and keep -- it lists directories and reads a few files, and
+runs nothing.
 """
 from __future__ import annotations
 
@@ -33,6 +27,7 @@ class Guess:
     label : str        # "pytest (tests/)"
     line  : str        # the errand-project.py line that says the same thing
     make  : object     # () -> Runner
+    targets: tuple = ( )   # what a bare `errand run` would mean for it
 
 
 def _walk( root: Path, depth: int = DEPTH ):
@@ -86,7 +81,8 @@ def _pytest( root: Path ):
     return Guess( "pytest", "pytest (" + ", ".join( d.rstrip( "/" ) + "/" if d != "." else "./"
                                                    for d in dirs ) + ")",
                   f"errand.runners.replace( errand.Pytest( dirs = [ {args} ] ) )",
-                  lambda: Pytest( dirs = dirs ) )
+                  lambda: Pytest( dirs = dirs ),
+                  tuple( "**::*" if d == "." else f"{d.rstrip( '/' )}/**::*" for d in dirs ) )
 
 
 def _catch2( root: Path ):
@@ -101,7 +97,8 @@ def _catch2( root: Path ):
         build = f"make -C {rel}" if ( d / "Makefile" ).exists() else None
         line = f"errand.runners.replace( errand.Catch2( dir = {rel!r}" + ( f", build = {build!r}" if build else "" ) + " ) )"
         return Guess( "catch2", f"catch2 ({rel}/)", line,
-                      lambda: Catch2( dir = root / rel, build = build ) )
+                      lambda: Catch2( dir = root / rel, build = build ),
+                      ( "**::*" if rel == "." else f"{rel}/**::*", ) )
     return None
 
 
@@ -124,10 +121,6 @@ def guess( root: Path ) -> list[ Guess ]:
     return [ g for g in ( _pytest( root ), _catch2( root ), _cargo( root ) ) if g ]
 
 
-def announce( guesses: list ) -> str:
-    return "no errand-*.py; guessed:  " + "  ·  ".join( g.label for g in guesses )
-
-
 # ── errand-project.py, written ───────────────────────────────────────────────────
 
 def has_entries( root: Path, exclude = ( ) ) -> bool:
@@ -136,40 +129,30 @@ def has_entries( root: Path, exclude = ( ) ) -> bool:
 
 
 def render( root: Path ) -> str:
-    """The text of an `errand-project.py` that says what errand would otherwise guess."""
+    """The text of an `errand-project.py`, with the runner lines that would fit
+    what is here written as suggestions -- in comments, never active."""
     found = guess( root )
     own   = has_entries( root )
     out = [
-        '"""What this project does: where its work is, and how it is built and run.',
+        '"""What this project does: how its work is run, and what a bare `errand run` means.',
         "",
-        "Written by `errand init` from what was found in the directory; edit freely. Everything",
-        "here is optional -- errand works without this file -- but writing it down turns a guess",
-        "into a declaration that is visible, versioned and arguable.",
-        "",
-        "errand reads every `errand-*.py` at the root. This one is versioned; where it RUNS",
-        "( environments, which depend on the user and the machine ) is `errand-envs.py`, which is not.",
+        "Written by `errand init`; edit freely. Everything here is optional -- `errand run <command>`",
+        "works without it. This file is versioned; where the project RUNS ( environments, which",
+        "depend on the user and the machine ) is `errand-envs.py`, which is not.",
         '"""',
         "import errand",
         "",
-        'errand.configure( out = "runs" )          # the one directory errand writes to',
-        "",
     ]
     if found:
-        out += [ "# Existing suites, adopted unmodified. Their own runner, assertions and marks stay",
-                 "# theirs; what they gain is a directory per run, environments, a queue, summaries." ]
-        out += [ g.line for g in found ]
+        out += [ "# What was recognised here. pytest, Catch2 and cargo are runners already: these lines",
+                 "# only matter if the defaults do not fit ( a directory, a build command ). Uncomment to keep." ]
+        out += [ "# " + g.line for g in found ]
         out += [ "" ]
-    if own:
-        out += [ "# Entries written with errand ( `if test( ... ):` ) are found without any line here." , "" ]
-    if not found and not own:
-        out += [ "# Nothing was found to run yet. Either point a runner at an existing suite:",
-                 "#",
-                 "#     errand.runners.replace( errand.Pytest( dirs = [ 'tests' ] ) )",
-                 "#     errand.runners.replace( errand.Catch2( dir = 'cpp', build = 'make -C cpp' ) )",
-                 "#     errand.runners.replace( errand.Cargo( ) )",
-                 "#",
-                 "# or declare a piece of work next to the code it exercises ( see the docs ).",
-                 "" ]
+    if found or own:
+        targets = [ t for g in found for t in g.targets ]
+        shown = ", ".join( repr( t ) for t in dict.fromkeys( targets or [ "**::*" ] ) )
+        out += [ "# What a bare `errand run` runs: targets from the project root.",
+                 f"# errand.default_run = [ {shown} ]", "" ]
     return "\n".join( out )
 
 
@@ -183,7 +166,8 @@ def render_envs( ) -> str:
         '"""',
         "import errand",
         "",
-        "# errand.envs[ 'local' ] = errand.Env( [ errand.Micromamba( 'myproject', python = '3.13' ) ] )",
+        "# errand.envs[ 'local' ] = errand.Env( [ errand.Micromamba( 'myproject', python = '3.13',",
+        "#                                                         requirements = 'requirements.txt' ) ] )",
         "#",
         "# errand.envs[ 'cluster' ] = errand.Env(",
         "#     [ errand.Ssh( host = 'my-cluster', root = '~/errand/myproject' ),",
@@ -197,7 +181,7 @@ def render_envs( ) -> str:
 
 
 def init( root: Path, *, force: bool = False, echo = print ) -> int:
-    """Write `errand-project.py` and a commented `errand-envs.py`, and make the output directory real."""
+    """Write `errand-project.py` and a commented `errand-envs.py`."""
     from .config import CONFIG_FILE, ENVS_FILE, VARS_FILE, config_in
 
     path = config_in( root )
@@ -211,9 +195,7 @@ def init( root: Path, *, force: bool = False, echo = print ) -> int:
         ( root / ENVS_FILE ).write_text( render_envs() )
         echo( f"  wrote {ENVS_FILE}    ( where YOU run it; not versioned )" )
 
-    out = root / "runs"
-    out.mkdir( exist_ok = True )
-    echo( "  made runs/    ( what errand writes; the output tree )" )
+    _ignore( root, ".errand/", echo )
     _ignore( root, "runs/", echo )
     _ignore( root, ENVS_FILE, echo )
     _ignore( root, VARS_FILE, echo )

@@ -20,7 +20,7 @@ sys.path.insert( 0, {root!r} )
 from errand import config, discovery
 root = Path( {root!r} )
 config.load( root )
-entries, _, _ = discovery.select( None, root, exclude = config.settings.exclude, runners = config.runners )
+entries, _, _ = discovery.select( "**::*", root, cwd = root, exclude = config.settings.exclude, runners = config.runners )
 for path, why, _ in discovery.broken:
     print( "BROKEN", path.relative_to( root ), why )
 print( "READ", len( entries ) )
@@ -43,7 +43,7 @@ if test( "no file of this project imports a third-party module at its top" ):
     found = [ ]
     # What another runner runs with its own tool is not read by errand: the pytest suite of example 03
     # imports pytest, as any pytest suite does.
-    foreign = ROOT / "examples" / "03-existing-suite" / "tests"
+    foreign = ROOT / "examples" / "02-existing-suite" / "tests"
     for path in sorted( ROOT.rglob( "*.py" ) ):
         if foreign in path.parents:
             continue

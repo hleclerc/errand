@@ -50,14 +50,14 @@ def a_session( project ):
     state THIS suite is running under; `put_back` restores it.
     """
     from errand import session as S
-    kept = ( config.settings, dict( config.envs ), list( config.runners ) )
+    kept = ( config.settings, dict( config.envs ), dict( config.runners ) )
     return S.Session( project, project / "runs" ).discover(), kept
 
 
 def put_back( kept ):
     config.settings = kept[ 0 ]
     config.envs.clear(); config.envs.update( kept[ 1 ] )
-    config.runners[ : ] = kept[ 2 ]
+    config.runners.clear(); config.runners.update( kept[ 2 ] )
 
 
 def named( session, name ):

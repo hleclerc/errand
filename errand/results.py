@@ -149,6 +149,13 @@ def run_name( resolved: dict, where: str ) -> str:
     return f"{stamp()}-{where}" + ( f"-{tag}" if tag else "" )
 
 
+# `--out "results/{env}/{when}"`: the run directory as a pattern, from the
+# project root, rather than the tree below. Set by the command line.
+pattern: str | None = None
+
+DYNAMIC = ( "{when}", "{place}", "{params}", "{env}" )
+
+
 def dirs_for( out_root: Path, entry, resolved, where, root: Path ):
     """-> ( leaf, entry_root ). The leaf is this run's directory; the entry root
     is the top of what the summaries cover.
@@ -156,8 +163,25 @@ def dirs_for( out_root: Path, entry, resolved, where, root: Path ):
     Every run is stamped, without exception -- a stable path costs nothing,
     since `latest` is a symlink beside the stamped directories.
     """
+    if pattern:
+        return _from_pattern( entry, resolved, where, root )
     entry_root = out_root / label( entry, root )
     return entry_root / run_name( resolved, where ), entry_root
+
+
+def _from_pattern( entry, resolved, where, root: Path ):
+    """The leaf a `--out` pattern names, and above it the deepest directory that
+    does not change from one run to the next: what is searched and fetched."""
+    path = label( entry, root )
+    name = path.rsplit( "/", 1 )[ -1 ] if "/" in path else path
+    values = { "path": path, "name": slug( getattr( entry, "name", name ) ), "when": stamp(),
+               "place": where, "env": where.split( "@" )[ 0 ], "params": params_tag( resolved ) or "-" }
+    leaf = Path( root ) / pattern.format( **values )
+    fixed = pattern
+    for d in DYNAMIC:
+        fixed = fixed.split( d )[ 0 ]
+    top = Path( root ) / fixed.format( **values ).rsplit( "/", 1 )[ 0 ] if "/" in fixed else Path( root )
+    return leaf, top if top != leaf else leaf.parent
 
 
 def clear( path: Path ):

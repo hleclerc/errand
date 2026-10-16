@@ -106,7 +106,7 @@ if test( "a target that designates nothing is an error, with something to do abo
 
         assert "no such file or directory" in refused( "tests/ot/test_to.py" )
         assert "did you mean" in refused( "tests/ot/test_to.py" )
-        assert "no runner takes it" in refused( "src/lib.py" )
+        assert "no entry runner takes it" in refused( "src/lib.py" )
         assert "matches no file" in refused( "**/nothing_*.py" )
         # One bad target among good ones is still a typo.
         assert "no such file" in refused( "tests/ot,tests/nope.py" )

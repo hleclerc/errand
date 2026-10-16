@@ -19,7 +19,8 @@ errand run -t 'jax & fp=64 & !remote'  # --env-tags, the expression form
 ## Saying nothing means every value
 
 An environment that does not mention `fp` covers every precision, so `--fp 32,64` is **two runs in
-it**. One that says `fp = "64"` is only ever selected for that one.
+it**. One that says `fp = "64"` is only ever selected for that one. A comma on a tag flag always
+means several values, so a tag value cannot hold one.
 
 This is what makes a tag a *dimension* rather than a label. You declare one environment, and the
 precision, the backend or the problem class you want to sweep crosses it.

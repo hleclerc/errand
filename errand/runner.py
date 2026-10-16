@@ -1,36 +1,29 @@
-"""What runs a file: the runners.
+"""What runs a target: the runners.
 
-A runner knows three things about a kind of file: whether it is the one to run
-it, what entries the file holds, and how to run one into a given output
-directory. Everything downstream -- the output directory, the result file, the
-summaries, the matrices over environments, the queue, the remote
-repatriation -- applies unchanged, whoever ran it.
+What a target means is read from the command line alone, never guessed from the
+project's layout:
+
+* `x::y` -- globs allowed on both sides -- goes to an **entry runner**: errand's
+  own entries, pytest, Catch2, cargo. Which one takes a file is asked of each
+  ( `suitability` ), and the one that fits it best takes it; two at the same,
+  highest level is an error naming them, never a coin toss. `-r NAME` picks one
+  and asks nothing.
+* anything else goes to a **file runner**: a `.py` to `python`, the
+  interpreter of the place; anything else to `executable`, run as it is -- a
+  file, or a command found on the place's own `PATH` ( `make`, `cmake`,
+  `pytest` ).
+
+An entry runner knows three things about a kind of file: whether it is the one
+to run it, what entries the file holds, and how to run one:
 
     suitability( path ) -> how well this runner fits the file ( a `Level` )
     collect( specs )    -> [ Entry ], over the files this runner was given
     prepare( entries )  -> once, before any of them runs ( a build )
     run( entry, ctx )   -> Outcome
 
-`errand.runners` is the list that applies, filled with the ones that come with
-errand; a project edits it with plain list operations, or `replace`s a built-in
-runner by a configured one of the same kind.
-
-**A file goes to the runner that fits it best**, and the order of the list
-never decides: a file that imports errand is errand's even when it is called
-`test_*.py`, a pytest file is pytest's before it is a python script, a python
-script is python's before it is an executable. Two runners at the same,
-highest level is an error that names them, never a coin toss.
-
-**Only what declares itself as work is found by looking.** `ERRAND` and
-`FRAMEWORK` files are picked up by a glob, a directory or a bare `errand run`;
-`LANGUAGE` and `FALLBACK` ones only when named, path in full -- otherwise
-`errand run '**/*.py'` would execute every module of a library as a script.
-
-**Whether a file is one entry or several is the runner's to say**, since only it
-knows whether its ecosystem can enumerate without running: pytest and cargo
-can, a script cannot, and a compiled suite cannot before it is built. A runner
-whose entries are whole files either hands a `::name` to the file as its own
-filter ( `takes_selector` ), or refuses one.
+`errand.runners` is a dict, name -> runner, filled with the ones that come with
+errand; a project adds its own instances under names of its own, which `-r`
+then picks, or `replace`s a built-in one by a configured one of the same kind.
 
 The runners for existing suites -- pytest, Catch2, cargo -- each keep everything
 that makes it itself: its own collection rules, its own assertions, its own
@@ -60,17 +53,12 @@ from .targets import name_matches
 
 
 class Level( IntEnum ):
-    """How well a runner fits a file. The highest wins; a tie at the top is an error."""
+    """How well an entry runner fits a file. The highest wins; a tie at the top is an error."""
     NONE      = 0    # not this runner's
-    FALLBACK  = 1    # something that can be run at all: an executable
-    LANGUAGE  = 2    # a language it knows how to run: a python or a shell script
+    FALLBACK  = 1    # kept for runners of a project's own that rank themselves low
+    LANGUAGE  = 2
     FRAMEWORK = 3    # a suite of a framework it adopts: pytest, Catch2, cargo
     ERRAND    = 4    # a file declaring errand's own entries
-
-    @property
-    def discoverable( self ):
-        """Found by a glob, a directory or a bare run, not only when named."""
-        return self >= Level.FRAMEWORK
 
 
 NONE, FALLBACK, LANGUAGE, FRAMEWORK, ERRAND = Level.NONE, Level.FALLBACK, Level.LANGUAGE, \
@@ -115,6 +103,8 @@ class RunContext:
     # What was written after the target: its own arguments, the declared
     # parameters among them as they were resolved for this run.
     args    : list = field( default_factory = list )
+    # What a plain command runs under: a memory ceiling, a lower priority.
+    wrap    : list = field( default_factory = list )
 
 
 class Runner:
@@ -123,9 +113,12 @@ class Runner:
 
     name = "runner"
 
-    # The highest level `suitability` can answer. Discovery walks the whole
-    # tree asking only the runners that could make a file discoverable.
+    # The highest level `suitability` can answer.
     level = NONE
+
+    # An entry runner answers `x::y`; a file runner ( `python`, `executable` )
+    # answers a bare `x`, and is never asked to claim anything.
+    takes_entries = True
 
     # True when an entry IS a whole file -- a script, or a compiled suite whose
     # cases cannot be enumerated before it is built. A `::name` then belongs to
@@ -220,9 +213,10 @@ class Runner:
 
 
 def selector_of( specs, path: Path ) -> str | None:
-    """The `::name` that selected `path`, for a runner that runs whole files."""
+    """The `::name` that selected `path`, for a runner that runs whole files --
+    none for `::*`, which asks for everything and filters nothing."""
     for matched, name_glob in specs:
-        if path in matched and name_glob:
+        if path in matched and name_glob and name_glob != "*":
             return name_glob
     return None
 
@@ -696,83 +690,115 @@ def _from_cargo( text: str ):
              "ignored": sum( int( c ) for _, _, c in found ) }
 
 
-# ── a file, run as it is ─────────────────────────────────────────────────────
+# ── a file, run as it is ────────────────────────────────────────────────────
 #
-# Scripts and executables are one entry each, the whole file, and are run only
-# when named: nothing about them says they are work rather than a module, a
-# tool or a library. Their output is the run's, the exit code its status, and
-# `ERRAND_OUT_DIR` the directory anything else they write should go to.
+# A bare target -- no `::` -- is one run of one thing: a script, an executable, a
+# command. Its output is the run's, streamed as it comes, and its exit code the
+# status. `ERRAND_OUT_DIR` is set only when an output directory was asked for
+# ( `-o` ): nobody is handed a directory they did not want.
+
+INTERPRETERS = ( "python", "python3" )
+
+# What a run of a plain command may write numbers to, and what it gets as
+# `ERRAND_OUT_DIR` when one was asked for: set by the core in `RunContext.env`.
+OUT_DIR = "ERRAND_OUT_DIR"
+
 
 class _WholeFile( Runner ):
-    whole_files = True
+    whole_files   = True
+    takes_entries = False
 
-    def command( self, path: Path ) -> list:
+    def command( self, key: str ) -> list:
         raise NotImplementedError
 
     def collect( self, specs ):
-        return [ self.entry( name = path.name, file = path, key = str( path ) )
-                 for path in self.files_of( specs ) ]
+        return [ self.entry( name = Path( key ).name, file = Path( key ), key = str( key ) )
+                 for key in self.files_of( specs ) ]
 
     def run( self, entry, ctx: RunContext ) -> Outcome:
-        got = self.shell( [ *self.command( Path( entry.key ) ), *ctx.args ],
-                          RunContext( root = ctx.root, out_dir = ctx.out_dir, params = ctx.params,
-                                      env = { **ctx.env, "ERRAND_OUT_DIR": str( ctx.out_dir ) } ) )
-        return Outcome( status = "PASS" if got.returncode == 0 else "FAIL",
-                        error = None if got.returncode == 0 else f"exit {got.returncode}",
-                        output = got.stdout + got.stderr )
+        argv = [ *ctx.wrap, *( str( a ) for a in self.command( entry.key ) ), *ctx.args ]
+        # A directory only when one was asked for, which `ctx.env` says.
+        env = { **{ k: v for k, v in os.environ.items() if k != OUT_DIR },
+                **( { "ERRAND_BUILD_DIR": str( ctx.build_dir ) } if ctx.build_dir else { } ),
+                **ctx.env }
+        try:
+            child = subprocess.Popen( argv, cwd = str( ctx.root ), env = env, text = True,
+                                      stdout = subprocess.PIPE, stderr = subprocess.STDOUT,
+                                      errors = "replace" )
+        except OSError as err:
+            return Outcome( status = "FAIL", error = f"{argv[ 0 ]}: {err.strerror or err}" )
+        # Line by line, as it comes: a build or a long computation that says
+        # nothing until it is over is one nobody can follow -- here, in
+        # `output.txt`, or on the screen.
+        for line in child.stdout:
+            sys.stdout.write( line )
+            sys.stdout.flush()
+        code = child.wait()
+        if code == SKIP_CODE:
+            return Outcome( status = "SKIP", error = "exit 77" )
+        return Outcome( status = "PASS" if code == 0 else "FAIL",
+                        error = None if code == 0 else f"exit {code}" )
+
+
+# The exit code that means "this does not apply here", as automake and ctest have it.
+SKIP_CODE = 77
 
 
 class Python( _WholeFile ):
-    """A python script, run by the interpreter of the place it runs in."""
+    """A `.py`, run by the interpreter of the place it runs in."""
 
     name = "python"
-    level = LANGUAGE
 
-    def suitability( self, path ):
-        return LANGUAGE if path.suffix == ".py" and path.is_file() else NONE
-
-    def command( self, path ):
-        return [ sys.executable, path ]
-
-
-class Shell( _WholeFile ):
-    """A shell script: `sh` for a `.sh`, `bash` for a `.bash`."""
-
-    name = "shell"
-    level = LANGUAGE
-
-    def suitability( self, path ):
-        return LANGUAGE if path.suffix in ( ".sh", ".bash" ) and path.is_file() else NONE
-
-    def command( self, path ):
-        return [ "bash" if path.suffix == ".bash" else "sh", path ]
+    def command( self, key ):
+        return [ sys.executable, key ]
 
 
 class Executable( _WholeFile ):
-    """Anything that can be executed, run as it is."""
+    """Anything else, run as it is: a file of the project ( `./bench`, a script
+    with a shebang ), or a command of the place ( `make`, `cmake`, `pytest` ).
+    A first word that names an interpreter is the interpreter of the place."""
 
     name = "executable"
-    level = FALLBACK
 
-    def suitability( self, path ):
-        return FALLBACK if path.is_file() and os.access( path, os.X_OK ) else NONE
+    def command( self, key ):
+        if key in INTERPRETERS:
+            return [ sys.executable ]
+        path = Path( key )
+        if path.parent != Path( "." ) or self._under_root( path ).is_file():
+            return [ str( self._under_root( path ).resolve() ) ]
+        return [ key ]
 
-    def command( self, path ):
-        return [ path.resolve() ]
 
+class Runners( dict ):
+    """`errand.runners`: name -> runner.
 
-class Runners( list ):
-    """`errand.runners`: a list, plus `replace` for the commonest edit."""
+    `errand.runners[ "bench" ] = errand.Pytest( … )` adds an instance `-r bench`
+    picks; `replace` puts a configured runner in place of the built-in one of
+    its kind, rather than beside it, where the two would tie over every file."""
+
+    def __setitem__( self, name, runner ):
+        if not isinstance( runner, Runner ):
+            raise TypeError( f"runners[ {name!r} ] must be a runner, not {type( runner ).__name__}" )
+        runner.name = name
+        super().__setitem__( name, runner )
+
+    def update( self, other = ( ), **kw ):
+        for k, v in dict( other, **kw ).items():
+            self[ k ] = v
 
     def replace( self, runner ):
-        """Put `runner` in place of the runners of its kind -- a configured
-        `Catch2( dir = …, build = … )` instead of the default one -- rather than
-        beside them, where the two would tie over every file. -> runner."""
+        """-> runner, under the name of the kind it replaces."""
         kind = type( runner )
-        self[ : ] = [ r for r in self if type( r ) is not kind ] + [ runner ]
+        names = [ n for n, r in self.items() if type( r ) is kind ]
+        for n in names:
+            del self[ n ]
+        self[ names[ 0 ] if names else type( runner ).name ] = runner
         return runner
 
+    def entry_runners( self ):
+        return [ r for r in self.values() if r.takes_entries ]
 
-def defaults( ) -> list:
-    """The runners that come with errand, in no order that matters."""
-    return [ Errand(), Pytest(), Catch2(), Cargo(), Python(), Shell(), Executable() ]
+
+def defaults( ) -> dict:
+    """The runners that come with errand, by name."""
+    return { r.name: r for r in ( Errand(), Pytest(), Catch2(), Cargo(), Python(), Executable() ) }

@@ -33,33 +33,40 @@ is a `TypeError` saying so — which is what catches `n = 1000` written where
 errand run bench/solvers.py::cost --n=1000,5000 --method=newton,lbfgs    # 4 runs, 4 directories
 ```
 
-**A comma means a matrix**, and it means the same thing everywhere — on a parameter, on a tag, on an
-environment, on any argument of the target's own:
+**A comma means a matrix** wherever errand is the one reading — on a declared parameter, on a tag,
+on an environment, on the targets themselves:
 
 ```bash
 errand run bench/solvers.py::cost --n=1000,5000                             # two parameter values
-errand run scripts/sweep.sh --size 1024,4096                                # two command lines
 errand run --fp 32,64 bench/solvers.py::cost                                # two values of a tag
 errand run --env local,gpu bench/solvers.py::cost                           # two environments
+errand run --env local,gpu train.py,eval.py                                 # two targets, two environments
 errand run --env local,gpu --fp 32,64 bench/solvers.py::cost --n=1000,5000  # eight runs
 ```
 
-Each value is an axis, the cartesian product is run, and every combination lands in its own
-directory so the results sit side by side. When there is more than one run, the grid is said once
-before anything starts — `4 runs: n = 1000 | 5000, args = --size 1024 | --size 4096` — so a comma
-that was not meant as one is seen in time.
+Each value is an axis, the cartesian product is run, and every combination gets its own record — and
+its own directory, with [`-o`](./output) — so the results sit side by side. When there is more than
+one run, the grid is said once before anything starts — `4 runs: n = 1000 | 5000, method = newton |
+lbfgs` — so a comma that was not meant as one is seen in time.
 
-**`\,` is a comma**, and only a comma: `--tol 1e-3\,1e-6` is one argument with a comma in it
-( quote it, or write `\\,`, so the shell leaves the backslash ). **`,,` is an empty value**:
-`--suffix=,_fast` is two runs, one with an empty suffix. No other backslash means anything. On an
-`--option=value`, the comma is in the value: `--mode=a,b` is `--mode=a`, then `--mode=b`.
+**An argument nobody declared is not a matrix.** What follows a script or a command is its own, and
+passes through as written: `errand run scripts/sweep.sh --size 1024,4096` is one run, given
+`1024,4096`, and `-Wl,-rpath` or `python -c "f( 1, 2 )"` mean what they say. To sweep a script, loop
+in the shell, or declare the parameter on an [entry](./declaring-work). For the same reason a comma
+cannot appear in an environment name or a tag value.
+
+On a declared parameter, **`\,` is a comma**, and only a comma: `--tol 1e-3\,1e-6` is one value with a
+comma in it ( quote it, or write `\\,`, so the shell leaves the backslash ). **`,,` is an empty
+value**: `--suffix=,_fast` is two runs, one with an empty suffix. No other backslash means anything.
+On an `--option=value`, the comma is in the value: `--mode=a,b` is `--mode=a`, then `--mode=b`.
 
 This works on **any** entry, tests included: sweeping a test across four environments is a perfectly
 good thing to want, and often the thing you most want.
 
 ## What a matrix does to the tree
 
-A matrix is **more names, never more levels**:
+A matrix is **more names, never more levels** — here as `-o` lays it out under `runs/`; the private
+record in `.errand/runs/` has the same shape:
 
 ```text
 runs/bench_solver.py/solve/

@@ -15,7 +15,8 @@ errand.envs[ "cluster" ] = errand.Env( [ errand.Ssh( host = "login.hpc", root = 
 There is always a current interpreter; most layers are a way to override it. A layer that selects an
 interpreter replaces a **first word that names one** — `python`, `python3`, the interpreter errand
 itself is running under — and leaves any other first word alone, which is why
-`errand shell --env gpu -- nvidia-smi` runs nvidia-smi and `-- python -c …` runs the container's python.
+`errand run --env gpu nvidia-smi` runs nvidia-smi and `errand run --env gpu python -c …` runs the
+container's python.
 
 Anything a layer needs in order to *exist* it also knows how to **build** — see
 [Keeping environments current](/guide/upkeep).
@@ -230,10 +231,10 @@ errand.envs[ "win" ] = errand.Env( [ errand.Windows( fetch = [ "build" ] ) ] )
 ```
 
 ```bash
-errand setup --env win                             # the install: once, 20 to 60 minutes
-errand shell --env win -- cmake -B build -G Ninja  # then: commands, through cmd.exe
-errand shell --env win -- cmake --build build
-errand vm stop                                     # let go of it now, whoever still holds it
+errand setup --env win                         # the install: once, 20 to 60 minutes
+errand run --env win cmake -B build -G Ninja   # then: commands, through cmd.exe
+errand run --env win cmake --build build
+errand vm stop                                 # let go of it now, whoever still holds it
 ```
 
 With no `iso` and no `key` it is **Windows Server 2025, evaluation edition**: downloaded from
@@ -285,7 +286,7 @@ keeper live on this one, so `errand vm stop` stops those machines too. The queue
 only when it runs here.
 `ERRAND_VM_VNC=1` shows the screen on `vnc://127.0.0.1:5901`, for watching an install go wrong.
 
-Not yet: entries ( `errand run --env win` with a pattern ) and `--batch` — errand itself is a unix
+Not yet: entries ( `errand run --env win` with a `::` target ) and `--batch` — errand itself is a unix
 program. A command is what a virtual machine takes for now.
 
 ### Other batch systems

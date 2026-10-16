@@ -141,7 +141,7 @@ if test( "a run goes through the queue and comes back", tags = [ "slurm", "slow"
             { "bench_alloc.py": WORK }, vendor = True )
 
         try:
-            code, output = run_errand( project, "run", "--env", "batch", "bench_alloc.py" )
+            code, output = run_errand( project, "run", "-o", "--env", "batch", "bench_alloc.py::*" )
         except subprocess.TimeoutExpired:
             skip( "the queue did not give us a node in time",
                   "a busy cluster and a broken setup look the same from here; "
@@ -197,7 +197,7 @@ if test( "--batch submits and comes straight back", tags = [ "slurm", "slow" ] )
             { "bench_alloc.py": WORK }, vendor = True )
 
         started = time.perf_counter()
-        code, output = run_errand( project, "run", "--batch", "--env", "batch", "bench_alloc.py" )
+        code, output = run_errand( project, "run", "-o", "--batch", "--env", "batch", "bench_alloc.py::*" )
         handed_back = time.perf_counter() - started
         assert code == 0, output
         # sbatch IS the detachment: it returns as soon as the job is queued,

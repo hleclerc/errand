@@ -1,7 +1,7 @@
 # 03 — a project that already has a suite
 
-A pytest suite, a Catch2 suite and a cargo one, none of them modified. Three lines in `errand-project.py`
-put all three under `errand`.
+A pytest suite, a Catch2 suite and a cargo one, none of them modified. pytest, Catch2 and cargo are
+runners already; three lines in `errand-project.py` say where each one looks and how to build.
 
 ```
 errand-project.py        three runners, and nothing else
@@ -13,19 +13,22 @@ rust/                    ordinary cargo
 
 There are no environments here on purpose: this example is about adopting suites, and declaring one
 would have running it build a micromamba environment on your machine. Environments are
-[example 02](../02-environments/).
+[example 02](../01-environments/).
 
 ## Try it
 
 ```bash
-cd examples/03-existing-suite
+cd examples/02-existing-suite
 
-errand run                              # all three suites
-errand run tests/test_api.py            # the python ones
+errand run '**::*'                      # all three suites
+errand run "tests/test_api.py::*"       # the python ones
 errand run cpp/test_geometry.cpp::area  # one Catch2 case, by name
-errand run -e '!slow'                   # pytest marks are entry tags
-errand run --env local,old              # every suite, both python versions
+errand run -e '!slow' '**::*'           # pytest marks are entry tags
+errand run --env local,old '**::*'      # every suite, both python versions
+errand run pytest tests/                # the pytest command itself, in the place, recorded
 ```
+
+The `::` is what sends a target to the suites' runners; without it, `pytest` is just a command.
 
 ## What adopting them buys
 
@@ -43,7 +46,7 @@ The Catch2 benchmark in `cpp/test_geometry.cpp` is the clearest case: it already
 and the measurement went to the terminal and died there. Now:
 
 ```bash
-errand run --batch -k bench --env local --env-tags '!legacy'
+errand run --batch -k bench --env local -e '!legacy' '**::*'
 errand watch
 ```
 
@@ -51,13 +54,10 @@ and the numbers accumulate per machine and per date, next to the Python ones, in
 
 ## Guessing, and writing the guess down
 
-Run `errand` in a project with no `errand-*.py` at all and it will find these suites by itself — and
-say so before running anything:
-
-```
-  no errand-*.py; guessed:  pytest (tests/)  ·  catch2 (cpp/)  ·  cargo (rust/)
-  ( errand init writes it down )
-```
+`errand run` never guesses: with no `errand-*.py` at all, the built-in runners take these suites as
+they are — pytest's files anywhere, Catch2 sources with no build to run first. `errand init` reads
+the directory and writes what would fit into `errand-project.py`, **in comments**, with a
+`default_run` to start from; nothing is active until you uncomment it.
 
 Every framework locates its tests by assuming something about your layout, so there is no version of
 this that does not guess. What `errand-project.py` changes is that the assumption is visible, versioned, and
