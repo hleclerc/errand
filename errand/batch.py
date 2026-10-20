@@ -103,8 +103,11 @@ def detach( env, tags, argv, *, root, log: Path, child_env: dict, phase = "run",
     cmd = L.Command( [ python, "-m", "errand", *argv ], dict( child_env ) )
     follow = L.Command( [ python, "-m", "errand", *then ], dict( child_env ) ) if then else None
     if follow is not None and batch is not None:
-        # Inside the allocation, outside the layers after the scheduler.
+        # Inside the allocation, outside the layers after the scheduler -- but with the interpreter they choose: the
+        # submission is errand itself, and the machine's own `python3` has no errand ( and, run from the project root,
+        # takes a directory named `errand` for a package without `__main__` ).
         k = tail.index( batch )
+        follow = L.compose( L.interpreters_of( tail[ k + 1 : ] ), follow, work )
         inner = L.compose( tail[ k + 1 : ], cmd, work )
         cmd = L.Command( [ "sh", "-c", f"{inner.shell()} && {follow.shell()}" ], { } )
         tail = tail[ : k + 1 ]

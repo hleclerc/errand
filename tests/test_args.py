@@ -109,3 +109,14 @@ if test( "several files are several targets ( a glob the shell expanded )" ):
         comma = Path( d ) / "test_c,d.py"
         comma.write_text( "" )
         assert cli.split_target( parser(), [ str( a ), str( comma ) ] )[ 1 ] == f"{ a },{ str( comma ).replace( ',', chr( 92 ) + ',' ) }"
+
+
+if test( "several entry patterns are several targets" ):
+    with tempfile.TemporaryDirectory() as d:
+        a, b = ( Path( d ) / n for n in ( "test_a.py", "test_b.py" ) )
+        for f in ( a, b ):
+            f.write_text( "" )
+        before, target, after = cli.split_target( parser(), [ "--env", "gpu", f"{ a }::x*", f"{ b }::y", "**/t.py::*", "--n=3" ] )
+        assert before == [ "--env", "gpu" ] and target == f"{ a }::x*,{ b }::y,**/t.py::*" and after == [ "--n=3" ], ( target, after )
+        # an argument that holds `::` without naming a file stays an argument
+        assert cli.split_target( parser(), [ f"{ a }::x", "a::b" ] )[ 1 : ] == ( f"{ a }::x", [ "a::b" ] )

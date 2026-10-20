@@ -97,6 +97,32 @@ if test( "under --batch, a preparation submits the run it prepared, from inside 
     assert "apptainer" not in script[ script.index( "&&" ) : ], "the submission is outside the container"
 
 
+if test( "under --batch, the submission takes the interpreter of the environment, not the machine's" ):
+    # the machine's `python3` has no errand: the submission goes through the layers that choose an interpreter ( a venv, a
+    # micromamba environment ), never through a container
+    env = errand.Env( [ errand.Slurm( gpus = 1 ), errand.Venv( python = "/opt/prj/bin/python" ),
+                        errand.Apptainer( image = "c.sif" ) ] )
+    seen = { }
+
+    def fake_run( argv, **kw ):
+        seen[ "argv" ] = argv
+        class Done:
+            returncode, stdout, stderr = 0, "Submitted batch job 7", ""
+        return Done()
+
+    real = B.subprocess.run
+    B.subprocess.run = fake_run
+    try:
+        B.detach( env, { }, [ "run", "--phase", "prepare" ], root = Path( "/proj" ), log = Path( "/tmp/x.log" ), child_env = { },
+                  phase = "prepare", then = [ "run", "--submit-run" ] )
+    finally:
+        B.subprocess.run = real
+    script = seen[ "argv" ][ seen[ "argv" ].index( "--wrap" ) + 1 ]
+    after = script[ script.index( "&&" ) : ]
+    assert "/opt/prj/bin/python -m errand run --submit-run" in after, after
+    assert "apptainer" not in after, after
+
+
 TWO = '''
 import errand
 errand.envs[ "two" ] = errand.Env( [ errand.Vars( {{ "WHO": "prep" }}, when = "phase=prepare" ),

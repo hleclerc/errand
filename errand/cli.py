@@ -1040,6 +1040,10 @@ def split_target( parser, rest ):
     `tests/test_a.py,tests/test_b.py`. The files that follow a file target and
     have its suffix are targets too, up to the first word that is not one;
     such a file meant as an argument goes after a `--`.
+
+    So are several ENTRY patterns: `errand run a.py::x b.py::y` is `a.py::x,b.py::y`
+    -- the words that follow an entry pattern and are entry patterns too
+    ( `path::name`, the path a file or a glob ).
     """
     takes = _takes_value( parser )
     i = 0
@@ -1059,13 +1063,24 @@ def split_target( parser, rest ):
             i += 1
             continue
         if not Path( token ).is_file():
-            return rest[ : i ], token, rest[ i + 1 : ]       # a pattern: its commas separate targets
+            j = i + 1
+            if _is_entry_pattern( token ):
+                while j < len( rest ) and _is_entry_pattern( rest[ j ] ):
+                    j += 1
+            return rest[ : i ], ",".join( rest[ i : j ] ), rest[ j : ]   # a pattern: its commas separate targets
         j = i + 1
         while j < len( rest ) and _same_kind_of_file( rest[ j ], token ):
             j += 1
         # files: a comma in a name is only a comma
         return rest[ : i ], ",".join( t.replace( ",", "\\," ) for t in rest[ i : j ] ), rest[ j : ]
     return list( rest ), None, [ ]
+
+
+def _is_entry_pattern( word ):
+    """`path::name`, the path an existing file or a glob: an entry target, not an argument that happens to hold `::`"""
+    path, sep, name = word.partition( "::" )
+    return bool( sep ) and bool( path ) and not word.startswith( "-" ) and (
+        Path( path ).is_file() or any( c in path for c in "*?[" ) )
 
 
 def _same_kind_of_file( word, first ):

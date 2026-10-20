@@ -821,6 +821,13 @@ def container_of( stack ):
     return None
 
 
+def interpreters_of( stack ):
+    """The layers of `stack` that only CHOOSE AN INTERPRETER ( a venv, a micromamba or conda environment, a uv venv ), in order:
+    what a command that only needs errand itself goes through -- the submission a `--batch` preparation makes from inside its
+    allocation -- where a container, a module or a variable is not wanted."""
+    return [ l for l in stack if isinstance( l, ( Venv, Micromamba, Uv ) ) ]
+
+
 def ssh_of( stack ):
     return stack[ 0 ] if stack and isinstance( stack[ 0 ], Ssh ) else None
 
