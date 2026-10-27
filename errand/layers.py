@@ -255,8 +255,11 @@ class Micromamba:
         if ctx.remote:
             # Whether it exists is a question for the machine it lives on, and
             # the step is run there: let that machine answer it.
-            steps = [ f"if {self.probe_shell( ctx )} >/dev/null 2>&1; then "
+            steps = [ *( [ fetch_micromamba( self.executable ) ] if self.executable else [ ] ),
+                      f"if {self.probe_shell( ctx )} >/dev/null 2>&1; then "
                       f"{install if self.packages or self.python else 'true'}; else {create}; fi" ]
+        elif self.executable and not os.access( self.executable, os.X_OK ):
+            steps = [ fetch_micromamba( self.executable ), create ]
         elif self.probe( ctx ):
             steps = [ install ] if self.packages or self.python else [ ]
         else:
@@ -264,6 +267,28 @@ class Micromamba:
         steps += _install_steps( [ *self._exe( ctx ), "-n", self.name, "run",
                                    "python", "-m", "pip", "install" ], self, ctx )
         return steps
+
+
+MICROMAMBA_URL = "https://micro.mamba.pm/api/micromamba/{platform}/latest"
+
+
+def fetch_micromamba( exe: str ) -> str:
+    """A shell line that puts the micromamba binary at `exe` when it is not there.
+
+    Only for a DECLARED path: a bare `micromamba` says nothing about where to
+    put it, nor that the commands that follow would find it there. The platform
+    is asked of the machine the line runs on -- the cluster, not this mac.
+    """
+    q = shlex.quote( exe )
+    tmp = shlex.quote( exe + ".part" )
+    url = shlex.quote( MICROMAMBA_URL ).replace( "{platform}", "'\"$p\"'" )
+    return ( f"test -x {q} || {{ case \"$(uname -s)-$(uname -m)\" in "
+             "Linux-x86_64) p=linux-64;; Linux-aarch64) p=linux-aarch64;; Linux-ppc64le) p=linux-ppc64le;; "
+             "Darwin-arm64) p=osx-arm64;; Darwin-x86_64) p=osx-64;; "
+             "*) echo \"micromamba: no build for $(uname -sm)\" >&2; false;; esac && "
+             f"mkdir -p \"$(dirname {q})\" && "
+             f"{{ curl -fsSL {url} || wget -qO- {url}; }} | tar -xjO bin/micromamba > {tmp} && "
+             f"chmod +x {tmp} && mv {tmp} {q}; }}" )
 
 
 @dataclass

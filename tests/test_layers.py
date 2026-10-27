@@ -1,4 +1,5 @@
 """Layers: folding a command, and noticing an environment has drifted."""
+import os
 import subprocess
 import tempfile
 from pathlib import Path
@@ -224,9 +225,41 @@ if test( "micromamba where it is not on PATH: the binary and the prefix are decl
     # Over there, nothing guessed from this machine's home leaks into the command.
     assert L.Micromamba( "demo" ).wrap( L.Command( [ "python" ] ), there ).argv[ :3 ] == [ "micromamba", "-n", "demo" ]
 
-    # ...and whether to create or install is decided over there, not here.
+    # ...and whether to create or install is decided over there, not here --
+    # after fetching the binary itself, which a fresh account does not have.
     steps = m.build( there )
-    assert steps[ 0 ].startswith( "if /w/bin/micromamba" ) and "create" in steps[ 0 ], steps
+    assert steps[ 0 ] == L.fetch_micromamba( "/w/bin/micromamba" ), steps
+    assert steps[ 1 ].startswith( "if /w/bin/micromamba" ) and "create" in steps[ 1 ], steps
+
+    # A bare `micromamba` says nowhere to put it: nothing is fetched.
+    assert all( "micro.mamba.pm" not in s for s in L.Micromamba( "demo" ).build( there ) )
+
+
+if test( "a declared micromamba that is not there is fetched first" ):
+    with tempfile.TemporaryDirectory() as tmp:
+        exe = f"{ tmp }/bin/micromamba"
+        steps = L.Micromamba( "demo", executable = exe ).build( L.Context( root = Path( tmp ) ) )
+        assert steps[ 0 ] == L.fetch_micromamba( exe ) and "create" in steps[ 1 ], steps
+
+        # The line itself, with a stand-in for the download: the platform is
+        # put in the url, the binary lands executable where it was declared.
+        fake = Path( tmp ) / "fake"
+        ( fake / "bin" ).mkdir( parents = True )
+        ( fake / "bin" / "micromamba" ).write_text( "#!/bin/sh\necho mm\n" )
+        subprocess.run( [ "tar", "-cjf", f"{ tmp }/mm.tar.bz2", "-C", str( fake ), "bin/micromamba" ], check = True )
+        ( fake / "curl" ).write_text( f"#!/bin/sh\necho \"$2\" > { tmp }/url\ncat { tmp }/mm.tar.bz2\n" )
+        ( fake / "curl" ).chmod( 0o755 )
+        env = { **os.environ, "PATH": f"{ fake }:{ os.environ[ 'PATH' ] }" }
+        line = L.fetch_micromamba( exe )
+        assert subprocess.run( line, shell = True, env = env ).returncode == 0
+        assert subprocess.run( [ exe ], capture_output = True, text = True ).stdout == "mm\n"
+        url = Path( tmp, "url" ).read_text().strip()
+        assert url.startswith( "https://micro.mamba.pm/api/micromamba/" ) and "{" not in url, url
+
+        # There: not fetched again.
+        os.remove( f"{ tmp }/url" )
+        assert subprocess.run( line, shell = True, env = env ).returncode == 0
+        assert not os.path.exists( f"{ tmp }/url" )
 
 
 if test( "what errand has never recorded is not announced as stale" ):
