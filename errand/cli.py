@@ -852,7 +852,7 @@ def print_entries( entries ):
 VERBS = {
     "run"   : ( "run a file, a command or entries, in one or several environments",
                 [ "runner", "kind", "entry_tags", "jobs", "no_queue", "no_setup", "batch", "keep_out",
-                  "out", "pull", "exclusive", "cpus", "ram", "gpus", "mem", "label", "quiet", "log",
+                  "out", "pull", "exclusive", "cpus", "ram", "gpus", "time", "mem", "label", "quiet", "log",
                   "at", "phase", "from_plan", "submit_run" ] ),
     "list"  : ( "what a target designates, with its parameters",
                 [ "runner", "kind", "entry_tags", "no_setup" ] ),
@@ -920,6 +920,8 @@ def build_parser( tag_names = ( ) ):
     p.add_argument( "--cpus", dest = "cpus", default = None, help = "cores it needs" )
     p.add_argument( "--ram", dest = "ram", default = None, help = "memory it needs, e.g. 8G" )
     p.add_argument( "--gpus", dest = "gpus", default = None, help = "cards it needs" )
+    p.add_argument( "--time", dest = "time", default = None,
+                    help = "how long it may take, for a batch system ( slurm's way: 30, 2:00:00, 1-12 )" )
     p.add_argument( "-m", "--mem", dest = "mem", default = None,
                     help = "memory ceiling of a command ( systemd-run, where there is one )" )
     p.add_argument( "-n", "--label", dest = "label", default = None, help = "its name in the queue" )
@@ -1408,7 +1410,7 @@ def main( argv = None ):
                     rc = 1
                     continue
             print( dim( f"\n  -> {env.name}  {env.describe()}" ), flush = True )
-            rc |= go_there( env, tags, verb, rest, root = root, pull = known.pull )
+            rc |= go_there( env, tags, verb, rest, root = root, pull = known.pull, time = known.time )
             dispatched += 1
             continue
         rc |= here( env, tags, verb, rest, known, root = root, out_root = out_root,
@@ -1608,7 +1610,7 @@ def child_env_for( env, tags ) -> dict:
              "PYTHONUNBUFFERED": "1" }
 
 
-def go_there( env, tags, verb, rest, *, root, pull = ( ) ):
+def go_there( env, tags, verb, rest, *, root, pull = ( ), time = None ):
     """The command, in `env`: one pass, or a preparation and then a run sized
     from the plan it wrote. -> the return code."""
     if env.vm is not None:
@@ -1619,12 +1621,16 @@ def go_there( env, tags, verb, rest, *, root, pull = ( ) ):
 
     def through( phase, extra, needs = None ):
         stack = env.stack_for( phase, tags )
-        ctx = L.Context( root = root, tags = tags, needs = needs or { }, phase = phase )
+        needs = { **( needs or { } ), **( { "time": time } if time else { } ) }
+        ctx = L.Context( root = root, tags = tags, needs = needs, phase = phase )
         cmd = L.Command( [ "python", "-m", "errand", verb, *extra, *rest ], child_env_for( env, tags ) )
         ssh = L.ssh_of( stack )
         for message in L.warnings_for( stack, ssh.remote_root( ctx ) if ssh else root ):
             print( warn( f"  warning: {message}" ), flush = True )
         if ssh is None:
+            sched = L.batch_of( stack )
+            if isinstance( sched, L.Slurm ) and sched.watched( ctx ):
+                return L.run_on( L.Here( root ), stack, cmd, ctx, echo = lambda s: print( dim( s ), flush = True ) )
             wrapped = L.compose( stack, cmd, ctx )
             print( dim( f"  $ {' '.join( str( a ) for a in wrapped.argv )}" ), flush = True )
             return subprocess.run( wrapped.argv, env = { **os.environ, **wrapped.env },

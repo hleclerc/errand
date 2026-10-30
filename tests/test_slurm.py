@@ -48,6 +48,99 @@ if test( "a node list pins the allocation to named nodes", tags = [ "slurm" ] ):
 
 # --- a real submission ------------------------------------------------------
 
+# --- waiting from afar: submitted, then asked about --------------------------
+
+if test( "slurm's ways of saying how long", tags = [ "slurm" ] ):
+    assert L.slurm_seconds( "30" ) == 30 * 60
+    assert L.slurm_seconds( "5:30" ) == 5 * 60 + 30
+    assert L.slurm_seconds( "2:00:00" ) == 2 * 3600
+    assert L.slurm_seconds( "1-12" ) == 36 * 3600
+    assert L.slurm_seconds( "1-0:30" ) == 24 * 3600 + 30 * 60
+    assert L.slurm_seconds( "1-0:0:5" ) == 24 * 3600 + 5
+
+
+if test( "the time of a command wins, and the qos can follow it", tags = [ "slurm" ] ):
+    qos = lambda s: "dev" if s <= 2 * 3600 else "t3"
+    slurm = L.Slurm( time = "00:20:00", qos = qos )
+    assert flags( slurm )[ -4 : ] == [ "--time", "00:20:00", "--qos", "dev" ]
+    assert flags( slurm, time = "12:00:00" )[ -4 : ] == [ "--time", "12:00:00", "--qos", "t3" ]
+    assert flags( L.Slurm( qos = "fixed" ) ) == [ "--qos", "fixed" ]
+
+
+if test( "a watched job is submitted, writes where it is looked for, and needs a time", tags = [ "slurm" ] ):
+    from errand import config
+    cmd = L.Command( [ "python", "-m", "errand" ], { "A": "1" } )
+    ctx = L.Context( root = Path( "/r" ), needs = { "time": "1:00:00" } )
+    got = L.Slurm( watch = 300 ).wrap( cmd, ctx )
+    assert got.argv[ : 2 ] == [ "sbatch", "--parsable" ] and got.env == { }
+    log = L.watch_dir( ctx )
+    assert got.argv[ got.argv.index( "--output" ) + 1 ] == f"{log}/slurm-%j.out"
+    wrapped = got.argv[ got.argv.index( "--wrap" ) + 1 ]
+    assert wrapped.startswith( "A=1 python -m errand" ) and wrapped.endswith( f"> {log}/slurm-$SLURM_JOB_ID.rc" )
+    # srun when somebody types into it, plain sbatch under --batch
+    assert L.Slurm( watch = 300 ).wrap( cmd, L.Context( root = Path( "/r" ), interactive = True ) ).argv[ 0 ] == "srun"
+    assert "--output" not in L.Slurm( watch = 300 ).wrap( cmd, L.Context( root = Path( "/r" ), batch = True ) ).argv
+    try:
+        L.Slurm( watch = 300 ).wrap( cmd, L.Context( root = Path( "/r" ) ) )
+        assert False, "no time anywhere: refused"
+    except ValueError as err:
+        assert "--time" in str( err )
+    # one job: sized from the declaration, not from a plan
+    assert config.Env( [ L.Slurm( watch = 300 ) ] ).single_pass()
+
+
+class Cluster:
+    """A login node that answers from a script: each `shell` pops the next answer."""
+
+    def __init__( self, *answers ):
+        self.answers, self.asked = list( answers ), [ ]
+
+    def shell( self, line, **how ):
+        self.asked.append( line )
+        got = self.answers.pop( 0 )
+        if isinstance( got, BaseException ):
+            raise got
+        return subprocess.CompletedProcess( [ ], 0 if got is not None else 255, got or "", "" )
+
+
+def watched( cluster, printed ):
+    submit = L.Command( [ "sbatch", "--parsable", "--wrap", "x" ], { } )
+    return L.watch_job( cluster, submit, "/r/.errand/batch", every = 0, first = 0, echo = printed.append )
+
+
+if test( "a watched job: its output as it comes, a lost connection skipped, its own return code", tags = [ "slurm" ] ):
+    import contextlib, io
+    printed, out = [ ], io.StringIO()
+    cluster = Cluster( "login banner\n4242\n",
+                       "PENDING \nERRAND_SEP\n",
+                       "RUNNING n1\nERRAND_SEP\nhello\n",
+                       None,                                     # ssh dropped
+                       subprocess.TimeoutExpired( "ssh", 300 ),  # ssh hung
+                       "ERRAND_SEP\nworld\n",                     # gone from the queue
+                       "!\nERRAND_RC=3\n" )
+    with contextlib.redirect_stdout( out ):
+        rc = watched( cluster, printed )
+    assert rc == 3, rc
+    assert out.getvalue() == "hello\nworld\n!\n", out.getvalue()
+    assert any( "pending" in p for p in printed ) and any( "running n1" in p for p in printed )
+    assert sum( "asking again later" in p for p in printed ) == 1, "said once per outage"
+    # what was written is never asked for twice
+    assert "tail -c +7 " in cluster.asked[ 3 ] and "tail -c +13 " in cluster.asked[ -1 ]
+
+
+if test( "a watched job killed by slurm fails, saying why; ctrl-C cancels it", tags = [ "slurm" ] ):
+    import contextlib, io
+    printed = [ ]
+    cluster = Cluster( "77\n", "ERRAND_SEP\n", "ERRAND_RC=\n", "TIMEOUT\n" )
+    with contextlib.redirect_stdout( io.StringIO() ):
+        assert watched( cluster, printed ) == 1
+    assert "sacct" in cluster.asked[ -1 ] and "TIMEOUT" in printed[ -1 ]
+
+    cluster = Cluster( "77\n", KeyboardInterrupt(), "" )
+    assert watched( cluster, [ ] ) == 130
+    assert cluster.asked[ -1 ] == "scancel 77"
+
+
 PROJECT = '''
 import errand
 

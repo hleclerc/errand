@@ -118,7 +118,8 @@ program, so this goes through a login shell to exist at all. That is the whole l
 
 ```python
 Apptainer( image, recipe = None, flags = [ ], mounts = { }, pip = [ ],
-           fakeroot = False, scratch = None, build_flags = [ ] )
+           fakeroot = False, scratch = None, build_flags = [ ],
+           build_on = None, install = None, run_from = None, exe = "apptainer" )
 ```
 
 Wraps with `apptainer exec`, using the container's own interpreter.
@@ -137,6 +138,19 @@ The last three are about *building* the image rather than entering it:
 - `scratch` — a directory with room. Apptainer unpacks whole layers, and the default `/tmp` is where
   a build dies halfway, out of space, on a shared machine.
 - `build_flags` — passed to `apptainer build`.
+
+For a machine without internet — a national cluster, where a recipe that downloads anything cannot
+be built:
+
+- `build_on` — an `Ssh` to a machine that can build it ( same architecture ). The project is pushed
+  there, the image built there, then streamed through this process to where it runs: the two
+  machines need not reach each other. Where it is built is not part of what makes it stale.
+- `install` — a shell line run where it runs once the image is there ( `{image}`: its path in the
+  project ), for a site that only executes images from a place of its own
+  ( `idrcontmgr cp {image}` at IDRIS ).
+- `run_from` — the image as entered when not `image`, expanded by the shell where it runs
+  ( `$SINGULARITY_ALLOWED_DIR/main.sif` ).
+- `exe` — the command, `singularity` where that is what the site calls it.
 
 An image is built **where it is used**: an `Ssh` layer in front means the recipe is rsynced over and
 the build happens there.
@@ -179,7 +193,7 @@ See [Running elsewhere](/guide/remote) for what the push and the pull actually m
 
 ```python
 Slurm( partition = None, nodes = None, cpus = None, gpus = None,
-       time = None, account = None, nodelist = None, extra = [ ] )
+       time = None, account = None, nodelist = None, qos = None, watch = None, extra = [ ] )
 ```
 
 `srun` while you wait, `sbatch` under [`--batch`](/guide/detached) — which *is* the detachment: it
@@ -209,7 +223,35 @@ allocation is the largest of them, and exclusive if any one of them is.
 `nodelist` pins the allocation to named nodes ( `--nodelist` ): a string as Slurm reads it
 ( `"node15"`, `"node[1-4]"` ) or a list of names.
 
+`time` is the environment's; `--time` on the command line wins over it, for one command that
+needs longer. `qos` is a name, or a function of the time asked ( in seconds ) that gives one, for a
+cluster whose qos depends on how long the job is:
+
+```python
+Slurm( time = "00:20:00", qos = lambda s: "qos_dev" if s <= 2 * 3600 else "qos_long" )
+```
+
 `extra` is appended verbatim, for whatever your site needs that nothing above covers.
+
+#### Waiting from afar: `watch`
+
+`srun` waits over the connection that started it, for the whole time in the queue and then in the
+job. Where that connection does not last as long ( a chain of ssh hops cut after two hours ),
+`watch = 300` waits differently: the job is submitted with `sbatch`, and then asked about every
+5 minutes at most — sooner at first, the intervals doubling from 10 s — each time over a connection
+of its own. What it writes is shown as it comes, and errand returns with its return code once it is
+over, having brought back what the run wrote, as it would after `srun`.
+
+- A connection that drops loses one question, never the job.
+- ctrl-C cancels the job, as it would cancel an `srun`.
+- A job killed by slurm ( its time ran out, it was cancelled ) fails, with slurm's word for why.
+- It is one job: preparing and running happen in the same allocation, sized from what the layer
+  declares rather than from the plan — so it needs a `time`, here or
+  from `--time`, rather than the partition's default, which is its longest more often than not.
+- `--batch` still lets go at once, and `errand shell` still goes through `srun`.
+
+A command run inside the job that calls errand again ( a script driving many runs ) is inside
+that environment already, and runs there directly: one allocation for all of it.
 
 ::: danger root must be on a shared filesystem
 A batch job runs on a compute node, and `/tmp` there is not the `/tmp` you pushed to. errand checks

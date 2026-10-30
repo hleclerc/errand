@@ -80,10 +80,11 @@ class Env:
 
     def single_pass( self, tags = None ) -> bool:
         """Can preparing and running be one process? Only when both phases go
-        through the same layers and nothing has to be sized from the plan."""
+        through the same layers and nothing has to be sized from the plan -- a
+        watched scheduler is sized from its declaration, and is one job."""
         prepare, run = self.stack_for( "prepare", tags ), self.stack_for( "run", tags )
         same = len( prepare ) == len( run ) and all( a is b for a, b in zip( prepare, run ) )
-        return same and not any( L.is_scheduler( l ) for l in run )
+        return same and not any( L.is_scheduler( l ) and not getattr( l, "watch", None ) for l in run )
 
     @classmethod
     def make( cls, name: str, stack = ( ), tags = None ):

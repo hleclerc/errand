@@ -71,7 +71,8 @@ overwrite, and the only runs you want back are the ones you just asked for.
 
 An [image is built where it is used](./upkeep#where-an-image-gets-built): the recipe is a file
 *here*, it is rsynced over, and `apptainer build` runs on that host with `fakeroot` and `scratch` as
-declared.
+declared. Where that host has no internet, `build_on = errand.Ssh( ... )` builds it on a machine that
+has some, and the image is copied over ( see [Apptainer](/reference/layers#apptainer) ).
 
 ## Adding an allocation
 

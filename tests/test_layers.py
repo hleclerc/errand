@@ -139,6 +139,15 @@ if test( "a module load needs a shell to exist at all" ):
     assert "exec" in cmd.argv[ 2 ]
 
 
+if test( "a module load passes on the variables of the layers after it" ):
+    # `exec A=1 prog` is `exec` looking for a program named `A=1`
+    import subprocess
+    cmd = L.compose( [ L.Module( "x" ), L.Vars( { "A": "1" } ) ],
+                     L.Command( [ "sh", "-c", 'echo "$A"' ] ), ctx() )
+    line = cmd.argv[ 2 ].replace( "module load x", "true" )
+    assert subprocess.run( [ "sh", "-c", line ], capture_output = True, text = True ).stdout == "1\n"
+
+
 if test( "nix and guix are the same shape as the rest" ):
     assert folded( [ L.Nix( flake = ".", shell = "dev" ) ] ).argv[ : 4 ] == \
         [ "nix", "develop", ".#dev", "-c" ]
@@ -368,3 +377,55 @@ if test( "over ssh, `is it there` is asked of the machine it would be built on" 
             assert layer.built == 0, "there already: adopted, like anywhere else"
     finally:
         L.Over.shell, L.push = kept, pushed
+
+
+if test( "an image built where there is internet, entered where there is none" ):
+    # A national cluster has no internet at all: its image is built on a machine
+    # that has some, then copied over, then put where the site executes images from.
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path( tmp )
+        c = L.Context( root = root )
+        layer = L.Apptainer( image = "c/i.sif", recipe = "c/i.def", fakeroot = True,
+                             build_on = L.Ssh( host = "builder", root = "/b/proj" ),
+                             install = "idrcontmgr cp {image}", exe = "singularity" )
+        steps = layer.build( c )
+        assert len( steps ) == 2 and callable( steps[ 0 ] ), steps
+        assert "on builder" in str( steps[ 0 ] ) and "apptainer build --force --fakeroot" in str( steps[ 0 ] ), str( steps[ 0 ] )
+        assert steps[ 1 ] == "idrcontmgr cp c/i.sif", steps[ 1 ]
+        # where it is built does not change what is built
+        plain = L.Apptainer( image = "c/i.sif", recipe = "c/i.def", fakeroot = True )
+        assert L.fingerprint( *layer.spec( c ) ) == L.fingerprint( *plain.spec( c ) )
+
+        # entered from the site's own place, the arguments passed on untouched
+        enter = L.Apptainer( image = "c/i.sif", exe = "singularity", flags = [ "--nv" ],
+                             run_from = "$ALLOWED/i.sif" )
+        cmd = L.compose( [ enter ], L.Command( [ "python", "-c", "print( 'a b' )" ] ), c )
+        assert cmd.argv[ : 2 ] == [ "sh", "-c" ], cmd.argv
+        assert cmd.argv[ 2 ] == 'exec singularity exec --nv $ALLOWED/i.sif "$@"', cmd.argv[ 2 ]
+        assert cmd.argv[ 3 : ] == [ "sh", "python", "-c", "print( 'a b' )" ], cmd.argv
+        out = subprocess.run( [ "sh", "-c", 'echo "$@"', "sh", *cmd.argv[ 4 : ] ], capture_output = True, text = True )
+        assert out.stdout == "python -c print( 'a b' )\n", out.stdout
+
+
+if test( "the built image is streamed from the builder, never left half-copied" ):
+    # `ssh HOST LINE` stood in for by a script that runs LINE here
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path( tmp )
+        bin_ = tmp / "bin"; bin_.mkdir()
+        ( bin_ / "ssh" ).write_text( '#!/bin/sh\nshift\nexec sh -c "$1"\n' )
+        ( bin_ / "ssh" ).chmod( 0o755 )
+        builder = tmp / "builder"; ( builder / "c" ).mkdir( parents = True )
+        ( builder / "c" / "i.sif" ).write_bytes( b"\0image" * 1000 )
+        dest = tmp / "dest"; dest.mkdir()
+        path = os.environ[ "PATH" ]
+        os.environ[ "PATH" ] = f"{bin_}:{path}"
+        try:
+            src = L.Over( L.Ssh( host = "builder" ), builder )
+            assert L.relay( src, builder / "c" / "i.sif", L.Here( dest ), "c/i.sif" ) == 0
+            assert ( dest / "c" / "i.sif" ).read_bytes() == b"\0image" * 1000
+            assert not ( dest / "c" / "i.sif.part" ).exists()
+            # a source that is not there fails, and leaves nothing to be taken for an image
+            assert L.relay( src, builder / "c" / "none.sif", L.Here( dest ), "c/none.sif" ) != 0
+            assert not ( dest / "c" / "none.sif" ).exists()
+        finally:
+            os.environ[ "PATH" ] = path
