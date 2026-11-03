@@ -35,15 +35,17 @@ container*, then your command. There is no separate remote mode, no host file, n
 
 | layer | what it does |
 |---|---|
-| `Micromamba( name, python =, channels =, packages =, requirements =, pip =, root_prefix =, executable = )` | wraps with `micromamba -n <name> run`; a no-op if that environment is already active |
-| `Conda( … )`, `Venv( python =, requirements =, pip = )`, `Uv( path =, python =, … )` | the same idea, other tools |
-| `Nix( flake =, shell = )`, `Guix( manifest =, packages = )` | `nix develop -c …`, `guix shell -- …` |
-| `Module( "gcc/13", "cuda/12" )` | Lmod / environment modules, the way a cluster picks a toolchain |
-| `Apptainer( image, recipe =, flags =, mounts =, pip =, fakeroot =, scratch =, build_flags = )` | wraps with `apptainer exec`, using the container's own interpreter. The last three are about *building* it rather than entering it |
-| `Docker( image, recipe =, flags =, mounts =, pip =, user = )`, `Podman( … )` | likewise |
-| `Ssh( host, root =, python =, options =, also = )` | must be first; everything after it runs on that machine. `options` go to ssh *and* rsync — a port, an identity, a jump host. `also` lists sibling checkouts the work needs ( `[ "../loom" ]` ), pushed to the same relative place over there |
-| `Slurm( partition =, nodes =, cpus =, gpus =, time =, account =, nodelist =, extra = )` | goes through `srun`, or `sbatch` in [batch mode](./detached) |
-| `Vars( { … } )` | environment variables for the child process |
+| [`Micromamba`](/reference/layers#micromamba) | wraps with `micromamba -n <name> run`; a no-op if that environment is already active |
+| [`Conda`](/reference/layers#conda), [`Venv`](/reference/layers#venv), [`Uv`](/reference/layers#uv) | the same idea, other tools |
+| [`Nix`](/reference/layers#nix), [`Guix`](/reference/layers#guix) | `nix develop -c …`, `guix shell -- …` |
+| [`Module`](/reference/layers#module) | Lmod / environment modules, the way a cluster picks a toolchain |
+| [`Mpi`](/reference/layers#mpi) | another MPI launcher than the `mpiexec` of the place, for the entries that ask for [ranks](./machine#several-processes-mpi) — rarely needed |
+| [`Apptainer`](/reference/layers#apptainer) | wraps with `apptainer exec`, using the container's own interpreter, and builds the image from its recipe |
+| [`Docker`, `Podman`](/reference/layers#docker-podman) | likewise |
+| [`Ssh`](/reference/layers#ssh) | must be first; everything after it runs on that machine. `also` lists sibling checkouts the work needs ( `[ "../loom" ]` ), pushed to the same relative place over there |
+| [`Slurm`](/reference/layers#slurm) | goes through `srun`, or `sbatch` in [batch mode](./detached) |
+| [`Windows`](/reference/layers#windows) | a Windows virtual machine errand boots and runs in; first, or right after its `Ssh` |
+| [`Vars`](/reference/layers#vars) | environment variables for the child process |
 
 Slurm is the only batch system with a layer of its own so far. errand does however *recognize*
 being inside a PBS, OAR, LSF, SGE or Flux allocation, and [stands down from

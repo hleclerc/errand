@@ -13,8 +13,8 @@ And everything a project file needs:
 ```python
 import errand       # then errand.configure, errand.envs, errand.Env, errand.default_env,
                     # errand.runners, errand.value, and the layers and runners by name:
-                    # Vars Venv Micromamba Conda Uv Nix Guix Module Apptainer Docker Podman
-                    # Ssh Slurm  --  Runner Level Errand Pytest Catch2 Cargo Python Executable
+                    # Vars Venv Micromamba Conda Uv Nix Guix Module Mpi Apptainer Docker Podman
+                    # Ssh Slurm Windows  --  Runner Level Errand Pytest Catch2 Cargo Python
                     # Executable Outcome RunContext
 ```
 
@@ -53,6 +53,7 @@ if p := entry( "solve", n = Param( 1000 ), keep = True, cpus = 4 ):
 | `cpus` | a count |
 | `ram` | `"8G"`, `"512M"` |
 | `gpus` | a count — and the cards are [assigned, not merely counted](/guide/machine#a-card-is-assigned-not-merely-counted) |
+| `ranks` | a count of MPI processes, each running the body — [Several processes](/guide/machine#several-processes-mpi) |
 
 Returns `False` while the file is being read for collection, and while another entry in it is the
 one being run. Returns an `Args` for the entry that is running, which is why the walrus reads the

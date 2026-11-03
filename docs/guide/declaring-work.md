@@ -106,9 +106,11 @@ An entry says what it needs, and nothing gets to ignore it:
 if p := bench( "solve" ):                            # exclusive: the machine to itself
 if p := test( "wide", cpus = 4, ram = "8G" ):        # a share of it
 if p := test( "on the card", gpus = 1 ):
+if p := test( "distributed", ranks = 4 ):            # 4 MPI processes, each running the body
 ```
 
-`cpus`, `ram` and `gpus` are counted against what the host has. This is what the
+`cpus`, `ram` and `gpus` are counted against what the host has, and a rank counts as a core
+( see [Several processes: MPI](./machine#several-processes-mpi) ). This is what the
 [queue](./machine) enforces, and what a [`Slurm`](./remote) layer hands over to the scheduler when
 there is one.
 

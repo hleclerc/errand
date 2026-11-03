@@ -42,9 +42,12 @@
   white-space: nowrap;
 }
 
+/* Full width when it fits; a table wider than the column ( a flag that must
+ * not break ) scrolls inside it rather than running under "On this page". */
 .vp-doc table {
-  display: table;
-  width: 100%;
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 /* ── the recordings ( Term.vue ) ─────────────────────────────────────────────
