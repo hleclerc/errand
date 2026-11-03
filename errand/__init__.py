@@ -8,7 +8,7 @@ through the lazy `__getattr__` at the bottom.
 """
 from __future__ import annotations
 
-__version__ = "0.1.1"
+__version__ = "2026.11.03.1"
 
 from .entries import (          # noqa: F401  -- the public surface of a file of work
     Args,
