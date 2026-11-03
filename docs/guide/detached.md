@@ -78,7 +78,7 @@ launch window, close the window, open it tomorrow: the state was never in the sc
 ## Results come back when you ask
 
 A finished remote run sits there until something collects it. `errand status` and `errand watch` are what
-collect it — results are [pulled, not pushed](./remote#results-are-pulled-not-pushed).
+collect it — results are [pulled, not pushed](/guide/layers/ssh#results-are-pulled-not-pushed).
 
 ## Next
 

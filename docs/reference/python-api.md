@@ -53,7 +53,7 @@ if p := entry( "solve", n = Param( 1000 ), keep = True, cpus = 4 ):
 | `cpus` | a count |
 | `ram` | `"8G"`, `"512M"` |
 | `gpus` | a count — and the cards are [assigned, not merely counted](/guide/machine#a-card-is-assigned-not-merely-counted) |
-| `ranks` | a count of MPI processes, each running the body; `cpus`, `gpus` and `ram` are then per rank — `--ranks` overrides it. [Several processes](/guide/machine#several-processes-mpi) |
+| `ranks` | a count of MPI processes, each running the body; `cpus`, `gpus` and `ram` are then per rank — `--ranks` overrides it. [Several processes](/guide/mpi) |
 
 Returns `False` while the file is being read for collection, and while another entry in it is the
 one being run. Returns an `Args` for the entry that is running, which is why the walrus reads the
@@ -205,7 +205,7 @@ errand.default_env = "name"          # optional; else the first one declared
 ```
 
 Declares an [environment](/guide/environments): the key is its name. The stack is a list of
-[layers](./layers), read outside in; `Ssh` must be the first of them, and `errand.Env` refuses a
+[layers](/guide/layers/), read outside in; `Ssh` must be the first of them, and `errand.Env` refuses a
 stack where it is not. Keyword arguments are its [tags](/guide/tags). Only an `Env` can be stored.
 
 `errand.default_env` is what is used when nothing is asked for. Naming an environment that does
@@ -220,7 +220,7 @@ errand.runners[ "name" ] = runner
 
 What runs what: a dict, name → runner, filled with the runners that come with errand. A name of
 the project's own is what `-r NAME` picks; `replace` puts a configured runner in place of the
-default one of its kind — see the [runner reference](./runners).
+default one of its kind — see the [runner reference](/guide/runners/).
 
 ### default_run
 

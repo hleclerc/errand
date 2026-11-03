@@ -23,7 +23,7 @@ target is the target's: `errand --env gpu run t.py` and `errand run --env gpu t.
 | `status` | how the [detached](/guide/detached) work is going; one shot, plain text |
 | `watch` | the same, live, until everything has landed |
 | `forget ID` | drop a submission from the list, keeping its results |
-| `vm stop` | stop the [virtual machines](./layers#windows) kept warm between commands |
+| `vm stop` | stop the [virtual machines](/guide/layers/windows) kept warm between commands |
 
 ## Everybody's options
 
@@ -79,7 +79,7 @@ none declared it prints this help.
 | `--cpus N` | cores it needs |
 | `--ram 8G` | memory it needs |
 | `--gpus N` | cards it needs |
-| `--ranks N` | N MPI processes, each running the target; `--cpus` / `--gpus` / `--ram` are then per rank — [Several processes](/guide/machine#several-processes-mpi) |
+| `--ranks N` | N MPI processes, each running the target; `--cpus` / `--gpus` / `--ram` are then per rank — [Several processes](/guide/mpi) |
 | `--time T` | how long it may take, for a batch system ( slurm's way: `30`, `2:00:00`, `1-12` ) |
 | `-m`, `--mem 24G` | memory *ceiling* of the command ( `systemd-run`, where there is one ) |
 | `-n`, `--label NAME` | its name in `errand queue` |

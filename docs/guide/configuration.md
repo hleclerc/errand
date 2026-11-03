@@ -89,7 +89,7 @@ are its [tags](./tags). `Ssh` must be the first layer, and `errand.Env` refuses 
 
 `errand.runners` says what runs which file; `errand.runners.replace( … )` puts a configured runner
 in place of a default one — a suite under a directory of its own, a build to run first. See
-[Runners](./runners).
+[Runners](/guide/runners/).
 
 ## Subcommands: there are none, on purpose
 
@@ -180,4 +180,4 @@ wrongly.
 
 ## Next
 
-[Runners](./runners) — putting a suite you already have under errand.
+[Runners](/guide/runners/) — putting a suite you already have under errand.

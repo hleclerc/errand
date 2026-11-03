@@ -189,4 +189,4 @@ number came from; deciding what may be compared to what is yours.
 
 - [Sharing the machine](/guide/machine) — what `exclusive`, `cpus` and `gpus = 1` actually do.
 - [The screen](/guide/tui) — the same matrix, ticked rather than typed.
-- [Runners](/guide/runners) — the same treatment for a Catch2 or cargo suite.
+- [Runners](/guide/runners/) — the same treatment for a Catch2 or cargo suite.

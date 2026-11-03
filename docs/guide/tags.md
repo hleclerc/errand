@@ -111,4 +111,4 @@ errand run -e 'slow & !gpu' -t 'cuda & !remote'
 
 ## Next
 
-[Running elsewhere](./remote) — what `Ssh` actually does.
+[Running elsewhere](/guide/layers/ssh) — what `Ssh` actually does.

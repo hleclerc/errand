@@ -39,7 +39,7 @@ than a way in:
   it, and one environment can cover several values of a tag.
 
 → [Environments](./environments), [Keeping them current](./upkeep), [Tags](./tags),
-[Running elsewhere](./remote)
+[Running elsewhere](/guide/layers/ssh)
 
 ## What you also get
 
@@ -68,7 +68,7 @@ For work that has no framework of its own — a number to follow, a picture to l
 a small declaration that sits beside the code, `if track( "cost" ):`. It is one more way to give
 errand something to run, not the way in.
 
-→ [Running it](./running), [Runners](./runners), [Writing entries](./declaring-work)
+→ [Running it](./running), [Runners](/guide/runners/), [Writing entries](./declaring-work)
 
 ## What it is not
 

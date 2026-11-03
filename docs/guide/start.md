@@ -94,7 +94,7 @@ errand.default_run = [ "tests/**::*", "cpp/**::*" ]                            #
 ```
 
 `errand init` writes the lines that fit what it finds here — in comments, for you to keep or not.
-The detail of each runner is in [Runners](./runners).
+The detail of each runner is in [Runners](/guide/runners/).
 
 ## Next
 

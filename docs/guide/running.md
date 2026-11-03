@@ -21,7 +21,7 @@ The first word after errand's options is the target: a comma-separated list, eac
 command line alone**, never from what the directory looks like.
 
 - `path::name` goes to an **entry runner** — errand's own entries, [pytest, Catch2,
-  cargo](./runners). Which one takes a file is decided by its contents; two taking it equally is an
+  cargo](/guide/runners/). Which one takes a file is decided by its contents; two taking it equally is an
   error that names them, and `-r NAME` settles it.
 - A bare `x` goes to a **file runner**: a `.py` is run by the place's Python, anything else is
   executed as it is — a file of the project (`./bench`, a script with a shebang), or a command on
@@ -98,7 +98,7 @@ errand run -e '!legacy' -k bench "bench/solvers.py::*"
 
 `-k` names the kind, which is the preset the entry was declared with. `-e` reads the
 [expression language](/reference/expressions) over the entry's own tags — and for an
-[adopted suite](./runners), a `@pytest.mark.slow` or a Catch2 `[tag]` is one of those tags, so the
+[adopted suite](/guide/runners/), a `@pytest.mark.slow` or a Catch2 `[tag]` is one of those tags, so the
 same expression filters them.
 
 ## Several at a time

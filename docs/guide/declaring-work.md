@@ -110,9 +110,9 @@ if p := test( "distributed", ranks = 4 ):            # 4 MPI processes, each run
 ```
 
 `cpus`, `ram` and `gpus` are counted against what the host has; with `ranks`, they are what one rank
-needs ( see [Several processes: MPI](./machine#several-processes-mpi), where `--ranks` on the
+needs ( see [Several processes (MPI)](./mpi), where `--ranks` on the
 command line is the usual way to ask ). This is what the
-[queue](./machine) enforces, and what a [`Slurm`](./remote) layer hands over to the scheduler when
+[queue](./machine) enforces, and what a [`Slurm`](/guide/layers/ssh) layer hands over to the scheduler when
 there is one.
 
 ## Tags on an entry

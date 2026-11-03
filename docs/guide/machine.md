@@ -43,7 +43,7 @@ errand run -q ./quiet                       # no banner
 |---|---|
 | `-x`, `--exclusive` | the machine to itself. This is what a measurement wants |
 | `--cpus`, `--ram`, `--gpus` | what it needs, counted against the host |
-| `--ranks` | that many MPI processes ( see below ) |
+| `--ranks` | that many MPI processes ( [Several processes](./mpi) ) |
 | `-m`, `--mem` | a memory *ceiling* for the command |
 | `-n`, `--label` | its name in `errand queue` |
 | `-l`, `--log` | its output goes there too |
@@ -95,80 +95,11 @@ the child is done.
 
 Same rule as the batch systems: what has already been granted is not asked for twice.
 
-## Several processes: MPI
-
-```bash
-errand run --ranks 4 parallel.py                       # a script, under `mpiexec -n 4`
-errand run --ranks 8 --cpus 2 'tests/test_dist.py::*'  # entries: 8 processes of 2 cores each
-errand run --env cluster --ranks 64 'tests/test_dist.py::*'   # the same, over the nodes of an allocation
-```
-
-`--ranks N` runs the target as N processes, each running the whole of it: a script is started
-N times by the MPI launcher of the place, and so is the body of each entry. That body is the program
-of one rank — `from mpi4py import MPI` and `MPI.COMM_WORLD` inside it, nothing to write around it.
-With ranks, `--cpus`, `--gpus` and `--ram` say what **one rank** needs ( one core when unsaid ).
-
-The same command runs here, on another machine and on a cluster: nothing about the launcher goes in
-the environment. Here, it is the `mpiexec` beside the interpreter of the place ( the MPI of a conda /
-micromamba environment, the one mpi4py was built against ), else the one on its PATH. Under
-[Slurm](/reference/layers#slurm), the allocation is asked for one task per rank, errand runs in it
-**once**, and starts the ranks with `srun` — on every node of the allocation, spread as the
-environment says ( `Slurm( nodes = 2, ntasks_per_node = 4 )` ).
-
-An entry that is only meaningful on several processes can say so itself, as a default
-`--ranks` overrides:
-
-```python
-if test( "distributed", ranks = 4 ):
-    from mpi4py import MPI
-    comm = MPI.COMM_WORLD
-    assert comm.allreduce( 1 ) == comm.Get_size()
-```
-
-What comes back is one entry: the ranks' lines arrive prefixed by the rank ( `[2] …` ), each rank
-writes `rank-<r>.json` beside `output.txt`, and the entry fails when one rank failed
-( `rank 2: AssertionError: …` ), is skipped when they all skipped. Its results are rank 0's. A rank
-that fails calls `MPI.COMM_WORLD.Abort` once its record is written ( when mpi4py is loaded ), so
-the others are not left waiting in a collective.
-
-For the queue, an entry of N ranks takes N times what one rank asks. A place whose launcher is not
-one of these names it with the [`Mpi`](/reference/layers#mpi) layer: `errand.Mpi( "mpirun", flags =
-[ "--oversubscribe" ] )`.
-
 ## When somebody else owns the machine
 
 Inside a Slurm, PBS, OAR, LSF, SGE or Flux allocation, `errand` does not queue at all. The scheduler
 has already decided what this process may have, and a second queue on top of it would only wait for
-itself.
-
-What the work asks for is **handed over** instead: the [`Slurm`](/reference/layers#slurm) layer
-turns the entries' `cpus`, `ram`, `gpus` and `exclusive` into `--cpus-per-task`, `--mem`, `--gpus`
-and `--exclusive` on the submission — and `ranks` into one task per rank ( see
-[above](#several-processes-mpi) ). A dispatched command carries several entries, so the allocation
-is the largest of them, and exclusive if any one of them is.
-
-**What the environment states explicitly wins:** whoever wrote `Slurm( cpus = 16 )` knew something
-about that partition an entry cannot.
-
-**Everything is optional, `partition` included.** What is not stated is not passed, and the cluster
-applies its own default — which stays correct when the cluster is rearranged, and a name copied out
-of somebody else's script does not.
-
-```python
-# errand-envs.py
-import errand
-
-errand.envs[ "cluster" ] = errand.Env( [ errand.Ssh( host = "login.hpc", root = "/home/me/proj" ),   # NOT /tmp
-                                         errand.Slurm( time = "2:00:00" ) ] )                        # the default partition
-```
-
-::: danger The root must be on a shared filesystem
-A batch job runs on a compute node, and `/tmp` there is not the `/tmp` you pushed to. The job lands
-somewhere that has never heard of your project, and says so in terms of a failed `chdir` followed by
-an import error, neither of which points at the cause.
-
-`errand` checks for that before submitting and tells you plainly.
-:::
+itself. What the work asks for is handed over to it instead — see [Slurm](./layers/slurm#what-the-work-asks-for).
 
 ## Next
 

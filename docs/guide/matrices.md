@@ -105,7 +105,7 @@ value of it. [Saying nothing means every value.](./tags)
 Matrices are expanded **where the work runs**, one plain run per combination, during the
 [preparation](./environments#preparing-then-running): the plan it writes names every run, and that is
 what the fetch back, `errand status` and the screen read — for a local run, a run [over
-ssh](./remote) and a [detached](./detached) one alike.
+ssh](/guide/layers/ssh) and a [detached](./detached) one alike.
 
 ## On a screen
 

@@ -33,25 +33,14 @@ container*, then your command. There is no separate remote mode, no host file, n
 
 ## The layers
 
-| layer | what it does |
-|---|---|
-| [`Micromamba`](/reference/layers#micromamba) | wraps with `micromamba -n <name> run`; a no-op if that environment is already active |
-| [`Conda`](/reference/layers#conda), [`Venv`](/reference/layers#venv), [`Uv`](/reference/layers#uv) | the same idea, other tools |
-| [`Nix`](/reference/layers#nix), [`Guix`](/reference/layers#guix) | `nix develop -c …`, `guix shell -- …` |
-| [`Module`](/reference/layers#module) | Lmod / environment modules, the way a cluster picks a toolchain |
-| [`Mpi`](/reference/layers#mpi) | another MPI launcher than the `mpiexec` of the place, for the entries that ask for [ranks](./machine#several-processes-mpi) — rarely needed |
-| [`Apptainer`](/reference/layers#apptainer) | wraps with `apptainer exec`, using the container's own interpreter, and builds the image from its recipe |
-| [`Docker`, `Podman`](/reference/layers#docker-podman) | likewise |
-| [`Ssh`](/reference/layers#ssh) | must be first; everything after it runs on that machine. `also` lists sibling checkouts the work needs ( `[ "../loom" ]` ), pushed to the same relative place over there |
-| [`Slurm`](/reference/layers#slurm) | goes through `srun`, or `sbatch` in [batch mode](./detached) |
-| [`Windows`](/reference/layers#windows) | a Windows virtual machine errand boots and runs in; first, or right after its `Ssh` |
-| [`Vars`](/reference/layers#vars) | environment variables for the child process |
+Each layer has its page, under [Layers](./layers/) in the menu:
 
-Slurm is the only batch system with a layer of its own so far. errand does however *recognize*
-being inside a PBS, OAR, LSF, SGE or Flux allocation, and [stands down from
-queuing](./machine#when-somebody-else-owns-the-machine) when it is.
-
-Every argument is spelled out in the [layer reference](/reference/layers).
+- reaching a machine: [`Ssh`](./layers/ssh), [`Slurm`](./layers/slurm), [`Windows`](./layers/windows);
+- what runs there: [`Apptainer`, `Docker`, `Podman`](./layers/containers),
+  [`Micromamba`, `Conda`](./layers/micromamba), [`Venv`, `Uv`](./layers/venv),
+  [`Nix`, `Guix`](./layers/nix-guix), [`Module`](./layers/module);
+- around the command: [`Vars`](./layers/vars), and [`Mpi`](./layers/mpi) for a launcher of
+  [several processes](./mpi) that is not the usual one.
 
 ## Preparing, then running
 
