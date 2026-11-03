@@ -154,6 +154,10 @@ def normalize( needs: dict ) -> dict:
     out = { }
     for key, value in ( needs or { } ).items():
         out[ key ] = parse_size( value ) if key == "ram" else float( value )
+    # one core per rank, at least: what the machine is asked for is cores
+    ranks = out.pop( "ranks", 0.0 )
+    if ranks > 1:
+        out[ "cpus" ] = max( out.get( "cpus", 0.0 ), ranks )
     return out
 
 

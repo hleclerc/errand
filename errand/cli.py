@@ -14,7 +14,7 @@ import time
 import traceback
 from pathlib import Path
 
-from . import batch, config, discovery, entries as E, history, layers as L, local, queue, runner as P, results as R, setup
+from . import batch, config, discovery, entries as E, history, layers as L, local, mpi, queue, runner as P, results as R, setup
 
 BOLD, DIM, GREEN, RED, YELLOW, CYAN, RESET = (
     "\033[1m", "\033[2m", "\033[32m", "\033[31m", "\033[33m", "\033[36m", "\033[0m" )
@@ -201,7 +201,7 @@ class Report:
         self.broken  = [ ]      # files that declare work and would not import
 
 
-def aggregate_needs( entries ):
+def aggregate_needs( entries, asked = None ):
     """What one command carries, as one machine's worth of asking.
 
     A dispatched command runs SEVERAL entries in one allocation, so the
@@ -210,7 +210,8 @@ def aggregate_needs( entries ):
     """
     out = { }
     for e in entries:
-        for key, value in queue.normalize( e.resources ).items():
+        # what the command line asks ( `--cpus`, `--ranks` ) wins, as it does in the queue
+        for key, value in queue.normalize( { **e.resources, **( asked or { } ) } ).items():
             out[ key ] = max( out.get( key, 0.0 ), value )
         if e.traits[ "exclusive" ]:
             out[ "exclusive" ] = True
@@ -232,7 +233,7 @@ class Ask:
 
     def __init__( self, known = None ):
         get = lambda k: getattr( known, k, None ) if known is not None else None
-        self.resources = { k: get( k ) for k in ( "cpus", "ram", "gpus" ) if get( k ) }
+        self.resources = { k: get( k ) for k in ( "cpus", "ram", "gpus", "ranks" ) if get( k ) }
         self.exclusive = bool( get( "exclusive" ) )
         self.label     = get( "label" )
         self.log       = get( "log" )
@@ -248,10 +249,29 @@ class Ask:
             if getattr( known, dest, False ):
                 out.append( flag )
         for dest, flag in ( ( "out", "--out" ), ( "cpus", "--cpus" ), ( "ram", "--ram" ),
-                            ( "gpus", "--gpus" ), ( "mem", "--mem" ), ( "label", "--label" ) ):
+                            ( "gpus", "--gpus" ), ( "ranks", "--ranks" ), ( "mem", "--mem" ), ( "label", "--label" ) ):
             if getattr( known, dest, None ):
                 out += [ flag, str( getattr( known, dest ) ) ]
         return out
+
+
+def _stack_of( env_name, tags ) -> list:
+    """The layers of the environment this process runs in, as far as it knows them."""
+    env = config.envs.get( env_name )
+    return env.stack_for( "run", tags ) if env is not None else [ ]
+
+
+def _ranks_wrap( e, ask, env_name, tags ) -> list:
+    """`--ranks N` on a plain file: the file is started under the MPI launcher."""
+    n = mpi.ranks_of( e.resources, ask.resources )
+    if n <= 1 or not ( e.runner is not None and e.runner.whole_files ) or mpi.inside():
+        return [ ]
+    start = mpi.launcher( _stack_of( env_name, tags ), n )
+    if start is None:
+        raise local.Skipped( f"needs an MPI launcher for {n} ranks",
+                             "install one in the environment ( micromamba install -c conda-forge mpich mpi4py ), "
+                             "or name it: errand.Mpi( \"mpirun\" ) in its stack" )
+    return start
 
 
 def _ceiling( mem ) -> list:
@@ -317,7 +337,19 @@ def run_entries( entries, modules, *, root, out_root, overrides, env_name, tags,
                 started = time.perf_counter()
                 with capture( leaf / R.OUTPUT, ask.log ) as buf:
                     try:
-                        if e.runner is None:
+                        ranks = mpi.ranks_of( e.resources, ask.resources )
+                        if ranks > 1 and not mpi.inside() and ( e.runner is None or not e.runner.whole_files ):
+                            # One process per rank, each running this body: errand
+                            # stays here and reads what they wrote.
+                            if e.runner is not None:
+                                raise RuntimeError( f"{e.runner.name} entries cannot run on several ranks" )
+                            status, error, hint, got = mpi.run(
+                                e, n = ranks, stack = _stack_of( env_name, tags ), root = root, leaf = leaf,
+                                resolved = resolved, argv = target_argv( e, resolved, overrides ),
+                                env = { **handed, **_handed_to_the_run( root, tags ),
+                                        **( { P.OUT_DIR: str( leaf ) } if ask.visible else { } ) } )
+                            E.results.update( got )
+                        elif e.runner is None:
                             if e.module not in modules:
                                 # It was registered while ANOTHER file imported
                                 # this one: there are now two of every entry it
@@ -349,7 +381,8 @@ def run_entries( entries, modules, *, root, out_root, overrides, env_name, tags,
                                         **( { P.OUT_DIR: str( leaf ) } if ask.visible else { } ) },
                                 selector = selectors.get( e.name ),
                                 build_dir = build_dir_for( root, env_name ),
-                                args = target_argv( e, resolved, overrides ), wrap = ask.wrap ) )
+                                args = target_argv( e, resolved, overrides ),
+                                wrap = ask.wrap + _ranks_wrap( e, ask, env_name, tags ) ) )
                             status, error = got.status, got.error
                             E.results.update( got.results )
                             if got.output:
@@ -852,7 +885,7 @@ def print_entries( entries ):
 VERBS = {
     "run"   : ( "run a file, a command or entries, in one or several environments",
                 [ "runner", "kind", "entry_tags", "jobs", "no_queue", "no_setup", "batch", "keep_out",
-                  "out", "pull", "exclusive", "cpus", "ram", "gpus", "time", "mem", "label", "quiet", "log",
+                  "out", "pull", "exclusive", "cpus", "ram", "gpus", "ranks", "time", "mem", "label", "quiet", "log",
                   "at", "phase", "from_plan", "submit_run" ] ),
     "list"  : ( "what a target designates, with its parameters",
                 [ "runner", "kind", "entry_tags", "no_setup" ] ),
@@ -920,6 +953,8 @@ def build_parser( tag_names = ( ) ):
     p.add_argument( "--cpus", dest = "cpus", default = None, help = "cores it needs" )
     p.add_argument( "--ram", dest = "ram", default = None, help = "memory it needs, e.g. 8G" )
     p.add_argument( "--gpus", dest = "gpus", default = None, help = "cards it needs" )
+    p.add_argument( "--ranks", dest = "ranks", default = None,
+                    help = "MPI processes: the launcher of the place starts that many ( an entry's `ranks =` )" )
     p.add_argument( "--time", dest = "time", default = None,
                     help = "how long it may take, for a batch system ( slurm's way: 30, 2:00:00, 1-12 )" )
     p.add_argument( "-m", "--mem", dest = "mem", default = None,
@@ -1462,7 +1497,7 @@ def planned( root, stamp ) -> list:
     return out
 
 
-def make_plan( env, tags, entries, combos, *, root, out_root ) -> dict:
+def make_plan( env, tags, entries, combos, *, root, out_root, asked = None ) -> dict:
     """What this command is about to do here: the entries, what they ask of a
     machine, and the directories they will write. Written before anything
     runs, and read by whoever has to know before the fact -- the side that
@@ -1470,7 +1505,7 @@ def make_plan( env, tags, entries, combos, *, root, out_root ) -> dict:
     return {
         "env"    : env.name,
         "stamp"  : R.stamp(),
-        "needs"  : aggregate_needs( entries ),
+        "needs"  : aggregate_needs( entries, asked ),
         "entries": [ { "name": e.name, "file": str( R._under( e.file, root ) ), "line": e.line,
                        "runner": e.runner.name if e.runner is not None else "errand" }
                      for e in entries ],
@@ -1536,7 +1571,7 @@ def here( env, tags, verb, rest, known, *, root, out_root, report, kinds, inside
         _suggest( root )
         return 1
 
-    plan = make_plan( env, tags, selected, combos, root = root, out_root = out_root )
+    plan = make_plan( env, tags, selected, combos, root = root, out_root = out_root, asked = Ask( known ).resources )
     where = plan_path( root, env.name )
     if known.from_plan:
         # The run phase of two: what is here now must be what was prepared,

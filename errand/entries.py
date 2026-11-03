@@ -27,8 +27,10 @@ TRAITS = {
     "stable_path": False,   # `latest/` is what you are meant to open
 }
 
-# Resources counted against what the host has, when it is shared.
-RESOURCES = ( "cpus", "ram", "gpus" )
+# Resources counted against what the host has, when it is shared. `ranks`: the
+# body runs in that many processes, under the MPI launcher of the place
+# ( `errand.mpi` ), and takes as many cores.
+RESOURCES = ( "cpus", "ram", "gpus", "ranks" )
 
 
 class Param:

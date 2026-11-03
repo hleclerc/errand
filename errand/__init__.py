@@ -35,7 +35,7 @@ __all__ = [
     "need", "out_dir", "skip", "tag", "test", "track",
     "configure", "default_env", "default_run", "Env", "envs", "runners", "main", "value",
     "Vars", "Venv", "Micromamba", "Conda", "Uv", "Nix", "Guix", "Module",
-    "Apptainer", "Docker", "Podman", "Ssh", "Slurm", "Windows",
+    "Apptainer", "Docker", "Podman", "Ssh", "Slurm", "Mpi", "Windows",
     "Runner", "Level", "Outcome", "RunContext", "Errand", "Pytest", "Catch2", "Cargo",
     "Python", "Executable",
 ]
@@ -62,6 +62,7 @@ _LAZY = {
     "Podman"    : "errand.layers",
     "Ssh"       : "errand.layers",
     "Slurm"     : "errand.layers",
+    "Mpi"       : "errand.layers",
     "Windows"   : "errand.vm",
     "Runner"    : "errand.runner",
     "Level"     : "errand.runner",
@@ -82,7 +83,7 @@ if TYPE_CHECKING:
     from .cli import main
     from .config import Env, configure, envs, runners
     from .layers import (
-        Apptainer, Conda, Docker, Guix, Micromamba, Module, Nix, Podman, Slurm, Ssh, Uv, Vars, Venv,
+        Apptainer, Conda, Docker, Guix, Micromamba, Module, Mpi, Nix, Podman, Slurm, Ssh, Uv, Vars, Venv,
     )
     from .runner import (
         Cargo, Catch2, Errand, Executable, Level, Outcome, Pytest, Python, RunContext, Runner,

@@ -613,6 +613,31 @@ class Module:
         return "module:" + ",".join( self.names )
 
 
+@dataclass
+class Mpi:
+    """How the place starts several processes of one program: `mpiexec -n N`.
+
+    It does not wrap the command errand runs -- errand runs once, in the place,
+    whatever the number of ranks -- but the entries that ask for ranks
+    ( `test( …, ranks = 4 )`, `--ranks 4` ): those, and only those, are started
+    under the launcher, one process per rank ( `errand.mpi` ).
+
+    Without this layer, the launcher is the `mpiexec` beside the interpreter of
+    the place ( the MPI of a conda / micromamba environment ), else the one on
+    its PATH. A cluster names its own: `Mpi( "srun", np = "--ntasks" )`.
+    """
+    launcher: str = "mpiexec"
+    np      : str = "-n"                                 # the flag giving the number of processes
+    flags   : list = field( default_factory = list )      # e.g. [ "--oversubscribe" ] for Open MPI
+    when    : str | None = None
+
+    def wrap( self, cmd: Command, ctx: Context ) -> Command:
+        return cmd
+
+    def describe( self ):
+        return f"mpi:{self.launcher}"
+
+
 # ── going elsewhere ──────────────────────────────────────────────────────────
 
 @dataclass
@@ -1049,6 +1074,10 @@ def interpreters_of( stack ):
     what a command that only needs errand itself goes through -- the submission a `--batch` preparation makes from inside its
     allocation -- where a container, a module or a variable is not wanted."""
     return [ l for l in stack if isinstance( l, ( Venv, Micromamba, Uv ) ) ]
+
+
+def mpi_of( stack ):
+    return next( ( l for l in stack if isinstance( l, Mpi ) ), None )
 
 
 def ssh_of( stack ):

@@ -112,6 +112,17 @@ Module( "gcc/13", "cuda/12" )
 Lmod / environment modules — how a cluster picks a toolchain. `module` is a shell *function*, not a
 program, so this goes through a login shell to exist at all. That is the whole layer.
 
+### Mpi
+
+```python
+Mpi( launcher = "mpiexec", np = "-n", flags = [ ] )
+```
+
+How the place starts several processes of one program. It wraps nothing: `errand` runs once, and only
+the entries that ask for ranks ( `ranks = 4`, `--ranks 4` ) are started under
+`launcher np N *flags`, one process per rank. Without it, the `mpiexec` beside the interpreter of the
+place, else the one on its PATH. See [Several processes: MPI](/guide/machine#several-processes-mpi).
+
 ## Container layers
 
 ### Apptainer

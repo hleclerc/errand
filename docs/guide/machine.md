@@ -43,6 +43,7 @@ errand run -q ./quiet                       # no banner
 |---|---|
 | `-x`, `--exclusive` | the machine to itself. This is what a measurement wants |
 | `--cpus`, `--ram`, `--gpus` | what it needs, counted against the host |
+| `--ranks` | that many MPI processes ( see below ) |
 | `-m`, `--mem` | a memory *ceiling* for the command |
 | `-n`, `--label` | its name in `errand queue` |
 | `-l`, `--log` | its output goes there too |
@@ -93,6 +94,36 @@ it waits, so a child that queued would be waiting for something its own parent c
 the child is done.
 
 Same rule as the batch systems: what has already been granted is not asked for twice.
+
+## Several processes: MPI
+
+```python
+if test( "distributed", ranks = 4 ):
+    from mpi4py import MPI
+    comm = MPI.COMM_WORLD                           # this body is the program of one rank
+    assert comm.allreduce( 1 ) == comm.Get_size()
+```
+
+An entry that asks for `ranks` is not imported by `errand` itself: the MPI launcher of the place
+starts `python -m errand.mpi` once per rank, and each one runs the body of that entry, with the same
+parameters, arguments and directory as a run in process. Their lines arrive prefixed by the rank
+( `[2] …` ), each rank writes `rank-<r>.json` beside `output.txt`, and the entry fails when one rank
+failed ( `rank 2: AssertionError: …` ), is skipped when they all skipped. Its results are rank 0's.
+A rank that fails calls `MPI.COMM_WORLD.Abort` once its record is written ( when mpi4py is loaded ),
+so the others are not left waiting in a collective.
+
+`--ranks N` asks the same of any target: an entry that does not say, or a plain script
+( `errand run --ranks 4 parallel.py` runs it under `mpiexec -n 4` ). A rank counts as a core, for
+the queue and for `--cpus-per-task`.
+
+Nothing to declare: the launcher is the `mpiexec` beside the interpreter of the place ( the MPI of a
+conda / micromamba environment, the one mpi4py was built against ), else the one on its PATH. The same
+environment works here and under Slurm: inside an allocation, `mpiexec` is started without the batch
+system's variables, so it starts the ranks on the node errand was given ( sized from `ranks` ) rather
+than asking Slurm for a step of its own. One node, then; ranks over several nodes are not there yet.
+
+An environment that needs another launcher names it with the [`Mpi`](/reference/layers) layer, which
+wraps nothing else: `errand.Mpi( "mpirun", flags = [ "--oversubscribe" ] )`.
 
 ## When somebody else owns the machine
 
