@@ -53,7 +53,7 @@ if p := entry( "solve", n = Param( 1000 ), keep = True, cpus = 4 ):
 | `cpus` | a count |
 | `ram` | `"8G"`, `"512M"` |
 | `gpus` | a count — and the cards are [assigned, not merely counted](/guide/machine#a-card-is-assigned-not-merely-counted) |
-| `ranks` | a count of MPI processes, each running the body — [Several processes](/guide/machine#several-processes-mpi) |
+| `ranks` | a count of MPI processes, each running the body; `cpus`, `gpus` and `ram` are then per rank — `--ranks` overrides it. [Several processes](/guide/machine#several-processes-mpi) |
 
 Returns `False` while the file is being read for collection, and while another entry in it is the
 one being run. Returns an `Args` for the entry that is running, which is why the walrus reads the

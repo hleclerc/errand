@@ -39,11 +39,16 @@ ARGV     = "ERRAND_RANK_ARGV"
 # variables, which errand itself has under `srun` ( `SLURM_PROCID=0` ) without being a rank of anything.
 RANKED   = "ERRAND_RANKED"
 
-# The variables by which a launcher recognizes a batch allocation, and the PMI of a step: in one, an
-# `mpiexec` of its own would launch through the batch system ( a step inside the step errand runs in,
-# which waits for cores errand holds ). Without them it starts the ranks here, on the cores errand was
-# given -- one node, which is what an allocation sized by errand is.
-ALLOCATION = ( "SLURM_", "PBS_", "LSB_", "FLUX_", "OAR_", "PMI_", "PMIX_", "OMPI_" )
+# The variables by which a launcher recognizes a batch allocation errand has no launcher for, and the PMI
+# of a step: without them `mpiexec` starts the ranks here, on the cores errand was given -- one node.
+ALLOCATION = ( "PBS_", "LSB_", "FLUX_", "OAR_", "PMI_", "PMIX_", "OMPI_" )
+
+# Inside a Slurm job, `srun` starts the ranks, on every node of the allocation. What it must not inherit
+# is the step errand itself runs in ( one task, its cores, its binding ): everything but the job's own.
+SLURM_JOB = ( "SLURM_JOB_", "SLURM_CONF", "SLURM_CLUSTER_NAME" )
+# What the allocation was asked per task, said again to the step of the ranks: ( variable, flag )
+SLURM_PER_TASK = ( ( "SLURM_NTASKS_PER_NODE", "--ntasks-per-node" ), ( "SLURM_CPUS_PER_TASK", "--cpus-per-task" ),
+                   ( "SLURM_GPUS_PER_TASK", "--gpus-per-task" ), ( "SLURM_MEM_PER_CPU", "--mem-per-cpu" ) )
 
 
 def _first( names ):
@@ -73,20 +78,44 @@ def ranks_of( resources: dict, asked: dict ) -> int:
     return int( n )
 
 
+def _mpiexec( ):
+    # the MPI of the environment first: the one mpi4py was built against
+    return shutil.which( "mpiexec", path = os.path.dirname( sys.executable ) ) or shutil.which( "mpiexec" )
+
+
+def _unset( names ) -> list:
+    names = sorted( names )
+    return [ "env", *( a for k in names for a in ( "-u", k ) ) ] if names else [ ]
+
+
+def plugin( ) -> str:
+    """The PMI `srun` speaks to the ranks: the one the MPI of the environment understands."""
+    exe = _mpiexec()
+    here = os.path.dirname( exe ) if exe else os.path.dirname( sys.executable )
+    return "pmix" if os.path.exists( os.path.join( here, "ompi_info" ) ) else "pmi2"
+
+
 def launcher( stack, n: int ) -> list | None:
     """The command that starts `n` processes in this place, or None when there is none."""
     from . import layers as L
-    mpi = L.mpi_of( stack or [ ] )
+    stack = stack or [ ]
+    mpi = L.mpi_of( stack )
     if mpi is not None:
         exe = mpi.launcher
         found = shutil.which( exe ) or ( exe if os.sep in exe else None )
         return [ found, mpi.np, str( n ), *mpi.flags ] if found else None
-    # the MPI of the environment first: the one mpi4py was built against
-    exe = shutil.which( "mpiexec", path = os.path.dirname( sys.executable ) ) or shutil.which( "mpiexec" )
+    if os.environ.get( "SLURM_JOB_ID" ) and shutil.which( "srun" ):
+        slurm = L.batch_of( stack )
+        nodes = os.environ.get( "SLURM_JOB_NUM_NODES", "" )
+        flags = [ a for var, flag in SLURM_PER_TASK if os.environ.get( var ) for a in ( flag, os.environ[ var ].split( "(" )[ 0 ] ) ]
+        return [ *_unset( k for k in os.environ
+                          if k.startswith( ( "SLURM_", "PMI_", "PMIX_" ) ) and not k.startswith( SLURM_JOB ) ),
+                 shutil.which( "srun" ), "--overlap", f"--mpi={getattr( slurm, 'mpi', None ) or plugin()}",
+                 *( [ "--nodes", str( min( int( nodes ), n ) ) ] if nodes.isdigit() else [ ] ), *flags, "--ntasks", str( n ) ]
+    exe = _mpiexec()
     if exe is None:
         return None
-    unset = sorted( k for k in os.environ if k.startswith( ALLOCATION ) )
-    return [ *( [ "env", *( a for k in unset for a in ( "-u", k ) ) ] if unset else [ ] ), exe, "-n", str( n ) ]
+    return [ *_unset( k for k in os.environ if k.startswith( ALLOCATION ) ), exe, "-n", str( n ) ]
 
 
 # ── the side that launches ──────────────────────────────────────────────────

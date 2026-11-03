@@ -669,8 +669,27 @@ class Slurm:
     # does not keep a connection open as long as the queue and the job last. It sizes the job from what is
     # declared here, and needs a time ( here, or `--time` ).
     watch    : float | None = None
+    # How the ranks of an entry that asks for several ( `--ranks 8` ) are spread over the nodes:
+    # `--ntasks-per-node`. Their number is the entry's, never the environment's.
+    ntasks_per_node: int | None = None
+    # The plugin `srun` starts the ranks with ( `srun --mpi=` ). None: the one the MPI of the environment
+    # speaks -- `pmix` for Open MPI, `pmi2` for MPICH ( see `errand.mpi` ).
+    mpi      : str | None = None
     extra    : list = field( default_factory = list )
     when     : str | None = None
+
+    # The flags that say how many processes the job starts: errand runs once in the allocation, and
+    # starts the ranks itself. `-n4` and `--ntasks=4` are the same flag.
+    TASK_FLAGS = ( "--ntasks", "-n", "--ntasks-per-node" )
+
+    def __post_init__( self ):
+        for flag in self.extra:
+            word = str( flag ).split( "=" )[ 0 ]
+            if word in self.TASK_FLAGS or ( word.startswith( "-n" ) and word[ 2: ].isdigit() ):
+                raise ValueError(
+                    f"Slurm( extra = [ {flag!r} ] ): how many processes is the work's to say -- `--ranks 8` on the "
+                    f"command line, or `ranks = 8` on the entry -- and how they spread over the nodes is "
+                    f"`Slurm( ntasks_per_node = … )`. With that flag, errand itself would be started several times." )
 
     def flags( self, ctx: Context | None = None ):
         """What was declared, filled in from what the work asks for.
@@ -691,16 +710,22 @@ class Slurm:
         time = ( ( ctx.needs if ctx else { } ) or { } ).get( "time" ) or self.time
         qos  = self.qos( slurm_seconds( time ) if time else None ) if callable( self.qos ) else self.qos
 
+        # Several ranks: one task each, and what the entry asks for is what ONE rank needs
+        ranks = int( needs.get( "ranks" ) or 1 )
+        many  = ranks > 1
         out = [ ]
         for flag, value in ( ( "--partition", self.partition ),
                              ( "--nodes", 1 if prepare and self.nodes else self.nodes ),
-                             ( "--ntasks", 1 if prepare else None ),
-                             ( "--cpus-per-task", cpus ), ( "--gpus", gpus ),
+                             ( "--ntasks", 1 if prepare else ranks if many else None ),
+                             ( "--ntasks-per-node", self.ntasks_per_node if many else None ),
+                             ( "--cpus-per-task", cpus ), ( "--gpus-per-task" if many else "--gpus", gpus ),
                              ( "--time", time ), ( "--account", self.account ), ( "--qos", qos ),
                              ( "--nodelist", self._nodelist() ) ):
             if value is not None:
                 out += [ flag, str( int( value ) if isinstance( value, float ) else value ) ]
-        if ram:
+        if ram and many:
+            out += [ "--mem-per-cpu", f"{-( -int( ram ) // int( cpus or 1 ) )}M" ]
+        elif ram:
             out += [ "--mem", f"{int( ram )}M" ]
         if needs.get( "exclusive" ):
             out += [ "--exclusive" ]
@@ -732,6 +757,12 @@ class Slurm:
             log = watch_dir( ctx )
             return Command( [ "sbatch", "--parsable", *flags, "--output", f"{log}/slurm-%j.out",
                               "--wrap", f"{cmd.shell()}; echo $? > {log}/slurm-$SLURM_JOB_ID.rc" ], { } )
+        if int( ( ctx.needs or { } ).get( "ranks" ) or 1 ) > 1 and not ctx.interactive and ctx.phase != "prepare":
+            # The allocation is for every rank, and errand runs in it once, as one task on the first node:
+            # it starts the ranks with an `srun` of its own ( `errand.mpi` ), which the step it runs in
+            # must not hold the cores of ( `--overlap` ).
+            return Command( [ "salloc", *self.flags( ctx ), "srun", "--nodes", "1", "--ntasks", "1", "--overlap",
+                              *cmd.argv ], cmd.env )
         return Command( [ "srun", *self.flags( ctx ), *( [ "--pty" ] if ctx.interactive else [ ] ),
                           *cmd.argv ], cmd.env )
 

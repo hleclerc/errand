@@ -193,7 +193,8 @@ See [Running elsewhere](/guide/remote) for what the push and the pull actually m
 
 ```python
 Slurm( partition = None, nodes = None, cpus = None, gpus = None,
-       time = None, account = None, nodelist = None, qos = None, watch = None, extra = [ ] )
+       time = None, account = None, nodelist = None, qos = None, watch = None,
+       ntasks_per_node = None, mpi = None, extra = [ ] )
 ```
 
 `srun` while you wait, `sbatch` under [`--batch`](/guide/detached) — which *is* the detachment: it
@@ -231,7 +232,36 @@ cluster whose qos depends on how long the job is:
 Slurm( time = "00:20:00", qos = lambda s: "qos_dev" if s <= 2 * 3600 else "qos_long" )
 ```
 
-`extra` is appended verbatim, for whatever your site needs that nothing above covers.
+`extra` is appended verbatim, for whatever your site needs that nothing above covers — except
+the number of tasks ( `--ntasks`, `-n`, `--ntasks-per-node` ), which is refused: errand itself
+would be started that many times.
+
+#### Several ranks
+
+How many processes is the work's to say ( `--ranks 8`, or `ranks = 8` on an entry ), never the
+environment's: `--ntasks` is not a field, it is the number of ranks. What the environment says is
+where they go:
+
+| declared | flag | |
+|---|---|---|
+| `nodes` | `--nodes` | how many nodes |
+| `ntasks_per_node` | `--ntasks-per-node` | how the ranks spread over them |
+| `mpi` | `srun --mpi=` | the PMI the ranks are started with; by default the one the MPI of the environment speaks: `pmix` for Open MPI, `pmi2` for MPICH |
+
+With ranks, what the work asks for is per rank: `cpus` → `--cpus-per-task`, `gpus` →
+`--gpus-per-task`, `ram` → `--mem-per-cpu`, with `--ntasks` the number of ranks — and the
+environment's own `cpus` and `gpus` are per rank too.
+
+errand runs once in that allocation, as one task on its first node ( `salloc … srun --nodes 1
+--ntasks 1 --overlap`, or the batch script under `--batch` ), and starts the ranks with an `srun` of
+its own, over the whole allocation, without the variables of the step it runs in. The preparation
+stays one task.
+
+```python
+errand.envs[ "two-nodes" ] = errand.Env( [ errand.Ssh( host = "login.hpc", root = "/scratch/me/proj" ),
+                                           errand.Slurm( nodes = 2, ntasks_per_node = 4, time = "1:00:00" ),
+                                           errand.Micromamba( "dist", packages = [ "mpi4py", "mpich" ] ) ] )
+```
 
 #### Waiting from afar: `watch`
 
@@ -346,7 +376,10 @@ decided what this process may have.
 Mpi( launcher = "mpiexec", np = "-n", flags = [ ] )
 ```
 
-How the place starts several processes of one program. It wraps nothing: `errand` runs once, and only
-the entries that ask for ranks ( `ranks = 4`, `--ranks 4` ) are started under
-`launcher np N *flags`, one process per rank. Without it, the `mpiexec` beside the interpreter of the
-place, else the one on its PATH. See [Several processes: MPI](/guide/machine#several-processes-mpi).
+How the place starts several processes of one program, for a place where it is not the usual one —
+rarely needed. It wraps nothing: `errand` runs once, and only what asks for ranks ( `--ranks 4`,
+`ranks = 4` ) is started under `launcher np N *flags`, one process per rank.
+
+Without it: inside a Slurm job, `srun` ( see [Slurm, several ranks](#several-ranks) ); elsewhere,
+the `mpiexec` beside the interpreter of the place, else the one on its PATH. See
+[Several processes: MPI](/guide/machine#several-processes-mpi).

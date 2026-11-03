@@ -79,6 +79,7 @@ none declared it prints this help.
 | `--cpus N` | cores it needs |
 | `--ram 8G` | memory it needs |
 | `--gpus N` | cards it needs |
+| `--ranks N` | N MPI processes, each running the target; `--cpus` / `--gpus` / `--ram` are then per rank — [Several processes](/guide/machine#several-processes-mpi) |
 | `--time T` | how long it may take, for a batch system ( slurm's way: `30`, `2:00:00`, `1-12` ) |
 | `-m`, `--mem 24G` | memory *ceiling* of the command ( `systemd-run`, where there is one ) |
 | `-n`, `--label NAME` | its name in `errand queue` |

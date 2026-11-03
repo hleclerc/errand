@@ -210,8 +210,11 @@ def aggregate_needs( entries, asked = None ):
     """
     out = { }
     for e in entries:
-        # what the command line asks ( `--cpus`, `--ranks` ) wins, as it does in the queue
-        for key, value in queue.normalize( { **e.resources, **( asked or { } ) } ).items():
+        # what the command line asks ( `--cpus`, `--ranks` ) wins, as it does in the queue; with ranks,
+        # per rank: a batch system asks for so many tasks of so much each
+        asked_here = { **e.resources, **( asked or { } ) }
+        ranks = float( asked_here.pop( "ranks", None ) or 1 )
+        for key, value in [ *queue.normalize( asked_here ).items(), *( [ ( "ranks", ranks ) ] if ranks > 1 else [ ] ) ]:
             out[ key ] = max( out.get( key, 0.0 ), value )
         if e.traits[ "exclusive" ]:
             out[ "exclusive" ] = True

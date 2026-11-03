@@ -97,33 +97,43 @@ Same rule as the batch systems: what has already been granted is not asked for t
 
 ## Several processes: MPI
 
+```bash
+errand run --ranks 4 parallel.py                       # a script, under `mpiexec -n 4`
+errand run --ranks 8 --cpus 2 'tests/test_dist.py::*'  # entries: 8 processes of 2 cores each
+errand run --env cluster --ranks 64 'tests/test_dist.py::*'   # the same, over the nodes of an allocation
+```
+
+`--ranks N` runs the target as N processes, each running the whole of it: a script is started
+N times by the MPI launcher of the place, and so is the body of each entry. That body is the program
+of one rank — `from mpi4py import MPI` and `MPI.COMM_WORLD` inside it, nothing to write around it.
+With ranks, `--cpus`, `--gpus` and `--ram` say what **one rank** needs ( one core when unsaid ).
+
+The same command runs here, on another machine and on a cluster: nothing about the launcher goes in
+the environment. Here, it is the `mpiexec` beside the interpreter of the place ( the MPI of a conda /
+micromamba environment, the one mpi4py was built against ), else the one on its PATH. Under
+[Slurm](/reference/layers#slurm), the allocation is asked for one task per rank, errand runs in it
+**once**, and starts the ranks with `srun` — on every node of the allocation, spread as the
+environment says ( `Slurm( nodes = 2, ntasks_per_node = 4 )` ).
+
+An entry that is only meaningful on several processes can say so itself, as a default
+`--ranks` overrides:
+
 ```python
 if test( "distributed", ranks = 4 ):
     from mpi4py import MPI
-    comm = MPI.COMM_WORLD                           # this body is the program of one rank
+    comm = MPI.COMM_WORLD
     assert comm.allreduce( 1 ) == comm.Get_size()
 ```
 
-An entry that asks for `ranks` is not imported by `errand` itself: the MPI launcher of the place
-starts `python -m errand.mpi` once per rank, and each one runs the body of that entry, with the same
-parameters, arguments and directory as a run in process. Their lines arrive prefixed by the rank
-( `[2] …` ), each rank writes `rank-<r>.json` beside `output.txt`, and the entry fails when one rank
-failed ( `rank 2: AssertionError: …` ), is skipped when they all skipped. Its results are rank 0's.
-A rank that fails calls `MPI.COMM_WORLD.Abort` once its record is written ( when mpi4py is loaded ),
-so the others are not left waiting in a collective.
+What comes back is one entry: the ranks' lines arrive prefixed by the rank ( `[2] …` ), each rank
+writes `rank-<r>.json` beside `output.txt`, and the entry fails when one rank failed
+( `rank 2: AssertionError: …` ), is skipped when they all skipped. Its results are rank 0's. A rank
+that fails calls `MPI.COMM_WORLD.Abort` once its record is written ( when mpi4py is loaded ), so
+the others are not left waiting in a collective.
 
-`--ranks N` asks the same of any target: an entry that does not say, or a plain script
-( `errand run --ranks 4 parallel.py` runs it under `mpiexec -n 4` ). A rank counts as a core, for
-the queue and for `--cpus-per-task`.
-
-Nothing to declare: the launcher is the `mpiexec` beside the interpreter of the place ( the MPI of a
-conda / micromamba environment, the one mpi4py was built against ), else the one on its PATH. The same
-environment works here and under Slurm: inside an allocation, `mpiexec` is started without the batch
-system's variables, so it starts the ranks on the node errand was given ( sized from `ranks` ) rather
-than asking Slurm for a step of its own. One node, then; ranks over several nodes are not there yet.
-
-An environment that needs another launcher names it with the [`Mpi`](/reference/layers) layer, which
-wraps nothing else: `errand.Mpi( "mpirun", flags = [ "--oversubscribe" ] )`.
+For the queue, an entry of N ranks takes N times what one rank asks. A place whose launcher is not
+one of these names it with the [`Mpi`](/reference/layers#mpi) layer: `errand.Mpi( "mpirun", flags =
+[ "--oversubscribe" ] )`.
 
 ## When somebody else owns the machine
 
@@ -133,7 +143,8 @@ itself.
 
 What the work asks for is **handed over** instead: the [`Slurm`](/reference/layers#slurm) layer
 turns the entries' `cpus`, `ram`, `gpus` and `exclusive` into `--cpus-per-task`, `--mem`, `--gpus`
-and `--exclusive` on the submission. A dispatched command carries several entries, so the allocation
+and `--exclusive` on the submission — and `ranks` into one task per rank ( see
+[above](#several-processes-mpi) ). A dispatched command carries several entries, so the allocation
 is the largest of them, and exclusive if any one of them is.
 
 **What the environment states explicitly wins:** whoever wrote `Slurm( cpus = 16 )` knew something
