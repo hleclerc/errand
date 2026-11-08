@@ -71,8 +71,10 @@ rsync has to get the same options as ssh, or it reaches a different machine than
 ## What gets pushed
 
 The push is an rsync of the project, with the obvious things excluded: `.git`, `runs`, `build`,
-`dist`, `__pycache__`, `*.pyc`, `*.so`, `*.o`, `node_modules`, `.venv`, `*.sif`, `*.egg-info`,
-`.mypy_cache`, `.pytest_cache`.
+`dist`, `__pycache__`, `*.pyc`, `*.so`, `*.o`, `node_modules`, `.venv`, `*.egg-info`,
+`.mypy_cache`, `.pytest_cache`, and by their exact paths what the project's layers build there ( an
+image with its `.new`, `.prev` and `.part` ). Anything else found only over there is deleted, and
+`errand` prints what went.
 
 `runs` is excluded in both directions on purpose: the remote tree's own history is not yours to
 overwrite, and the only runs you want back are the ones you just asked for.

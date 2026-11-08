@@ -82,11 +82,6 @@ if test( "a fingerprint follows the CONTENTS of what a layer names" ):
         c = L.Context( root = root )
 
         before = setup.wanted( e, c )
-        assert setup.recorded( root, e ) != before        # nothing built yet
-
-        setup._record( root, e, before )
-        assert setup.recorded( root, e ) == before        # ...and now it agrees
-
         reqs.write_text( "numpy\nscipy\n" )
         assert setup.wanted( e, c ) != before             # the file changed: stale
 
@@ -192,8 +187,10 @@ if test( "an environment that is already there is adopted, never recreated" ):
         there = Fake( present = True )
         assert setup.ensure( root, Env.make( "x", [ there ] ), c, echo = lambda s: None ) == 0
         assert there.built == 0, "present and never seen before is not a reason to build"
-        # ...and it is recorded, so it does not stay `stale` forever.
-        assert setup.recorded( root, Env.make( "x", [ there ] ) ) == setup.wanted( Env.make( "x", [ there ] ), c )
+        # ...and it is recorded for what it is: found, not built.
+        built = setup.look( root, there, c )[ 0 ][ "built" ]
+        assert built[ "origin" ] == "adopted"
+        assert setup.status( root, Env.make( "x", [ there ] ), c ) == setup.ADOPTED
         # Saying it out loud still does it.
         assert setup.ensure( root, Env.make( "x", [ there ] ), c, force = True,
                              echo = lambda s: None ) == 0
@@ -284,7 +281,7 @@ if test( "what errand has never recorded is not announced as stale" ):
         # It is going to be adopted, not rebuilt: saying `stale` would announce
         # work that is not about to happen.
         assert setup.status( root, e, c ) == setup.OK
-        setup._record( root, e, { "0:there": "something else" } )
+        setup.write( root, e.stack[ 0 ], c, { "built": { "fingerprint": "something else" } } )
         assert setup.status( root, e, c ) == setup.STALE
 
 
@@ -353,7 +350,7 @@ if test( "over ssh, `is it there` is asked of the machine it would be built on" 
             return [ "true" ]
 
     def answering( code ):
-        def shell( self, line, *, quiet = False, tty = False, capture = False ):
+        def shell( self, line, *, quiet = False, tty = False, capture = False, input = None ):
             asked.append( ( line, quiet ) )
             return subprocess.CompletedProcess( line, code if line == "test -e i.sif" else 0 )
         return shell

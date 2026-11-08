@@ -25,6 +25,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -97,6 +98,24 @@ def fingerprint( *parts ) -> str:
 
 def sh( argv ) -> str:
     return " ".join( shlex.quote( str( a ) ) for a in argv )
+
+
+# A stamp is what a built thing looks like from outside, read right after its
+# build and compared later: the fingerprint says what it was built FROM, the
+# stamp that it is still the thing that was built. A cheap observation rather
+# than a checksum -- hashing 4 GB on every run is not an option, and a conda
+# prefix has no single content. By convention it starts with the date it was
+# last written, as an epoch; a layer whose stamp does not has a `made( stamp )`.
+
+def file_stamp( word ) -> str:
+    """A shell line printing the date and size of a file, `word` being how the
+    shell is to read its name: GNU's stat, else BSD's."""
+    return f"stat -c '%Y %s' {word} || stat -f '%m %z' {word}"
+
+
+# An environment's packages all land in one directory, whichever installed them.
+SITE_STAMP = ( "import os, sysconfig; s = os.stat( sysconfig.get_paths()[ 'purelib' ] ); "
+               "print( int( s.st_mtime ), s.st_nlink )" )
 
 
 # Every step a layer asks for is run FROM THE PROJECT ROOT -- this one when it
@@ -172,6 +191,12 @@ class Venv:
     def probe_shell( self, ctx ):
         return sh( [ "command", "-v", self.python ] )
 
+    def stamp_shell( self, ctx ):
+        return sh( [ self.python, "-c", SITE_STAMP ] )
+
+    def kept( self ):
+        return [ str( Path( self.python ).parent.parent ) ] if self.create else [ ]
+
     def build( self, ctx ):
         steps = [ ]
         if self.create:
@@ -239,6 +264,11 @@ class Micromamba:
 
     def probe_shell( self, ctx ):
         return sh( [ *self._exe( ctx ), "-n", self.name, "run", "true" ] )
+
+    def stamp_shell( self, ctx ):
+        # rewritten by every install into the prefix, whoever asked for it
+        return sh( [ *self._exe( ctx ), "-n", self.name, "run", "sh", "-c",
+                     file_stamp( '"$CONDA_PREFIX/conda-meta/history"' ) ] )
 
     def build( self, ctx ):
         """Create it when it is not there, install into it when it is.
@@ -331,6 +361,12 @@ class Uv:
     def probe_shell( self, ctx ):
         return sh( [ "test", "-x", f"{self.path}/bin/python" ] )
 
+    def stamp_shell( self, ctx ):
+        return sh( [ f"{self.path}/bin/python", "-c", SITE_STAMP ] )
+
+    def kept( self ):
+        return [ self.path ]
+
     def build( self, ctx ):
         create = [ "uv", "venv", self.path ]
         if self.python:
@@ -393,6 +429,15 @@ class Apptainer:
     def describe( self ):
         return f"apptainer:{self.container}"
 
+    def identity( self ):
+        return f"apptainer:{self.image}"     # `describe` alone: a/cuda.sif and b/cuda.sif are one thing
+
+    @property
+    def aside( self ):
+        """Built next to the image it replaces: failing costs nothing, so a
+        build can be attempted on no more than a suspicion."""
+        return bool( self.recipe )
+
     def spec( self, ctx ):
         # a recipe is a file of the project, or an image to convert ( `docker://...`, which needs
         # no root where building from a recipe needs `--fakeroot` ): the URI then IS the recipe
@@ -407,20 +452,32 @@ class Apptainer:
         # the caller has already `cd`-ed into, and which is not this one.
         return sh( [ "test", "-e", self.image ] )
 
+    def stamp_shell( self, ctx ):
+        return file_stamp( shlex.quote( self.image ) )
+
+    def kept( self ):
+        return [ self.image, *[ f"{self.image}.{end}" for end in ( "new", "prev", "part" ) ] ]
+
+    def abandon( self, ctx ):
+        return sh( [ "rm", "-f", f"{self.image}.new" ] )
+
     def build( self, ctx ):
         if not self.recipe:
             return [ ]     # an image someone else builds; nothing to say about it
         # Never through wrap(): that runs a command INSIDE the image, which does
         # not exist yet while it is being built.
         #
-        # `--force` unconditionally: this is only ever called once it has been
-        # decided that the image must be built, and apptainer's refusal to
-        # overwrite would otherwise make a STALE image unfixable -- the one case
-        # where rebuilding is the whole point.
+        # Beside the image, which stays whole and usable until the new one is
+        # complete: a build that fails has then cost nothing. On a builder the
+        # image is only a copy on its way, and `relay` does the same at the end.
+        #
+        # `--force` unconditionally: a `.new` left by an interrupted build must
+        # not stand in the way of the next one.
         # ( the builder's own apptainer: `exe` is what the place it RUNS calls it )
+        target = self.image if self.build_on else f"{self.image}.new"
         argv = [ "apptainer" if self.build_on else self.exe, "build", "--force",
                  *( [ "--fakeroot" ] if self.fakeroot else [ ] ), *self.build_flags,
-                 self.image, self.recipe ]
+                 target, self.recipe ]
         # Both, and to the same place: apptainer writes its unpacked layers to
         # one and its downloads to the other, and a build that runs out of room
         # in either dies the same way.
@@ -428,10 +485,12 @@ class Apptainer:
                if self.scratch else [ ]
         steps = [ " ".join( [ *room, sh( argv ) ] ) ]
         if self.pip:
-            steps.append( sh( [ argv[ 0 ], "exec", self.image,
+            steps.append( sh( [ argv[ 0 ], "exec", target,
                                 "python", "-m", "pip", "install", *self.pip ] ) )
         if self.build_on is not None:
             steps = [ _BuiltElsewhere( self, steps, ctx ) ]
+        else:
+            steps.append( replace_line( target, self.image ) )
         if self.install:
             steps.append( self.install.format( image = shlex.quote( self.image ) ) )
         return steps
@@ -458,13 +517,21 @@ class _BuiltElsewhere:
         # The recipe is a file of the project HERE, which the builder builds
         # from its own copy: pushed first, as `Ssh` does before a run.
         echo( f"    rsync push -> {b.ssh.host}:{b.root}" )
-        push( self.ctx.origin, b.ssh.host, b.root, b.ssh.options )
+        push( self.ctx.origin, b.ssh.host, b.root, b.ssh.options, echo = echo )
         for step in self.steps:
             echo( f"    $ {step}    ( on {b.describe()} )" )
             if b.shell( step, tty = True ).returncode != 0:
                 return 1
         echo( f"    copying {image}: {b.describe()} -> {self.ctx.host.describe()}" )
         return relay( b, b.root / image, self.ctx.host, image )
+
+
+def replace_line( new, image ) -> str:
+    """A shell line putting `new` in the place of `image`. The image it replaces
+    is kept, once: a recipe that downloads what it likes cannot always rebuild
+    it, and a build that succeeds can still give something that does not work."""
+    new, image = shlex.quote( str( new ) ), shlex.quote( str( image ) )
+    return f"if test -e {image}; then mv -f {image} {image}.prev; fi; mv -f {new} {image}"
 
 
 def relay( source: "Over", path, dest, rel ) -> int:
@@ -486,7 +553,7 @@ def relay( source: "Over", path, dest, rel ) -> int:
     code = on_dest( f"mkdir -p \"$( dirname {q} )\" && cat > {q}.part", stdin = src.stdout )
     src.stdout.close()
     code = src.wait() or code
-    return on_dest( f"rm -f {q}.part" ) or code if code else on_dest( f"mv {q}.part {q}" )
+    return on_dest( f"rm -f {q}.part" ) or code if code else on_dest( replace_line( f"{rel}.part", rel ) )
 
 
 @dataclass
@@ -543,6 +610,17 @@ class Docker:
 
     def probe_shell( self, ctx ):
         return sh( [ self.engine, "image", "inspect", self.image ] ) + " >/dev/null 2>&1"
+
+    def stamp_shell( self, ctx ):
+        return sh( [ self.engine, "image", "inspect", "-f", "{{.Id}} {{.Created}}", self.image ] )
+
+    def made( self, stamp ):
+        created = stamp.split()[ -1 ].split( "." )[ 0 ].rstrip( "Z" )
+        return datetime.fromisoformat( created ).replace( tzinfo = timezone.utc ).timestamp()
+
+    @property
+    def aside( self ):
+        return bool( self.recipe )       # a tag only moves once `build -t` has succeeded
 
     def build( self, ctx ):
         if not self.recipe:
@@ -774,8 +852,22 @@ class Slurm:
 
 RSYNC_EXCLUDES = [
     ".git", "runs", "build", "dist", "__pycache__", "*.pyc", "*.so", "*.o",
-    "node_modules", "target", ".venv", "*.sif", "*.egg-info", ".mypy_cache", ".pytest_cache",
+    "node_modules", "target", ".venv", "*.egg-info", ".mypy_cache", ".pytest_cache",
 ]
+
+
+def own_paths() -> list:
+    """What the layers of ALL the project's environments build into the project.
+
+    Exact paths, anchored at the root, for rsync to leave alone: an image is not
+    a source to copy, and over there `--delete` would take it for a file that
+    was removed. All of them, not the ones of the environment being pushed:
+    environments share a remote root.
+    """
+    from . import config
+    found = { os.path.normpath( p ) for e in config.envs.values() for layer in e.stack
+              if hasattr( layer, "kept" ) for p in layer.kept() }
+    return sorted( f"/{p}" for p in found if not os.path.isabs( p ) and p != "." and not p.startswith( ".." ) )
 
 
 @dataclass
@@ -815,11 +907,11 @@ class Ssh:
                               needs = ctx.needs, batch = ctx.batch, phase = ctx.phase )
 
         echo( f"  rsync push -> {self.host}:{remote_ctx.root}" )
-        push( ctx.root, self.host, remote_ctx.root, self.options )
+        push( ctx.root, self.host, remote_ctx.root, self.options, echo = echo )
         for other in self.also:
             # `../loom` lands at `<remote root>/../loom`: the same layout as here
             push( Path( os.path.normpath( ctx.root / other ) ), self.host,
-                  Path( os.path.normpath( remote_ctx.root / other ) ), self.options )
+                  Path( os.path.normpath( remote_ctx.root / other ) ), self.options, echo = echo )
 
         if inner and hasattr( inner[ 0 ], "run" ):
             # A layer that leads somewhere again -- a machine to boot over
@@ -842,7 +934,7 @@ def _rsh( options ):
     return [ "-e", "ssh " + " ".join( shlex.quote( o ) for o in options ) ] if options else [ ]
 
 
-def push( local_root: Path, host: str, remote_root: Path, options = ( ) ):
+def push( local_root: Path, host: str, remote_root: Path, options = ( ), echo = print ):
     subprocess.run( [ "ssh", *options, host, f"mkdir -p {shlex.quote( str( remote_root ) )}" ],
                     check = True )
     # errand's own state is each side's: the records of the runs made over
@@ -850,9 +942,17 @@ def push( local_root: Path, host: str, remote_root: Path, options = ( ) ):
     from . import config
     state = config.state_rel( local_root )
     own = [ f"/{state}" ] if not os.path.isabs( state ) else [ ]
-    subprocess.run( [ "rsync", "-a", "--delete", *_rsh( options ),
-                      *[ f"--exclude={e}" for e in RSYNC_EXCLUDES + own ],
-                      f"{local_root}/", f"{host}:{remote_root}/" ], check = True )
+    done = subprocess.run( [ "rsync", "-a", "--delete", "-i", *_rsh( options ),
+                             *[ f"--exclude={e}" for e in RSYNC_EXCLUDES + own + own_paths() ],
+                             f"{local_root}/", f"{host}:{remote_root}/" ],
+                           check = True, stdout = subprocess.PIPE, text = True, errors = "replace" )
+    # Whatever is only over there goes, and it may be the one copy of something
+    # somebody put there by hand: at least it does not go silently.
+    gone = [ line.split( None, 1 )[ 1 ] for line in done.stdout.splitlines() if line.startswith( "*deleting" ) ]
+    for name in gone[ : 20 ]:
+        echo( f"    deleted on {host}: {name}" )
+    if len( gone ) > 20:
+        echo( f"    ...and {len( gone ) - 20} more" )
 
 
 def fetch( paths, host: str, remote_root: Path, local_root: Path, options = ( ) ):

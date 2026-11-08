@@ -25,9 +25,12 @@ The first time errand meets an environment there is no record of what it was bui
 layer looks out of date — and acting on that reading would mean recreating, on somebody's first
 command, an environment that has been working for months.
 
-So: **present and never seen before is recorded as-is.** Only a declaration that has *changed* since
-a record errand itself wrote is a reason to touch anything, and `errand setup --force` is how you say the
-other thing.
+So: **present and never seen before is recorded as `adopted`**, which is what `errand envs` then says.
+Only a declaration that has *changed* since a record errand itself wrote is a reason to touch anything,
+and `errand setup --force` is how you say the other thing.
+
+The one exception is an image, which a build cannot harm: found older than its recipe, it is rebuilt.
+Anything else older than what it declares is adopted with a warning.
 
 ::: danger Why this matters more than it sounds
 `micromamba create -n x` on an existing `x` is not a no-op and not an update: it resolves the named
@@ -37,6 +40,27 @@ with it.
 An environment somebody is working in must never be the collateral of a declaration being read for
 the first time.
 :::
+
+## What errand remembers
+
+A record lives on the machine that holds what was built, in its `.errand/builds/`: one yaml per
+artefact, and the output of the last attempt beside it. Both are rewritten every time, there is no
+history. The yaml holds the fingerprint of what was declared, and a stamp of what came out: an image's
+date and size, a Docker image's id, a conda prefix's `conda-meta/history`, a venv's `site-packages`. An
+artefact whose stamp changed behind errand's back is adopted again.
+
+A failed build stops the run and is tried again on the next one, whether or not anything changed.
+**An image is built aside**, as `<image>.new`, so the existing one stays whole and
+`errand run --no-setup` can still use it; it only goes once the new one is complete, and is then kept
+as `<image>.prev` until the next build. Conda and venv environments cannot be moved once built, so
+they are updated in place: after a failure they may be half updated.
+
+## What stays on the other machine
+
+`rsync` pushes with `--delete`. What a layer builds in the project ( an image with its `.new`, `.prev`
+and `.part`, a uv environment ) is excluded by its exact path, for every environment of the project.
+Anything else that exists only over there is deleted by the next push, and `errand` prints what went.
+Keep what you put there by hand outside the project's copy.
 
 ## Where an image gets built
 

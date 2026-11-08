@@ -7,10 +7,12 @@ them, read **outside in**:
 # errand-envs.py
 import errand
 
-errand.envs[ "cluster" ] = errand.Env( [ errand.Ssh( host = "login.hpc", root = "/scratch/me/proj" ),   # that machine
-                                         errand.Slurm( time = "2:00:00" ),                              # an allocation on it
-                                         errand.Apptainer( image = "containers/cuda.sif" ),             # the container in it
-                                         errand.Vars( { "OMP_NUM_THREADS": "8" } ) ] )                  # …and the child's env
+errand.envs[ "cluster" ] = errand.Env( [ 
+    errand.Ssh( host = "login.hpc", root = "/scratch/me/proj" ), # that machine
+    errand.Slurm( time = "2:00:00" ),                            # an allocation on it
+    errand.Apptainer( image = "containers/cuda.sif" ),           # the container in it
+    errand.Vars( { "OMP_NUM_THREADS": "8" } ) 
+] )                  # …and the child's env
 ```
 
 | layer | what it does |

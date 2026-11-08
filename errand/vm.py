@@ -517,7 +517,7 @@ def rsync_line( reach: list, there: str, source: str = "./" ) -> str:
     guest's ACLs would only garble. Nothing deleted: what a command built beside
     the sources is not on this side, and must stay over there."""
     return L.sh( [ "rsync", "-rtL", "-e", L.sh( reach ), "--rsync-path", GUEST_RSYNC,
-                   *[ f"--exclude={e}" for e in EXCLUDES ], source, f"{USER}@127.0.0.1:{msys_path( there )}/" ] )
+                   *[ f"--exclude={e}" for e in EXCLUDES + L.own_paths() ], source, f"{USER}@127.0.0.1:{msys_path( there )}/" ] )
 
 
 # rsync's 23 ( "some files were not transferred" ) and 24 ( "some vanished" ),
