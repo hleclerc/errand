@@ -21,5 +21,12 @@ if __name__ == "__main__":
     # `errand/queue.py` would shadow the standard `queue`.
     sys.path[ 0 ] = here
     os.environ[ "PYTHONPATH" ] = os.pathsep.join( p for p in ( here, os.environ.get( "PYTHONPATH" ) ) if p )
+    if sys.argv[ 1 : 2 ] == [ "-m" ]:
+        # `_boot.py -m errand.agents connect …`: a module of the copy, as `python -m` would run it
+        import runpy
+        module = sys.argv[ 2 ]
+        sys.argv = [ module, *sys.argv[ 3 : ] ]
+        runpy.run_module( module, run_name = "__main__", alter_sys = True )
+        sys.exit( 0 )
     from errand.cli import main
     sys.exit( main() )

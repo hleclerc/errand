@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import bootstrap, trace
+from . import agents, bootstrap, trace
 
 
 @dataclass
@@ -937,20 +937,35 @@ class Ssh:
         return code
 
 
-def _rsh( options ):
-    """rsync must reach the machine ssh reaches, so it gets the same options."""
+def _rsh( options, host = None, agent = True ):
+    """rsync must reach the machine ssh reaches, so it gets the same options -- or, with a
+    hub to go through, the agent over there is its remote shell, and nothing logs in again."""
+    if host and agent and agents.mode() == "hub":
+        return [ "-e", agents.upstream.rsh( host, options ) ]
     return [ "-e", "ssh " + " ".join( shlex.quote( o ) for o in options ) ] if options else [ ]
 
 
+def _remote( host, options, line: str, agent = True ):
+    """A shell line on `host`: through its agent when there is a hub, else one ssh."""
+    if agent and agents.mode() == "hub":
+        try:
+            return agents.shell( agents.open( agents.upstream.of_host( host, options ) ), line, capture = True )
+        except Exception:
+            pass
+    return subprocess.run( [ "ssh", *options, host, line ], capture_output = True, text = True,
+                           stdin = subprocess.DEVNULL )
+
+
 def push( local_root: Path, host: str, remote_root: Path, options = ( ), echo = print ):
-    subprocess.run( [ "ssh", *options, host, f"mkdir -p {shlex.quote( str( remote_root ) )}" ],
-                    check = True )
+    made = _remote( host, options, f"mkdir -p {shlex.quote( str( remote_root ) )}" )
+    if made.returncode:
+        raise subprocess.CalledProcessError( made.returncode, f"mkdir -p {remote_root}", made.stdout, made.stderr )
     # errand's own state is each side's: the records of the runs made over
     # there, its plans, what it built. Excluded, so `--delete` leaves it be.
     from . import config
     state = config.state_rel( local_root )
     own = [ f"/{state}" ] if not os.path.isabs( state ) else [ ]
-    done = subprocess.run( [ "rsync", "-a", "--delete", "-i", *_rsh( options ),
+    done = subprocess.run( [ "rsync", "-a", "--delete", "-i", *_rsh( options, host ),
                              *[ f"--exclude={e}" for e in RSYNC_EXCLUDES + own + own_paths() ],
                              f"{local_root}/", f"{host}:{remote_root}/" ],
                            check = True, stdout = subprocess.PIPE, text = True, errors = "replace" )
@@ -970,7 +985,7 @@ def fetch( paths, host: str, remote_root: Path, local_root: Path, options = ( ) 
         target.mkdir( parents = True, exist_ok = True )
         # A trailing slash on BOTH sides: without it rsync nests the remote
         # directory INSIDE the local one whenever the latter already exists.
-        subprocess.run( [ "rsync", "-a", *_rsh( options ),
+        subprocess.run( [ "rsync", "-a", *_rsh( options, host ),
                           f"{host}:{remote_root}/{p}/", f"{target}/" ] )
 
 
@@ -1034,6 +1049,12 @@ class Over:
                timeout = None ):
         if self.root is not None:
             line = f"cd {shlex.quote( str( self.root ) )} && {line}"
+        if not tty:
+            conn = self._agent()
+            if conn is not None:
+                # Through the host agent over there ( ADR 0005 ): no new connection per line.
+                return agents.shell( conn, line, quiet = quiet, capture = capture, input = input,
+                                     timeout = timeout, login = True )
         # ssh runs non-interactively, so the remote shell never reads the rc
         # file that puts micromamba, cargo or nvm on PATH. Force an interactive
         # one, through the user's own $SHELL rather than a hard-coded bash.
@@ -1043,6 +1064,20 @@ class Over:
                                  f"$SHELL -ic {shlex.quote( line )}" ], timeout = timeout,
                                **_how( quiet, capture, input ) )
 
+    def _agent( self ):
+        """The connection to the host agent, or None: agents switched off, or not to be had --
+        then a fresh ssh per line, as before, said once."""
+        if not agents.enabled():
+            return None
+        try:
+            return agents.open( agents.upstream.ssh_target( self.ssh ) )
+        except Exception as err:
+            if self.ssh.host not in _NO_AGENT:
+                _NO_AGENT.add( self.ssh.host )
+                print( f"  warning: no agent on {self.ssh.host} ( {err} ): one ssh per command",
+                       file = sys.stderr, flush = True )
+            return None
+
     def describe( self ):
         return self.ssh.host
 
@@ -1050,6 +1085,9 @@ class Over:
         return { "ssh": { "host": self.ssh.host, "options": list( self.ssh.options ),
                           "python": self.ssh.python },
                  "root": None if self.root is None else str( self.root ) }
+
+
+_NO_AGENT : set = set()          # hosts where reaching an agent failed, said once each
 
 
 def host_of( spec: dict ):

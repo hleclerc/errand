@@ -1,0 +1,22 @@
+# Agents et organisation des sources : décisions
+
+- **Ordre** : d'abord le modèle d'exécution (ADR 0005), puis on réorganise autour. En attendant, on réorganise tout de suite ce qui n'en dépend pas (tui, vm, verbes de la CLI, runners).
+- **But des agents** : la latence *et* l'état. Ssh n'est qu'un cas parmi les couches lentes à démarrer (micromamba, apptainer, VM…). On va directement aux agents, sans détour par le multiplexage ssh.
+- **Deux niveaux** : un agent d'hôte juste après la couche qui mène ailleurs (fichiers, setup, soumissions), et des agents d'environnement en bout de chaîne, lancés par l'agent d'hôte, un par pile.
+- **Capacités** : générique d'abord (lancer, diffuser, signaler, attendre, fichiers). Ensuite, errand en processus dans l'agent d'environnement, une fois le besoin mesuré.
+- **« Alive »** : relancer un calcul sans ré-importer ni refaire les couches exige un serveur local qui garde les chaînes ouvertes et les éteint seul après x minutes sans activité.
+- **Hiérarchie des couches** : classes de base ABC : `Layer` → `Overlay` (Vars, Module, Nix, Guix), `Launcher` (Mpi), `Interpreter` (Venv, Micromamba, Uv) → `Container` (Apptainer, Docker), `Scheduler` (Slurm…), `Gateway` (Ssh, VM), + mixin `Artefact` pour ce qui est construit. L'API publique ne change pas.
+- **Découpage** : sous-packages `cli/`, `layers/`, `schedulers/`, `gateways/`, `agents/`, `targets/`, `records/`, `runners/`, `queue/`, `tui/`, `util/` ; fichiers de 50 à 300 lignes, docstring de responsabilité en tête.
+- **Hub** : un par utilisateur, lancé à la demande, `keep_alive` réglable (config et Env). Il absorbe le keeper des VMs. Chaque couche/agent peut aussi s'éteindre individuellement avant le hub.
+- **Plus d'errand distant « méta »** : on ne relance plus `errand run` de l'autre côté ; les agents doivent suffire. `--no-agent` = le même hub, dans le processus, pas en démon (durée de vie = la commande).
+- **Pty** : fourni par l'agent (pty POSIX, ConPTY en ctypes sous Windows, repli tuyaux).
+- **Canal** : trames multiplexées sur le flux donné par chaque couche ; socket unix vers le hub (TCP + jeton sous Windows) ; les agents relaient sans comprendre.
+- **Péremption** : clé par agent (hash des sources d'errand, empreinte de la pile, stamp du construit) ; clé différente → relance, dite sous `-v`.
+- **Slurm multi-nœuds** : en alive, un agent de nœud par nœud via srun, relayé par l'agent d'hôte ; MPI lancé par l'agent du nœud 0. Étape ultérieure.
+- **Construire là où ça sert** : une couche après un scheduler se construit dans l'allocation, par l'agent de nœud ; le bootstrap Python suit la même règle.
+- **Répartition** : le local (hub + commande) orchestre : grille, plan, file des runs, enregistrements, rapatriement. L'agent d'environnement n'exécute que des opérations (`collect`, `run`, `build`, `list`) ; `agents/ops.py` est la seule partie d'errand qui tourne dans l'interpréteur de l'environnement.
+- **`--batch`** : le même agent d'environnement piloté par un fichier (`worker plan.json`), résultats écrits au fil de l'eau ; préparation faite avant la soumission.
+- **File distante** : l'agent d'hôte tient les claims de sa machine avec `queue/` ; pas de claim sous un scheduler.
+- **ADR 0005** « le côté local orchestre, les agents exécutent » remplace la partie « qui pilote » de l'ADR 0002, garde sa règle de fond et les `when = "phase == …"`.
+- **Extinction** : `keep_alive =` sur chaque couche qui mène à un agent, défaut hérité de l'Env puis de `configure` ; `errand agents stop <nom>` arrête un agent et ce qui est dessous.
+- **Migration** : 1 réorganisation à comportement constant (tui, cli/verbs, runners, vm) ; 2 protocole + canal + hub + agent d'hôte ; 3 agents d'environnement, fin de l'errand distant, file à l'agent d'hôte ; 4 `--batch` worker ; 5 VM Windows en Gateway, pty/ConPTY ; 6 Slurm alive multi-nœuds et construction dans l'allocation ; 7 errand en processus. L'ancien chemin vit jusqu'à la fin de 4. ADR 0005 avant l'étape 2. Suite verte en 3.8 et 3.13 à chaque étape, tests réels sur lmo.

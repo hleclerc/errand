@@ -66,6 +66,23 @@ the nodes share — is where the job finds it. Everything errand made for itself
 A Docker or Podman container does not see that home directory: there, errand must be installed in
 the image, as before.
 
+## One connection, kept
+
+The first command to reach a host starts an **agent** over there: a small process that stays in
+`~/.cache/errand/agents/`, started through one ssh. Every later command goes through it, including
+the rsyncs, which use it as their remote shell, and the checks and builds of `setup`. Nothing logs
+in again, and a run that took 4 s of connecting takes under one. Here, a **hub** keeps the
+connection open between commands. Both go away on their own after 15 minutes with nothing to do.
+
+What the agent starts writes its output to disk over there, so a closed laptop or a dropped network
+loses nothing. The work goes on, and its output is caught up with afterwards.
+
+| `ERRAND_AGENT` | |
+|---|---|
+| `hub` | through the hub. The default on a terminal |
+| `direct` | a connection owned by the command, closed with it. The default without a terminal (cron, CI) |
+| `off` | no agent: one ssh per remote command, as before |
+
 ## The paths are computed before the run happens
 
 This is the whole trick, and everything else follows from it.

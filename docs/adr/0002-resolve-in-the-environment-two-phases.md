@@ -5,6 +5,10 @@ date: 2026-10-13
 
 # Targets are resolved in the environment, in a preparation phase and a run phase
 
+> Who drives the two phases is replaced by [ADR 0005](./0005-the-local-side-orchestrates-agents-execute.md):
+> the local side orchestrates, and agents in the environment execute. The rule, that targets are
+> resolved in the environment, stands, and so do the `when = "phase == …"` conditions.
+
 The side errand is started from used to resolve the targets, collect the entries and expand the
 grid before entering any environment, and used that list to predict what to fetch back, what
 `--batch` would produce, what the screen would show, and how big a Slurm allocation to ask for. It

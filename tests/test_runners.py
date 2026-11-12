@@ -12,7 +12,10 @@ from pathlib import Path
 
 from errand import test, skip, yamlish
 from errand import runner as P
-from errand.runner import Cargo, Catch2, Pytest, _from_cargo, _from_catch2, _from_junit
+from errand.runner import Cargo, Catch2, Pytest
+from errand.runner.cargo import _from_cargo
+from errand.runner.catch2 import _from_catch2
+from errand.runner.pytest import _from_junit
 
 from _infra import run_errand, write_project
 

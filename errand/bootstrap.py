@@ -36,7 +36,6 @@ found or made is what the job running errand on a node uses.
 from __future__ import annotations
 
 import hashlib
-import os
 import re
 import shlex
 import subprocess
@@ -67,19 +66,42 @@ def key() -> str:
     return f"{__version__}-{digest}"
 
 
+_sources = None
+
+
+def sources_key() -> str:
+    """What errand's sources ARE, not where they are: an agent started from other
+    sources is another agent ( ADR 0005, staleness )."""
+    global _sources
+    if _sources is None:
+        h = hashlib.sha1()
+        for p in sorted( PACKAGE.rglob( "*.py" ) ):
+            h.update( str( p.relative_to( PACKAGE ) ).encode() + b"\0" + p.read_bytes() )
+        _sources = h.hexdigest()[ : 12 ]
+    return _sources
+
+
 def src_rel() -> str:
     return f"{BASE}/src/{key()}"
 
 
-def ship( host: str, options = ( ) ) -> str:
+def ship( host: str, options = ( ), agent = True ) -> str:
     """The package, to `~/<src_rel>/errand/` on `host`: -> $HOME over there.
-    rsync: what has not changed costs nothing."""
-    from .layers import _rsh
+
+    Skipped when what is there says it is these sources already ( `.sources` ),
+    which costs one line through the agent rather than an rsync."""
+    from .layers import _remote, _rsh
     dest = src_rel()
-    got = subprocess.run( [ "ssh", *options, host, f'mkdir -p {shlex.quote( dest )} && echo "ERRAND_HOME=$HOME"' ],
-                          check = True, stdin = subprocess.DEVNULL, stdout = subprocess.PIPE, text = True )
-    subprocess.run( [ "rsync", "-a", "--delete", *_rsh( options ), "--exclude=__pycache__",
-                      f"{PACKAGE}/", f"{host}:{dest}/errand/" ], check = True, stdin = subprocess.DEVNULL )
+    key = sources_key()
+    got = _remote( host, options, f'mkdir -p {shlex.quote( dest )} && echo "ERRAND_HOME=$HOME" && '
+                                  f'cat {shlex.quote( dest )}/errand/.sources 2>/dev/null; true', agent = agent )
+    if got.returncode:
+        raise subprocess.CalledProcessError( got.returncode, "mkdir", got.stdout, got.stderr )
+    if key not in ( got.stdout or "" ).split():
+        subprocess.run( [ "rsync", "-a", "--delete", *_rsh( options, host, agent ), "--exclude=__pycache__",
+                          "--exclude=.sources", f"{PACKAGE}/", f"{host}:{dest}/errand/" ],
+                        check = True, stdin = subprocess.DEVNULL )
+        _remote( host, options, f"echo {key} > {shlex.quote( dest )}/errand/.sources", agent = agent )
     return _said( "ERRAND_HOME", got.stdout )
 
 
