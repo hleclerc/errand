@@ -155,7 +155,7 @@ def run_errand( directory: Path, *args, timeout = 600 ):
     env = dict( os.environ )
     env.pop( "ERRAND_CLAIM", None )
     # nor inside the environment the suite itself runs in: it would take that one for its own
-    for key in ( "ERRAND_IN_ENV", "ERRAND_TAGS" ):
+    for key in ( "ERRAND_IN_ENV", "ERRAND_TAGS", "ERRAND_VERBOSE" ):
         env.pop( key, None )
     queue = directory / ".queue"
     queue.mkdir( parents = True, exist_ok = True )

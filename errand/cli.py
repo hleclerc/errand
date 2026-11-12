@@ -14,7 +14,7 @@ import time
 import traceback
 from pathlib import Path
 
-from . import batch, config, discovery, entries as E, history, layers as L, local, mpi, queue, runner as P, results as R, setup
+from . import batch, config, discovery, entries as E, history, layers as L, local, mpi, queue, runner as P, results as R, setup, trace
 
 BOLD, DIM, GREEN, RED, YELLOW, CYAN, RESET = (
     "\033[1m", "\033[2m", "\033[32m", "\033[31m", "\033[33m", "\033[36m", "\033[0m" )
@@ -904,7 +904,7 @@ VERBS = {
     "forget": ( "drop a submission from the list: errand forget ID", [ ] ),
     "vm"    : ( "the virtual machines kept warm between commands: errand vm stop", [ ] ),
 }
-COMMON = [ "env", "env_tags", "root", "help", "version" ]
+COMMON = [ "env", "env_tags", "root", "help", "version", "verbose" ]
 
 
 def build_parser( tag_names = ( ) ):
@@ -921,6 +921,8 @@ def build_parser( tag_names = ( ) ):
     p.add_argument( "--root", default = None, help = "project root (default: found from the cwd)" )
     p.add_argument( "-h", "--help", action = "store_true", help = "this help; after a verb, that verb's" )
     p.add_argument( "-V", "--version", action = "store_true", help = "which errand this is" )
+    p.add_argument( "-v", "--verbose", action = "store_true",
+                    help = "say every command errand starts, here and over there ( on stderr )" )
 
     # run, list
     p.add_argument( "-r", "--runner", default = None,
@@ -1230,6 +1232,13 @@ def main( argv = None ):
     # `--root` and `--out` are needed before the project's tags are known, so
     # this first reading takes errand's own part of the command leniently.
     pre, _ = build_parser().parse_known_args( own_part( build_parser(), argv, lenient = True ) )
+    # Before anything starts a process: config.load may already run some. The
+    # screen draws on the terminal itself, so it keeps quiet -- the runs it
+    # starts still inherit `-v` and say their commands in their own panes.
+    if pre.verbose:
+        os.environ[ trace.ENV ] = "1"
+    if split_verb( build_parser(), argv )[ 0 ] != "tui":
+        trace.install()
     root = Path( pre.root ).resolve() if pre.root else find_root()
 
     config.load( root, warn = lambda m: print( warn( f"  warning: {m}" ), file = sys.stderr ) )
@@ -1645,7 +1654,9 @@ def child_env_for( env, tags ) -> dict:
     return { IN_ENV: env.name,
              TAGS: ",".join( f"{k}={v}" for k, v in sorted( tags.items() ) ),
              R.STAMP_ENV: R.stamp(),
-             "PYTHONUNBUFFERED": "1" }
+             "PYTHONUNBUFFERED": "1",
+             # `-v` over there too: the env a command crosses ssh with
+             **( { trace.ENV: "1" } if trace.enabled() else { } ) }
 
 
 def go_there( env, tags, verb, rest, *, root, pull = ( ), time = None ):

@@ -28,6 +28,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import trace
+
 
 @dataclass
 class Command:
@@ -982,7 +984,8 @@ def _how( quiet, capture, input ) -> dict:
     how = { }
     if capture:
         how.update( capture_output = True, text = True )
-    elif quiet:
+    elif quiet and not trace.enabled():
+        # `-v` keeps what a probe says: when it fails, that is the why.
         how.update( stdout = subprocess.DEVNULL, stderr = subprocess.DEVNULL )
     if input is not None:
         how.update( input = input, text = True )
@@ -1063,8 +1066,8 @@ def _install_steps( pip_argv, layer, ctx ):
 
 def _quiet( argv ) -> bool:
     try:
-        return subprocess.run( argv, stdout = subprocess.DEVNULL,
-                               stderr = subprocess.DEVNULL ).returncode == 0
+        silent = { } if trace.enabled() else dict( stdout = subprocess.DEVNULL, stderr = subprocess.DEVNULL )
+        return subprocess.run( argv, **silent ).returncode == 0
     except OSError:
         return False
 

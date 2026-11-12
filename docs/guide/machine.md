@@ -37,6 +37,7 @@ errand run -x ./bench --n 1e7               # a benchmark: the machine to itself
 errand run --cpus 8 --ram 16G ./solve       # what it needs, so neighbours can be let in
 errand run -l build.log -n "nightly" ./all  # a log file, and a name in the queue
 errand run -q ./quiet                       # no banner
+errand -v run --env lmo ./solve             # every command errand starts, said on stderr
 ```
 
 | flag | |
@@ -48,6 +49,7 @@ errand run -q ./quiet                       # no banner
 | `-n`, `--label` | its name in `errand queue` |
 | `-l`, `--log` | its output goes there too |
 | `-q` | no banner |
+| `-v`, `--verbose` | every command errand starts, with where and what it is handed; a failure with its code ( [When something breaks](./upkeep#when-something-breaks) ) |
 
 With `-m`, where the user bus allows it, the command is put in a `systemd-run --user --scope` with
 `MemoryMax` set, so a runaway allocation takes down the command and not the machine. Without a

@@ -105,3 +105,27 @@ runs the container's python and `nvidia-smi` runs nvidia-smi.
 
 [Tags](./tags) — how an environment says what it *is*, and how one environment covers a whole
 dimension.
+
+## When something breaks
+
+`-v` says every process errand starts, on stderr, before it starts: the probe that checks an
+environment exists, the rsync, the ssh line, the image build, the scheduler submission, the errand
+that runs over there. With each, the directory when it is not the current one and the variables it is
+handed beyond errand's own; a command that fails says its code and how long it took.
+
+```bash
+errand -v run --env lmo ./solve
+errand -v setup --env lmo
+```
+
+```
+  · $ ssh lmo '$SHELL -ic '"'"'cd /home/me/proj && micromamba -n prj run true'"'"''
+  · ✗ exit 1 after 0.4 s: ssh lmo '$SHELL -ic ...
+```
+
+It crosses with the command: the errand over ssh, in a container or under a scheduler says its own
+commands too. The probes that are otherwise silent keep their output, so a check that fails says why.
+`errand tui` draws on the terminal and stays quiet itself, but the runs it starts inherit `-v` and say
+their commands in their own panes. What the work itself starts is said as well when errand runs it in
+its own process — an entry's `subprocess.run`, for instance.
+
