@@ -33,9 +33,38 @@ errand run -k bench --env box "bench/**::*"
 |---|---|
 | `host` | what ssh reaches: a name of your `~/.ssh/config`, `user@host` |
 | `root` | where the project goes over there. Default: the same path as here |
-| `python` | the interpreter to start over there when no later layer overrides it |
+| `python` | the interpreter to try first over there when no later layer chooses one ( [below](#nothing-to-install-over-there) ) |
 | `options` | passed to ssh **and** to rsync — a port, an identity, a jump host |
 | `also` | sibling checkouts the work needs ( `[ "../loom" ]` ), pushed to the same relative place over there |
+
+## Nothing to install over there
+
+What crosses is errand itself — it then runs the work in the environment asked for — and it needs
+nothing installed on the other side:
+
+- **its sources travel.** The package is rsynced to `~/.cache/errand/src/<version>-<checkout>/`, one
+  copy per checkout here, and started from there. The errand that answers is the one that asked.
+- **it finds a Python to start on.** When a later layer chooses the interpreter ( `Venv`,
+  `Micromamba`, `Uv`, a container ) it is that one. Otherwise the command looks where it starts,
+  after `Module`, `Nix` or `Vars` have had their say: the `python` named here, then `python3`,
+  `python3.14` … down to 3.8.
+- **or one is made for it.** With none recent enough, one is made for errand alone in
+  `~/.cache/errand/python`: with `uv` if the machine has it, else micromamba, mamba or conda, else
+  with a `uv` fetched from astral.sh into `~/.cache/errand/uv` — never put on the `PATH`, no shell
+  profile touched. A couple of seconds, once.
+
+```text
+  errand: no python >= 3.8 here: making one for errand alone, in /home/me/.cache/errand/python
+  errand: neither uv nor micromamba nor conda: fetching uv into /home/me/.cache/errand/uv
+```
+
+Under a scheduler, the command starts on a compute node that may have no network: the search is
+then made once on the machine ssh reaches, before submitting, and `~/.cache` — in the home directory
+the nodes share — is where the job finds it. Everything errand made for itself is in
+`~/.cache/errand`; removing that directory undoes it.
+
+A Docker or Podman container does not see that home directory: there, errand must be installed in
+the image, as before.
 
 ## The paths are computed before the run happens
 

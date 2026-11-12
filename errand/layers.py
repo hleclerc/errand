@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import trace
+from . import bootstrap, trace
 
 
 @dataclass
@@ -921,6 +921,12 @@ class Ssh:
             # back into the project's copy over there comes back here in turn.
             code = inner[ 0 ].run( inner[ 1 : ], cmd, remote_ctx, pull = pull, echo = echo )
             pull = [ *( pull or [ ] ), *getattr( inner[ 0 ], "fetch", [ ] ) ]
+        elif bootstrap.is_errand( cmd.argv ):
+            # errand itself: its sources go over there, and it starts on a
+            # Python that is there -- found, or made for it ( `bootstrap` ).
+            home = bootstrap.prepare( self, inner, there, echo = echo )
+            sent = bootstrap.command( cmd, inner, home, self.python )
+            code = run_on( there, inner, sent, remote_ctx, echo = echo )
         else:
             code = run_on( there, inner, Command( under( cmd.argv, self.python ), cmd.env ),
                            remote_ctx, echo = echo )
@@ -1208,6 +1214,12 @@ def interpreters_of( stack ):
     what a command that only needs errand itself goes through -- the submission a `--batch` preparation makes from inside its
     allocation -- where a container, a module or a variable is not wanted."""
     return [ l for l in stack if isinstance( l, ( Venv, Micromamba, Uv ) ) ]
+
+
+def chooses_python( stack ) -> bool:
+    """Whether a layer of `stack` replaces `python` with an interpreter of its own:
+    a venv, a micromamba or conda environment, a uv venv, a container."""
+    return any( isinstance( l, ( Venv, Micromamba, Uv, Apptainer, Docker ) ) for l in stack )
 
 
 def mpi_of( stack ):

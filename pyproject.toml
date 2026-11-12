@@ -9,7 +9,7 @@ name = "errand-run"
 dynamic = [ "version" ]          # read from errand/__init__.py: one place, not two
 description = "Run work here, in a container or on another machine, and bring back what it produced"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.8"  # bootstrap.MIN says the same
 license = "MIT"
 license-files = [ "LICENSE" ]
 authors = [ { name = "Hugo Leclerc" } ]

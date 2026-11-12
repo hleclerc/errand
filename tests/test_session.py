@@ -138,7 +138,7 @@ if test( "the session watches what each place said it would write" ):
             while session.running:
                 time.sleep( 0.1 )
             states = session.look()
-            assert len( session.plan ) == 4, session.plan
+            assert len( session.plan ) == 4, ( session.plan, list( session.log ) )
             assert { row[ "place" ] for row in session.plan } == { R.place( "plain" ), R.place( "other" ) }
             assert [ s[ "status" ] for s in states ] == [ "PASS" ] * 4, ( states, list( session.log ) )
             # ...and with it the file the case wrote, which is what a pane can face.

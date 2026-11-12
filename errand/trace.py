@@ -62,9 +62,19 @@ def _say( s: str ):
 
 def _shown( args ) -> str:
     if isinstance( args, ( str, bytes ) ):
-        return args if isinstance( args, str ) else args.decode( errors = "replace" )
-    return " ".join( shlex.quote( os.fspath( a ) if not isinstance( a, bytes ) else a.decode( errors = "replace" ) )
+        return _short( args if isinstance( args, str ) else args.decode( errors = "replace" ) )
+    return " ".join( _short( shlex.quote( os.fspath( a ) if not isinstance( a, bytes ) else a.decode( errors = "replace" ) ) )
                      for a in args )
+
+
+def _short( word: str ) -> str:
+    """A script handed as one argument -- `sh -c '<forty lines>'` -- is said by
+    its first line and its last: the middle is in the source, the ends say
+    which one it is and what it ends up running."""
+    lines = word.splitlines()
+    if len( lines ) <= 4:
+        return word
+    return f"{lines[ 0 ]} ⏎ …{len( lines ) - 2} lines… ⏎ {lines[ -1 ]}"
 
 
 def _context( cwd, env ) -> str:

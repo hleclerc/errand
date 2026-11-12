@@ -9,7 +9,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from errand import test
+from errand import skip, test
 
 ROOT = Path( __file__ ).resolve().parent.parent
 
@@ -38,6 +38,8 @@ if test( "every file of this project is readable by a bare interpreter" ):
 
 if test( "no file of this project imports a third-party module at its top" ):
     import ast
+    if not hasattr( sys, "stdlib_module_names" ):
+        skip( "the list of standard modules comes with Python 3.10" )
     stdlib = set( sys.stdlib_module_names ) | { "errand", "_demo", "_infra", "_tty" }
     own = { p.stem for p in ROOT.rglob( "*.py" ) } | { p.name for p in ROOT.rglob( "*" ) if p.is_dir() }
     found = [ ]

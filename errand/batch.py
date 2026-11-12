@@ -31,7 +31,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from . import layers as L, yamlish
+from . import bootstrap, layers as L, yamlish
 
 def batch_rel( root ) -> str:
     from . import config
@@ -95,19 +95,27 @@ def detach( env, tags, argv, *, root, log: Path, child_env: dict, phase = "run",
         return { "kind": "failed", "handle": "",
                  "error": f"{env.name} is a virtual machine: `--batch` does not reach one yet" }
 
-    tail, python, work = stack, "python", ctx
+    tail, python, work, home = stack, "python", ctx, None
     if ssh is not None:
         tail, python = stack[ 1 : ], ssh.python
         work = L.Context( root = ssh.remote_root( ctx ), tags = tags, remote = True,
                           batch = True, phase = phase )
-    cmd = L.Command( [ python, "-m", "errand", *argv ], dict( child_env ) )
-    follow = L.Command( [ python, "-m", "errand", *then ], dict( child_env ) ) if then else None
+        L.push( root, ssh.host, work.root, ssh.options )
+        # errand itself goes, and finds -- or has made -- a Python to start on ( `bootstrap` ).
+        home = bootstrap.prepare( ssh, tail, ssh.place( ctx ) )
+
+    def errand_cmd( args, inner ):
+        made = L.Command( [ python, "-m", "errand", *args ], dict( child_env ) )
+        return made if home is None else bootstrap.command( made, inner, home, python )
+
+    cmd = errand_cmd( argv, tail )
+    follow = errand_cmd( then, [ ] ) if then else None
     if follow is not None and batch is not None:
         # Inside the allocation, outside the layers after the scheduler -- but with the interpreter they choose: the
-        # submission is errand itself, and the machine's own `python3` has no errand ( and, run from the project root,
-        # takes a directory named `errand` for a package without `__main__` ).
+        # submission is errand itself, and must not run in a container or under a module it does not need.
         k = tail.index( batch )
-        follow = L.compose( L.interpreters_of( tail[ k + 1 : ] ), follow, work )
+        chosen = L.interpreters_of( tail[ k + 1 : ] )
+        follow = L.compose( chosen, errand_cmd( then, chosen ), work )
         inner = L.compose( tail[ k + 1 : ], cmd, work )
         cmd = L.Command( [ "sh", "-c", f"{inner.shell()} && {follow.shell()}" ], { } )
         tail = tail[ : k + 1 ]
@@ -133,8 +141,6 @@ def detach( env, tags, argv, *, root, log: Path, child_env: dict, phase = "run",
         got = subprocess.run( wrapped.argv, cwd = root, capture_output = True, text = True,
                               env = { **os.environ, **wrapped.env } )
         return _from_submission( got, kind = "batch" )
-
-    L.push( root, ssh.host, work.root, ssh.options )
 
     remote_log = f"{work.root}/{batch_rel( root )}/{log.name}"
     line = ( f"mkdir -p {work.root}/{batch_rel( root )} && cd {work.root} && "

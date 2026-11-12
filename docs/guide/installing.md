@@ -15,7 +15,8 @@ errand --version
 from errand import test, bench, Param
 ```
 
-Python 3.10 or later, on a unix.
+Python 3.8 or later, on a unix. Only on the machine you type on: on another one reached over
+[`Ssh`](./layers/ssh#nothing-to-install-over-there), errand brings itself.
 
 ## No dependencies, and it is not going to get any
 
