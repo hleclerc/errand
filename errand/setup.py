@@ -149,6 +149,31 @@ def status( root: Path, env, ctx ) -> str:
     return next( ( s for s in ( STALE, ADOPTED ) if s in states ), OK )
 
 
+def _inside( env, ctx ):
+    """-> layer -> the context to build it in when it is after a scheduler held warm, else None.
+    The allocation is reached ( held, if it is not ) only once one such layer is looked at."""
+    from .cli import alive
+    stack = env.stack_for( "run", ctx.tags )
+    sched = alive.scheduler( stack )
+    after = { id( l ) for l in stack[ stack.index( sched ) + 1 : ] } if sched is not None else set()
+    made = { }
+
+    def inside( layer ):
+        if id( layer ) not in after:
+            return None
+        if "ctx" not in made:
+            from types import SimpleNamespace
+            from . import bootstrap
+            ssh = env.ssh
+            there = ssh.remote_root( ctx ) if ssh is not None else ctx.root
+            home = bootstrap.ship( ssh.host, ssh.options ) if ssh is not None else None
+            made[ "ctx" ] = alive.Allocation( env, ctx.tags, SimpleNamespace(
+                root = ctx.root, ssh = ssh, there = Path( there ), home = home ) ).inside()
+        return made[ "ctx" ]
+
+    return inside
+
+
 def ensure( root: Path, env, ctx, *, force = False, echo = print, dry_run = False ) -> int:
     """Build or update whatever `env` declares and does not have.
 
@@ -173,12 +198,15 @@ def ensure( root: Path, env, ctx, *, force = False, echo = print, dry_run = Fals
         there = L.Context( root = place.root, tags = ctx.tags, remote = True, host = place,
                            origin = ctx.origin )
     jobs, adopted = [ ], [ ]
+    inside = _inside( env, ctx )
     for _, layer in env.indexed( ctx.tags ):
-        if not hasattr( layer, "build" ):
+        if not isinstance( layer, L.Artefact ):
             continue
+        # After a scheduler held warm, a layer is built where it is used: in the allocation.
+        at = inside( layer ) or there
         want = L.fingerprint( *layer.spec( ctx ) ) if hasattr( layer, "spec" ) else None
-        present = _present( layer, there )
-        record, stamp = look( root, layer, there )
+        present = _present( layer, at )
+        record, stamp = look( root, layer, at )
         state = verdict( want, record, stamp )
         build = force or not present or state == STALE or retried( layer, record )
         if state == FOUND and not build:
@@ -188,15 +216,15 @@ def ensure( root: Path, env, ctx, *, force = False, echo = print, dry_run = Fals
                 build = True
             elif older:
                 echo( f"  {layer.describe()}: older than {older}: adopted as it is ( errand setup --force to rebuild )" )
-        steps = layer.build( there ) if build else [ ]
+        steps = layer.build( at ) if build else [ ]
         if steps:
-            jobs.append( ( layer, want, steps, record, stamp, present ) )
+            jobs.append( ( layer, want, steps, record, stamp, present, at ) )
         elif state == FOUND or ( build and state == STALE ):
-            adopted.append( ( layer, want, stamp ) )    # nothing to do, or nothing it could do
+            adopted.append( ( layer, want, stamp, at ) )    # nothing to do, or nothing it could do
 
     if not dry_run:
-        for layer, want, stamp in adopted:
-            write( root, layer, there, { "built": _built( want, stamp, "adopted" ) } )
+        for layer, want, stamp, at in adopted:
+            write( root, layer, at, { "built": _built( want, stamp, "adopted" ) } )
     if not jobs:
         return 0
 
@@ -215,7 +243,7 @@ def ensure( root: Path, env, ctx, *, force = False, echo = print, dry_run = Fals
                 echo( f"    would run: {step}" )
         return 0
 
-    for layer, want, steps, record, stamp, present in jobs:
+    for layer, want, steps, record, stamp, present, there in jobs:
         log = f"{builds( root )}/{slug( layer )}.log"
         there.host.shell( f"mkdir -p {shlex.quote( builds( root ) )} && : > {shlex.quote( log )}", quiet = True )
         for step in steps:

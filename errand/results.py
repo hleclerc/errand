@@ -218,11 +218,38 @@ def git_commit( root: Path ):
         return None, False
 
 
-def ram_mb( ) -> float:
-    import resource
+def ram_mb( ) -> float | None:
     import sys
+    try:
+        import resource
+    except ImportError:                     # Windows: its peak is asked of the process itself
+        return _peak_windows()
     peak = resource.getrusage( resource.RUSAGE_SELF ).ru_maxrss
     return peak / ( 1024 * 1024 ) if sys.platform == "darwin" else peak / 1024
+
+
+def _peak_windows( ) -> float | None:
+    import ctypes
+    from ctypes import wintypes as W
+
+    class Counters( ctypes.Structure ):
+        _fields_ = [ ( "cb", W.DWORD ), ( "PageFaultCount", W.DWORD ), ( "PeakWorkingSetSize", ctypes.c_size_t ),
+                     ( "WorkingSetSize", ctypes.c_size_t ), ( "QuotaPeakPagedPoolUsage", ctypes.c_size_t ),
+                     ( "QuotaPagedPoolUsage", ctypes.c_size_t ), ( "QuotaPeakNonPagedPoolUsage", ctypes.c_size_t ),
+                     ( "QuotaNonPagedPoolUsage", ctypes.c_size_t ), ( "PagefileUsage", ctypes.c_size_t ),
+                     ( "PeakPagefileUsage", ctypes.c_size_t ) ]
+    try:
+        c = Counters()
+        c.cb = ctypes.sizeof( c )
+        k = ctypes.windll.kernel32
+        k.GetCurrentProcess.restype = W.HANDLE
+        ask = getattr( k, "K32GetProcessMemoryInfo", None ) or ctypes.windll.psapi.GetProcessMemoryInfo
+        ask.argtypes = [ W.HANDLE, ctypes.c_void_p, W.DWORD ]
+        if ask( k.GetCurrentProcess(), ctypes.byref( c ), c.cb ):
+            return c.PeakWorkingSetSize / ( 1024 * 1024 )
+    except ( AttributeError, OSError ):
+        pass
+    return None
 
 
 # ── writing ──────────────────────────────────────────────────────────────────
@@ -259,7 +286,7 @@ def write_result( leaf: Path, *, entry, root, env_name, where, tags, status, err
         "status"     : status,
         "error"      : error,
         "duration_s" : round( duration_s, 3 ),
-        "ram_mb"     : round( ram, 1 ),
+        "ram_mb"     : round( ram, 1 ) if ram is not None else None,
         "params"     : _plain( params ),
         "tags"       : _plain( tags ),
         "results"    : _plain( results ),
@@ -276,7 +303,8 @@ def _under( path: Path, root: Path ) -> str:
     not cost an otherwise good run its result file.
     """
     try:
-        return str( path.relative_to( root ) )
+        # in the form both sides read, whichever wrote it: a plan written on Windows is read here
+        return path.relative_to( root ).as_posix()
     except ValueError:
         return str( path )
 

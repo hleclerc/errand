@@ -25,7 +25,7 @@ RECIPE = 2
 
 
 @dataclass
-class Windows:
+class Windows( L.Gateway, L.Artefact ):
     """First, or right after the `Ssh` that leads to the machine that boots it.
     Everything after it runs on Windows.
 

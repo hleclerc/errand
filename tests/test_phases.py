@@ -67,60 +67,34 @@ if test( "setup keeps every layer of either phase current" ):
     assert [ i for i, _ in env.indexed() ] == [ 0, 1 ]
 
 
-if test( "under --batch, a preparation submits the run it prepared, from inside its allocation" ):
+def _where( ):
+    from types import SimpleNamespace
+    return SimpleNamespace( root = Path( "/proj" ), ssh = None, there = Path( "/proj" ), home = None,
+                            boot = "/errand/_boot.py" )
+
+
+if test( "a session is reached by its agent, by a command through a scheduler, or by watching a job" ):
+    from errand.cli.drive import Reach
+    kind = lambda layers, phase = "run": Reach( errand.Env( layers ), { }, phase, _where() ).kind
+    assert kind( [ errand.Venv( python = "/opt/prj/bin/python" ) ] ) == "agent"
+    assert kind( [ errand.Slurm( gpus = 1 ), errand.Venv( python = "/opt/prj/bin/python" ) ] ) == "command"
+    assert kind( [ errand.Slurm( watch = 60, time = "1:00:00" ) ] ) == "watched"
+    assert kind( [ errand.Slurm( when = "phase=run" ) ], "prepare" ) == "agent", "prepared outside the allocation"
+
+
+if test( "under --batch, the run is submitted through the run's layers, sized from the plan" ):
+    from errand.cli.drive import Reach
     env = errand.Env( [ errand.Slurm( cpus = 4, when = "phase=prepare" ),
-                        errand.Slurm( gpus = 1, when = "phase=run" ),
+                        errand.Slurm( when = "phase=run" ),
                         errand.Apptainer( image = "c.sif" ) ] )
-    seen = { }
-
-    def fake_run( argv, **kw ):
-        seen[ "argv" ] = argv
-        class Done:
-            returncode, stdout, stderr = 0, "Submitted batch job 4242", ""
-        return Done()
-
-    real = B.subprocess.run
-    B.subprocess.run = fake_run
-    try:
-        got = B.detach( env, { }, [ "run", "--phase", "prepare" ], root = Path( "/proj" ),
-                        log = Path( "/tmp/x.log" ), child_env = { }, phase = "prepare",
-                        then = [ "run", "--submit-run" ] )
-    finally:
-        B.subprocess.run = real
-    assert got == { "kind": "batch", "handle": "4242" }, got
-    argv = seen[ "argv" ]
-    assert argv[ 0 ] == "sbatch" and "--cpus-per-task" in argv and "--gpus" not in argv, argv
+    reach = Reach( env, { }, "run", _where(), needs = { "gpus": 1 }, batch = True )
+    line = reach.line( { "verb": "run" }, { "ERRAND_IN_ENV": "x" } )
+    argv = reach.wrapped.argv
+    assert argv[ 0 ] == "sbatch" and "--gpus" in argv and "--cpus-per-task" not in argv, argv
     script = argv[ argv.index( "--wrap" ) + 1 ]
-    # the preparation inside the container, and THEN the submission, outside it
-    assert "apptainer exec" in script and "--phase prepare" in script, script
-    assert script.index( "--phase prepare" ) < script.index( "--submit-run" ), script
-    assert "apptainer" not in script[ script.index( "&&" ) : ], "the submission is outside the container"
-
-
-if test( "under --batch, the submission takes the interpreter of the environment, not the machine's" ):
-    # the machine's `python3` has no errand: the submission goes through the layers that choose an interpreter ( a venv, a
-    # micromamba environment ), never through a container
-    env = errand.Env( [ errand.Slurm( gpus = 1 ), errand.Venv( python = "/opt/prj/bin/python" ),
-                        errand.Apptainer( image = "c.sif" ) ] )
-    seen = { }
-
-    def fake_run( argv, **kw ):
-        seen[ "argv" ] = argv
-        class Done:
-            returncode, stdout, stderr = 0, "Submitted batch job 7", ""
-        return Done()
-
-    real = B.subprocess.run
-    B.subprocess.run = fake_run
-    try:
-        B.detach( env, { }, [ "run", "--phase", "prepare" ], root = Path( "/proj" ), log = Path( "/tmp/x.log" ), child_env = { },
-                  phase = "prepare", then = [ "run", "--submit-run" ] )
-    finally:
-        B.subprocess.run = real
-    script = seen[ "argv" ][ seen[ "argv" ].index( "--wrap" ) + 1 ]
-    after = script[ script.index( "&&" ) : ]
-    assert "/opt/prj/bin/python -m errand run --submit-run" in after, after
-    assert "apptainer" not in after, after
+    # the session, inside the container, from the copy of errand the container sees
+    assert "apptainer exec" in script and "-m errand.agents.ops session" in script, script
+    assert line.startswith( "cd /proj && sbatch" ), line
 
 
 TWO = '''
@@ -143,7 +117,8 @@ if test( "two passes: the preparation writes the plan, the run checks it and run
         project = write_project( Path( tmp ) / "proj", TWO.format(), { "test_a.py": WORK } )
         code, output = run_errand( project, "run", "--no-queue", "--env", "two", "**::*" )
         assert code == 0, output
-        assert "--phase prepare" in output and "--from-plan" in output, output
+        # prepared on its own, by the preparation's layers, then run by the run's ( through their agents )
+        assert "prepared 1 entry in two" in output, output
         assert "who run" in output, "the run phase goes through the run phase's layers"
         plans = list( ( project / ".errand" / "plans" ).glob( "*-two.json" ) )
         assert len( plans ) == 1, plans
@@ -152,17 +127,21 @@ if test( "two passes: the preparation writes the plan, the run checks it and run
 
 
 if test( "a run phase that does not find what was prepared refuses to run it" ):
-    import os, subprocess, sys
-    from errand import cli
+    import json, os, subprocess, sys
     with tempfile.TemporaryDirectory() as tmp:
         project = write_project( Path( tmp ) / "proj", TWO.format(), { "test_a.py": WORK } )
-        # The two phases by hand, as a dispatch would start them: one stamp, inside `two`.
-        env = { **os.environ, "ERRAND_STAMP": "2026-01-01_00h00m00", cli.IN_ENV: "two",
+        known = { "pattern": "**::*", "target_args": [ ], "no_queue": True, "from_default": False }
+        env = { **os.environ, "ERRAND_STAMP": "2026-01-01_00h00m00",
                 "PYTHONPATH": str( Path( errand.__file__ ).resolve().parent.parent ) }
-        phase = lambda *extra: subprocess.run( [ sys.executable, "-m", "errand", "run", *extra, "--no-queue", "**::*" ],
-                                               cwd = project, env = env, capture_output = True, text = True )
-        got = phase( "--phase", "prepare" )
+
+        def session( **kw ):
+            req = { "root": str( project ), "env": "two", "tags": { }, "verb": "run", "kinds": [ ],
+                    **kw, "known": { **known, **kw.pop( "known", { } ) } }
+            return subprocess.run( [ sys.executable, "-m", "errand.agents.ops", "session", json.dumps( req ) ],
+                                   cwd = project, env = env, capture_output = True, text = True )
+
+        got = session( prepare_only = True, known = { "phase": "prepare" } )
         assert got.returncode == 0, got.stdout + got.stderr
         ( project / "test_b.py" ).write_text( WORK )            # the sources moved in between
-        got = phase( "--from-plan" )
+        got = session( known = { "phase": "run", "from_plan": True } )
         assert got.returncode == 1 and "not what was prepared" in got.stdout, got.stdout + got.stderr

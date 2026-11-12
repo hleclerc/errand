@@ -78,16 +78,17 @@ if test( "ssh hands a machine to boot its own host, and brings back what it fetc
         seen.update( host = ctx.host, root = ctx.root, origin = ctx.origin, pull = pull, argv = cmd.argv )
         return 7
 
-    kept = vm.Windows.run, L.push, L.fetch
+    from errand.layers import gateways as G          # where Ssh.run finds them
+    kept = vm.Windows.run, G.push, G.fetch
     vm.Windows.run = run
-    L.push  = lambda *a, **kw: None
-    L.fetch = lambda paths, *a, **kw: fetched.extend( paths )
+    G.push  = lambda *a, **kw: None
+    G.fetch = lambda paths, *a, **kw: fetched.extend( paths )
     try:
         code = L.Ssh( host = "lmo", root = "/there/proj" ).run(
             [ vm.Windows( fetch = [ "build" ] ) ], L.Command( [ "cl", "/c", "a.cpp" ] ),
             ctx(), pull = [ "runs/x" ], echo = lambda s: None )
     finally:
-        vm.Windows.run, L.push, L.fetch = kept
+        vm.Windows.run, G.push, G.fetch = kept
     assert code == 7, "the command's own code comes back through both"
     assert isinstance( seen[ "host" ], L.Over ) and seen[ "host" ].ssh.host == "lmo"
     assert str( seen[ "root" ] ) == "/there/proj" and seen[ "origin" ] == ROOT

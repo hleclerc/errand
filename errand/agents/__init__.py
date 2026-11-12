@@ -22,7 +22,7 @@ import threading
 import time
 
 from . import frames as F, upstream as U
-from .client import attach, Call, Connection, Lost, shell, start
+from .client import attach, Call, Connection, interact, Lost, shell, start
 
 
 _open : dict = { }
@@ -80,4 +80,4 @@ def _through_hub( target: dict ) -> Connection:
     return conn
 
 
-__all__ = [ "attach", "Call", "Connection", "Lost", "enabled", "mode", "open", "shell", "start" ]
+__all__ = [ "attach", "Call", "Connection", "enabled", "interact", "Lost", "mode", "open", "shell", "start" ]

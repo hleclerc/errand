@@ -29,4 +29,8 @@ if __name__ == "__main__":
         runpy.run_module( module, run_name = "__main__", alter_sys = True )
         sys.exit( 0 )
     from errand.cli import main
-    sys.exit( main() )
+    try:
+        sys.exit( main() )
+    except KeyboardInterrupt:
+        print( "\n  interrupted", file = sys.stderr )
+        sys.exit( 130 )

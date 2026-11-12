@@ -11,8 +11,9 @@ from .style import bad, dim, warn
 from .project import _from_root, _put_src_on_path, _tags_from_env, _targets, find_root, IN_ENV, output_tree
 from .here import Ask, Report
 from .parallel import run_one
-from .there import go_there, run_there
-from .batches import show_batches, submit, submit_run
+from . import drive
+from .there import run_there
+from .batches import show_batches, submit
 from .listing import _epilogue, print_envs, print_queue
 from .parsing import build_parser, KINDS, misplaced, own_part, split_target, split_verb, VERBS
 from .help import print_help
@@ -101,7 +102,7 @@ def main( argv = None ):
         if unknown:
             print( bad( f"errand {verb}: unknown option {unknown[ 0 ]}" ) )
             return 2
-        wanted = { "forget": 1, "vm": 1, "setup": None }.get( verb, 0 )
+        wanted = { "forget": 1, "vm": 1, "setup": None, "attach": None }.get( verb, 0 )
         if wanted is not None and len( words ) != wanted:
             print( bad( f"errand {verb}: " + ( f"takes no argument ( got {' '.join( words )} )"
                                                if not wanted else "expects one argument" ) ) )
@@ -136,6 +137,10 @@ def main( argv = None ):
     if verb == "forget":
         batch.forget( root, words[ 0 ] )
         return 0
+
+    if verb == "attach":
+        report = Report()
+        return _epilogue( report, drive.attach( root, words[ 0 ] if words else None, report = report ) )
 
     if verb in ( "status", "watch" ):
         return show_batches( root, live = verb == "watch" )
@@ -226,19 +231,14 @@ def main( argv = None ):
 
     if inside is None and verb == "run" and known.batch:
         forward = [ a for a in before if a != "--batch" ] + ( [ target ] if target else [ ] ) + after
-        return submit( targets, forward, argv, root = root, out_root = out_root )
-
-    if known.submit_run:
-        env, tags = targets[ 0 ]
-        return submit_run( env, tags, [ a for a in before if a != "--submit-run" ]
-                                      + ( [ target ] if target else [ ] ) + after, root = root )
+        return submit( targets, forward, argv, root = root, known = known, kinds = kinds )
 
     report = Report()
     rc, dispatched = 0, 0
     for env, tags in targets:
-        if inside is None and env.vm is not None and verb == "run":
-            # errand does not run inside a virtual machine: the command goes in
-            # as it is, and what `--pull` names comes back.
+        if inside is None and env.vm is not None and verb == "run" and not drive.eligible( env, tags ):
+            # errand does not run inside a virtual machine without a Python: the
+            # command goes in as it is, and what `--pull` names comes back.
             rc |= run_there( known, [ target, *after ], root = root, targets = [ ( env, tags ) ] )
             dispatched += 1
             continue
@@ -252,8 +252,13 @@ def main( argv = None ):
                     rc = 1
                     continue
             print( dim( f"\n  -> {env.name}  {env.describe()}" ), flush = True )
-            rc |= go_there( env, tags, verb, rest, root = root, pull = known.pull, time = known.time )
-            dispatched += 1
+            if not drive.eligible( env, tags ):
+                print( bad( f"  {env.name} is a virtual machine: errand does not list entries in one" ) )
+                rc = 1
+                continue
+            # Driven from here, a session over there doing the work: the report is this side's.
+            rc |= drive.drive( env, tags, verb, known, root = root, out_root = out_root,
+                               report = report, kinds = kinds, pull = known.pull or ( ) )
             continue
         rc |= here( env, tags, verb, rest, known, root = root, out_root = out_root,
                     report = report, kinds = kinds, inside = inside )
@@ -263,6 +268,4 @@ def main( argv = None ):
     # "all good" under somebody else's failures, which is worse than silence.
     if verb == "list" or ( dispatched and dispatched == len( targets ) ):
         return rc
-    if known.phase == "prepare":
-        return rc or ( 1 if report.broken else 0 )
     return _epilogue( report, rc )

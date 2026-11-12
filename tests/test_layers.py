@@ -168,7 +168,7 @@ if test( "an environment that is already there is adopted, never recreated" ):
     # command, because nothing had ever been recorded about it. It resolved
     # python 3.13 into a 3.14 environment and took numpy, jax and every
     # editable install out with it.
-    class Fake:
+    class Fake( L.Artefact ):
         def __init__( self, present ):
             self.present, self.built = present, 0
 
@@ -269,7 +269,7 @@ if test( "a declared micromamba that is not there is fetched first" ):
 
 
 if test( "what errand has never recorded is not announced as stale" ):
-    class There:
+    class There( L.Artefact ):
         def describe( self ): return "there"
         def spec( self, ctx ): return [ "3.13" ]
         def probe( self, ctx ): return True
@@ -336,7 +336,7 @@ if test( "over ssh, `is it there` is asked of the machine it would be built on" 
 
     far = L.Ssh( host = "over-there", root = "/there" )
 
-    class Image:
+    class Image( L.Artefact ):
         def __init__( self, answer ):
             self.answer, self.built = answer, 0
 

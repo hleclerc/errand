@@ -2,35 +2,40 @@
 """
 from __future__ import annotations
 
-import os
-import subprocess
-import sys
 import time
 
 from .. import batch, layers as L, results as R
 from .style import bad, BOLD, dim, good, head, RESET, warn
 from .project import child_env_for
-from .plans import plan_path, read_plan
+from .plans import plan_path
 
 
-def submit( targets, rest, argv, *, root, out_root ):
+def submit( targets, rest, argv, *, root, known, kinds ):
     """Launch each environment's share and come straight back.
 
-    Where a run has to be sized from what preparing finds, the preparation is
-    what is launched, and it submits the run itself once it knows."""
+    An environment with layers is prepared first, here ( `cli/drive.submit` ), so the run
+    is sized from what was found; then the run is submitted and let go of. One with none
+    is this errand, detached."""
+    from . import drive
+    from .here import Report
+    from .. import setup
+
     ident = batch.new_id( root )
     stripped = [ a for a in argv if a != "--batch" ]
-    forward = list( rest )
 
     places = [ ]
     for env, tags in targets:
         log = batch.batch_dir( root ) / f"{ident}-{R.slug( env.name )}.log"
-        two = env.wraps_anything( tags ) and not env.single_pass( tags )
-        got = batch.detach( env, tags,
-                            [ "run", "--phase", "prepare", *forward ] if two else [ "run", *forward ],
-                            root = root, log = log, child_env = child_env_for( env, tags ),
-                            phase = "prepare" if two else "run",
-                            then = [ "run", "--submit-run", *forward ] if two else None )
+        if env.wraps_anything( tags ) and drive.eligible( env, tags ):
+            if not known.no_setup and setup.ensure( root, env, L.Context( root = root, tags = tags ),
+                                                    echo = lambda s: print( dim( s ), flush = True ) ):
+                got = { "kind": "failed", "handle": "", "error": f"could not prepare {env.name}" }
+            else:
+                print( dim( f"\n  -> {env.name}  {env.describe()}" ), flush = True )
+                got = drive.submit( env, tags, known, root = root, kinds = kinds, report = Report(), log = log )
+        else:
+            got = batch.detach( env, tags, [ "run", *rest ], root = root, log = log,
+                                child_env = child_env_for( env, tags ) )
         got[ "env" ] = env.name
         got[ "plan" ] = str( plan_path( root, env.name ).relative_to( root ) )
         places.append( got )
@@ -47,42 +52,6 @@ def submit( targets, rest, argv, *, root, out_root ):
         print( bad( f"  {p[ 'env' ]}: could not start - {p.get( 'error', '' )}" ) )
     print( dim( f"  errand status    errand watch" ) )
     return 1 if failed else 0
-
-
-def submit_run( env, tags, rest, *, root ):
-    """The end of a preparation launched by `--batch`: submit the run it has
-    just prepared, sized from its plan, and say which job that is.
-
-    This process is on the machine the scheduler is, inside the preparation's
-    allocation but outside the layers after its scheduler -- so the run goes
-    through the run phase's layers from here on, the leading `Ssh` aside."""
-    import json
-    plan = read_plan( root, env.name )
-    if plan is None:
-        print( bad( f"  {env.name}: no plan to submit a run from" ) )
-        return 1
-    stack = env.stack_for( "run", tags )
-    if L.ssh_of( stack ) is not None:
-        stack = stack[ 1 : ]
-    ctx = L.Context( root = root, tags = tags, batch = True, phase = "run", needs = plan[ "needs" ] )
-    cmd = L.Command( [ sys.executable, "-m", "errand", "run", "--from-plan", *rest ],
-                     child_env_for( env, tags ) )
-    if L.batch_of( stack ) is None:
-        # Nothing to submit to: the session this runs in is the detachment,
-        # and the run simply follows the preparation in it.
-        ctx.batch = False
-        wrapped = L.compose( stack, cmd, ctx )
-        return subprocess.run( wrapped.argv, cwd = root, env = { **os.environ, **wrapped.env } ).returncode
-    wrapped = L.compose( stack, cmd, ctx )
-    got = subprocess.run( wrapped.argv, cwd = root, capture_output = True, text = True,
-                          env = { **os.environ, **wrapped.env } )
-    record = batch._from_submission( got, kind = "batch" )
-    batch.submitted_path( plan_path( root, env.name ) ).write_text( json.dumps( record ) )
-    if record[ "kind" ] == "failed":
-        print( bad( f"  {env.name}: could not submit the run - {record.get( 'error', '' )}" ) )
-        return 1
-    print( dim( f"  submitted the run of {env.name}: job {record[ 'handle' ]}" ) )
-    return 0
 
 
 def _without_value( argv, flag ):
@@ -132,11 +101,9 @@ def _show_one( root, record, rows ):
     print( head( f"\n{record[ 'id' ]}  {record[ 'command' ] or '(everything)'}" )
            + dim( f"   {record[ 'when' ]}   {done}/{len( rows )} [{bar:<8}]" ) )
     for place in record.get( "places", [ ] ):
-        then = batch.run_job( root, place )
-        state = batch.alive( then if then is not None else place )
+        state = batch.alive( place )
         how = "running" if state else ( "finished" if state is False else "unknown" )
-        job = f"{place[ 'kind' ]} {place.get( 'handle' ) or '-'}" + (
-            f", then {then[ 'kind' ]} {then.get( 'handle' ) or '-'}" if then is not None else "" )
+        job = f"{place[ 'kind' ]} {place.get( 'handle' ) or '-'}"
         print( dim( f"    {place[ 'env' ]}: {job} on {place.get( 'host' ) or 'this machine'} - {how}" ) )
 
     # Parameters down, places across: that is the shape a matrix actually has,

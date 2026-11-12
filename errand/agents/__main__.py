@@ -15,13 +15,16 @@ def main( argv = None ) -> int:
     if argv[ : 1 ] == [ "rsh" ] and len( argv ) >= 3:
         from .rsh import main as rsh
         return rsh( argv[ 1 ], argv[ 2 : ] )
-    if len( argv ) != 3 or argv[ 0 ] not in ( "connect", "serve" ):
+    if len( argv ) != 3 or argv[ 0 ] not in ( "connect", "serve", "hub" ):
         print( "usage: python -m errand.agents connect|serve DIR KEEP_ALIVE", file = sys.stderr )
         return 2
     verb, root, keep = argv[ 0 ], Path( argv[ 1 ] ).expanduser(), float( argv[ 2 ] )
     if verb == "serve":
         from .agent import Agent
         return Agent( root, keep ).run()
+    if verb == "hub":
+        from .hub import Hub
+        return Hub( root, keep ).run()
     from .daemon import connect
     return connect( root, keep )
 

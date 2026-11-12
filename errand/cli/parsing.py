@@ -20,7 +20,7 @@ VERBS = {
     "run"   : ( "run a file, a command or entries, in one or several environments",
                 [ "runner", "kind", "entry_tags", "jobs", "no_queue", "no_setup", "batch", "keep_out",
                   "out", "pull", "exclusive", "cpus", "ram", "gpus", "ranks", "time", "mem", "label", "quiet", "log",
-                  "at", "phase", "from_plan", "submit_run" ] ),
+                  "at" ] ),
     "list"  : ( "what a target designates, with its parameters",
                 [ "runner", "kind", "entry_tags", "no_setup" ] ),
     "shell" : ( "an interactive shell in an environment", [ "pull", "no_setup" ] ),
@@ -33,6 +33,7 @@ VERBS = {
     "status": ( "how the launched ( --batch ) work is going", [ ] ),
     "watch" : ( "the same, live", [ ] ),
     "forget": ( "drop a submission from the list: errand forget ID", [ ] ),
+    "attach": ( "follow again what a command left running ( a lost connection ), and bring it back", [ ] ),
     "vm"    : ( "the virtual machines kept warm between commands: errand vm stop", [ ] ),
 }
 COMMON = [ "env", "env_tags", "root", "help", "version", "verbose" ]
@@ -72,9 +73,6 @@ def build_parser( tag_names = ( ) ):
     p.add_argument( "--at", default = None,
                     help = argparse.SUPPRESS )   # internal: run exactly the entry at FILE:LINE
     # internal: which phase this process is, when a command is run in two
-    p.add_argument( "--phase", default = None, choices = ( "prepare", "run" ), help = argparse.SUPPRESS )
-    p.add_argument( "--from-plan", action = "store_true", help = argparse.SUPPRESS )
-    p.add_argument( "--submit-run", action = "store_true", help = argparse.SUPPRESS )
 
     # run, shell
     p.add_argument( "--no-queue", action = "store_true",

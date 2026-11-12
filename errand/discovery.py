@@ -193,6 +193,8 @@ def collect( files: list[ Path ], root: Path, reset = True ):
     for f in files:
         try:
             module, name = import_file( f, root )
+        except KeyboardInterrupt:
+            raise
         except BaseException as err:          # SystemExit is handled inside
             broken.append( ( f, f"{type( err ).__name__}: {err}", traceback.format_exc() ) )
             continue

@@ -4,6 +4,7 @@ A target says where the agent is, as data the hub can be handed:
 
     { "kind": "ssh", "host": …, "options": [ … ], "python": "python3", "keep_alive": 900 }
     { "kind": "local", "dir": …, "keep_alive": … }        ( this machine: tests, and later `Here` )
+    { "kind": "cmd", "id": …, "argv": [ … ] }              ( an environment agent: `envs.py` )
 
 Over ssh, errand's sources go first ( `bootstrap.ship` ), then one ssh runs the
 search for a Python ( `bootstrap` ) and execs the `connect` bridge with it. The
@@ -37,6 +38,8 @@ def identity( target: dict ) -> str:
     import json
     if target[ "kind" ] == "local":
         return json.dumps( [ "local", str( target[ "dir" ] ) ] )
+    if target[ "kind" ] == "cmd":
+        return json.dumps( [ "cmd", target[ "id" ] ] )
     return json.dumps( [ "ssh", target[ "host" ], list( target.get( "options", [ ] ) ) ] )
 
 
@@ -45,12 +48,23 @@ def of_host( host: str, options = ( ) ) -> dict:
     return { "kind": "ssh", "host": host, "options": list( options ), "python": "python3", "keep_alive": KEEP_ALIVE }
 
 
-def rsh( host: str, options = ( ) ) -> str:
-    """rsync's `-e`: a remote shell that is the agent, over the hub's stream."""
+def rsh_argv( host: str, options = ( ) ) -> list:
+    """A remote shell that is the agent, over the hub's stream: `<this> host command…`."""
     import base64, json
     code = base64.urlsafe_b64encode( json.dumps( of_host( host, options ) ).encode() ).decode()
-    return " ".join( shlex.quote( a ) for a in
-                     ( sys.executable, str( bootstrap.PACKAGE / "_boot.py" ), "-m", "errand.agents", "rsh", code ) )
+    return [ sys.executable, str( bootstrap.PACKAGE / "_boot.py" ), "-m", "errand.agents", "rsh", code ]
+
+
+def rsh_argv_to( target: dict ) -> list:
+    """The same, to any agent: one on a node of an allocation, reached through another."""
+    import base64, json
+    code = base64.urlsafe_b64encode( json.dumps( target ).encode() ).decode()
+    return [ sys.executable, str( bootstrap.PACKAGE / "_boot.py" ), "-m", "errand.agents", "rsh", code ]
+
+
+def rsh( host: str, options = ( ) ) -> str:
+    """rsync's `-e`: the same, as one string."""
+    return " ".join( shlex.quote( a ) for a in rsh_argv( host, options ) )
 
 
 def name_of( target: dict ) -> str:
@@ -59,6 +73,8 @@ def name_of( target: dict ) -> str:
 
 def argv_of( target: dict ) -> list:
     keep = int( target.get( "keep_alive" ) or KEEP_ALIVE )
+    if target[ "kind" ] == "cmd":
+        return list( target[ "argv" ] )          # a command whose stdio reaches a bridge ( `envs.py` )
     if target[ "kind" ] == "local":
         return [ sys.executable, "-m", "errand.agents", "connect", str( target[ "dir" ] ), str( keep ) ]
     where = f'"$HOME"/{shlex.quote( AGENTS + "/" + name_of( target ) )}'

@@ -74,7 +74,7 @@ if test( "an image newer than its recipe is adopted, and says so" ):
 
 
 if test( "what is built in place is never rebuilt on a date" ):
-    class Prefix:
+    class Prefix( L.Artefact ):
         built = 0
         def describe( self ): return "prefix"
         def spec( self, ctx ): return [ ctx.root / "i.def" ]

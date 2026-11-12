@@ -73,6 +73,12 @@ again. `errand status` reads it, and an `errand attach` follows it. A process ma
 as one that should not outlive its client, which is what a probe is: it is killed when the client
 goes. A daemon with no client and nothing running exits after its `keep_alive`.
 
+**Ctrl-C stops the run.** Here, nothing swallows it: an entry that is interrupted is not an
+entry that failed, and nothing runs after it. Over there, the session gets SIGINT, then SIGTERM two
+seconds later, then SIGKILL three seconds after that, all of them sent to its whole process group.
+So a Python program that catches KeyboardInterrupt and goes on is stopped anyway, and so is a
+program that ignores SIGINT. The command exits with 130, and what was stopped is not waited for.
+
 **An agent knows when it is stale.** Each agent carries a key: a hash of errand's sources, the
 fingerprint of its stack (the one ADR 0004 decides rebuilds with), and the stamp of what was built.
 Before each use, the hub compares the key with what is declared now. An agent that no longer
@@ -101,9 +107,12 @@ alive mode. This covers a `/scratch` or a filesystem mounted only on compute nod
 available only there. A layer placed before it is built from the host agent, as today. The Python
 bootstrap follows the same rule.
 
-**The machine's queue is the host agent's.** It takes and releases claims with `queue/` (file
-locks shared with everything on that machine, other hubs and other users included), around each
-`run` the hub asks for. Under a scheduler there is no claim: the scheduler does that job.
+**The machine's queue is taken where the work runs.** The session that runs the cases takes and
+releases each claim itself (file locks shared with everything on that machine, other hubs and other
+users included), as the remote errand did. This was first meant to be the host agent's job. But a
+claim held by a process tied to a client's connection would be released when the connection drops,
+while the work goes on, and a session's own claims are inherited by what it starts, containers
+included. Under a scheduler there is no claim: the scheduler does that job.
 
 **Layers say what they are.** The behaviour that `isinstance` and `hasattr( …, "run" )` probe
 today becomes explicit abstract base classes:
@@ -131,15 +140,31 @@ errand code still runs unattended over there.
 **Order of work.** Each step keeps the suite green on 3.8 and 3.13, with real runs on lmo.
 
 1. Reorganise what does not depend on this: `cli/`, `tui/`, `vm/`, `runner/`. *Done.*
-2. Protocol, channel, hub, and the host agent over `Ssh`. `host.shell` goes through it.
-3. Environment agents and their operations. The remote errand goes, and the queue moves to the host
-   agent.
-4. `--batch` through the file-driven worker. The old path (`ssh … python -m errand`) is removed
-   here, at the end of this step.
-5. The Windows VM as a `Gateway` (its keeper absorbed), pty and ConPTY.
-6. Slurm alive with several nodes, and building inside the allocation.
-7. errand in process in the environment agent: imports kept warm, with isolation between runs
-   still to be decided (a fork from an agent that has already imported, for one).
+2. Protocol, channel, hub, and the host agent over `Ssh`. `host.shell` and rsync go through it.
+   *Done.*
+3. Environment agents and a session in them (`agents/ops.py`), driven from here (`cli/drive.py`).
+   The remote errand goes where no scheduler or VM is on the way. *Done.*
+4. Schedulers and `--batch` through the same session. In the foreground, it is started through the
+   layers (`srun …`) by the host agent, or its log is read for a watched job. `--batch` prepares
+   here, then submits it. The old path (`ssh … python -m errand`) is gone. *Done.*
+5. The Windows VM as a `Gateway`: an agent in the guest, started through the layer, sessions there.
+   pty on POSIX, ConPTY on Windows. *Done.* The keeper stays as it is: the machine is held for as
+   long as a command uses it, then for its `keep`. Having the hub hold it would keep 8 cores and
+   16G busy for the hub's 15 minutes, against what `keep = "0"` asks for.
+6. Slurm held warm (`keep_alive`): an `sbatch` whose batch step is a node agent, reached by
+   `srun --overlap`, an environment agent inside it, MPI from node 0, and the layers after the
+   scheduler built inside the allocation. *Done.* An agent's idleness is counted from what it runs
+   and is asked, not from who is connected, and an agent stays while one below it is busy. The
+   other nodes have no agent of their own yet: only MPI reaches them.
+7. Imports kept warm: a zygote beside each environment agent imports, never runs anybody's code,
+   and forks a session for each request. Every session is a copy of its own, so nothing leaks
+   from one to the next. What it imports is learned from past sessions, never the project's own
+   modules. It never preloads a module whose import starts threads, OpenBLAS's pool aside, which
+   handles a fork itself. It never initialises CUDA, and it goes when a module it imported
+   changes. numpy's and torch's generators are reseeded in each fork. Signals reach the fork, and
+   a client killed outright takes its fork with it. On lmo, torch with a CUDA matmul: 1.5 s
+   instead of 2.9 s. POSIX only. It is chosen, not imposed: the `Preload( *modules, learn = True )`
+   layer turns it on for a stack, and without it a session is a Python started anew. *Done.*
 
-**Not decided here.** The protocol's exact message set. Isolation rules for step 7. Whether a hub
-may serve several users of one machine (no, for now).
+**Not decided here.** The protocol's exact message set. Whether a hub may serve several users of one
+machine (no, for now).

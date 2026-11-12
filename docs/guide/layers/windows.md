@@ -68,5 +68,16 @@ keeper live on this one, so `errand vm stop` stops those machines too. The queue
 only when it runs here.
 `ERRAND_VM_VNC=1` shows the screen on `vnc://127.0.0.1:5901`, for watching an install go wrong.
 
-Not yet: entries ( `errand run --env win` with a `::` target ) and `--batch` — errand itself is a unix
-program. A command is what a virtual machine takes for now.
+## With a Python, errand runs in it
+
+Declare a Python ( `python = "3.13.1"` ) and the guest is a place like any other. errand copies its
+own sources in, starts an agent there through the layer (`cd`, `vcvars64`, the variables of the
+layers after it), and runs everything through it: entries ( a `::` target ), files, commands, `-j`,
+with the same report and the same records, which come back here. `errand shell --env win` is
+`cmd.exe` in a pseudo-console, with colours, Ctrl-C and resizing.
+
+The machine is held for as long as the command runs, and `keep` says how long it stays up after
+that. While it is up, its agent is too, and the next command starts at once.
+
+Without a Python, `errand run --env win` hands the guest the command itself, through cmd.exe, as
+above. `--batch` does not reach a virtual machine yet.

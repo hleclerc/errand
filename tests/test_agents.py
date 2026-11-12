@@ -150,3 +150,56 @@ if test( "rsync's remote shell is told apart from its options" ):
     from errand.agents.rsh import command_of
     assert command_of( [ "lmo", "rsync", "--server", "-a", "." ] ) == "rsync --server -a ."
     assert command_of( [ "-l", "me", "-p", "22", "lmo", "rsync", "--server" ] ) == "rsync --server"
+
+
+if test( "a session's marks are read out of its output, however the output was cut" ):
+    import io
+    from errand.cli.sessions import Marked
+    from errand.agents.ops import MARK
+    s = Marked()
+    shown = io.BytesIO()
+    s._show = shown.write
+    data = ( "before " + MARK + '{"op": "ran", "n": 1}\nafter\n' ).encode()
+    for k in range( len( data ) ):                         # one byte at a time: every cut point there is
+        s._out( data[ k : k + 1 ] )
+    s._out( b"", end = True )
+    assert shown.getvalue() == b"before after\n", shown.getvalue()
+    assert s.marks.get_nowait() == { "op": "ran", "n": 1 }
+
+
+if test( "attach with nothing left running says so" ):
+    with scratch() as d:
+        project = Path( d ) / "proj"
+        project.mkdir()
+        ( project / "errand-project.py" ).write_text( "" )
+        got = subprocess.run( [ sys.executable, "-m", "errand", "attach" ], cwd = project, capture_output = True, text = True,
+                              env = { **os.environ, "PYTHONPATH": str( ROOT ) }, timeout = 60 )
+        assert got.returncode == 0 and "nothing left running" in got.stdout, got.stdout + got.stderr
+
+
+if test( "a process can have a terminal: its size, a resize, and Ctrl-C as a key" ):
+    agents = fresh()
+    from errand.agents import frames as F
+    prog = ( "import os, signal, sys, time; print( 'tty', sys.stdin.isatty(), os.get_terminal_size(), flush = True ); "
+             "signal.signal( signal.SIGWINCH, lambda *a: print( 'now', os.get_terminal_size(), flush = True ) ); "
+             "time.sleep( 30 )" )
+    with scratch() as d:
+        call = agents.open( local( d ) ).open( { "op": "spawn", "argv": [ sys.executable, "-c", prog ], "keep": False,
+                                                 "tty": { "cols": 101, "rows": 33 } } )
+        call.reply()
+        out = b""
+
+        def until( word ):
+            global out
+            end = time.monotonic() + 20
+            while word not in out and time.monotonic() < end:
+                kind, payload = call.next( 20 )
+                out += payload if kind == F.OUT else b"[exit]" if kind == F.EXIT else b""
+
+        until( b"columns=101, lines=33" )
+        assert b"tty True" in out, out
+        call.send( F.RESIZE, { "cols": 140, "rows": 50 } )
+        until( b"columns=140, lines=50" )
+        call.send( F.IN, b"\x03" )                         # what a terminal makes of it: SIGINT
+        until( b"[exit]" )
+        assert b"KeyboardInterrupt" in out and out.endswith( b"[exit]" ), out

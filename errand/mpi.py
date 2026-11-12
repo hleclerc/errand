@@ -218,6 +218,8 @@ def main( argv = None ):
         discovery.import_file( modules[ e.module ], root )
     except local.Skipped as s:
         status, error, hint = "SKIP", s.reason, s.hint
+    except KeyboardInterrupt:
+        raise
     except BaseException as exc:                    # SystemExit included, as in process
         status, error = "FAIL", f"{type( exc ).__name__}: {exc}"
         traceback.print_exc()

@@ -35,7 +35,7 @@ __all__ = [
     "need", "out_dir", "skip", "tag", "test", "track",
     "configure", "default_env", "default_run", "Env", "envs", "runners", "main", "value",
     "Vars", "Venv", "Micromamba", "Conda", "Uv", "Nix", "Guix", "Module",
-    "Apptainer", "Docker", "Podman", "Ssh", "Slurm", "Mpi", "Windows",
+    "Apptainer", "Docker", "Podman", "Ssh", "Slurm", "Mpi", "Preload", "Windows",
     "Runner", "Level", "Outcome", "RunContext", "Errand", "Pytest", "Catch2", "Cargo",
     "Python", "Executable",
 ]
@@ -63,6 +63,7 @@ _LAZY = {
     "Ssh"       : "errand.layers",
     "Slurm"     : "errand.layers",
     "Mpi"       : "errand.layers",
+    "Preload"   : "errand.layers",
     "Windows"   : "errand.vm",
     "Runner"    : "errand.runner",
     "Level"     : "errand.runner",

@@ -112,6 +112,27 @@ over, having brought back what the run wrote, as it would after `srun`.
 A command run inside the job that calls errand again ( a script driving many runs ) is inside
 that environment already, and runs there directly: one allocation for all of it.
 
+## Held warm: `keep_alive`
+
+```python
+errand.Slurm( nodelist = [ "node15", "node17" ], nodes = 2, ntasks_per_node = 4,
+              time = "4:00:00", keep_alive = "30m" )
+```
+
+Without it, every command waits in the queue for an allocation of its own. With it, the first one
+submits a job that holds the allocation, and the commands that follow within `keep_alive` run in it
+at once: no queue, no new job. A run that took the queue's minutes takes a second.
+
+The job's batch step is an agent, on the first node. The layers after `Slurm` are entered once, by an
+environment agent it starts, and are built there too. A venv or an environment in a node's local
+`/tmp` is built on that node. An entry's ranks are started from that first node with the allocation's
+own `srun`. The allocation is sized from what is declared, since it outlives the command that started
+it: ranks fit when `nodes × ntasks_per_node` is enough for them.
+
+Once nothing has used it for `keep_alive`, the agent goes, the job ends, and the allocation is
+released; at the latest, its `time` releases it. Nothing has to be remembered, and nothing stays
+held by mistake. Its job and its directory are in `~/.cache/errand/alloc/` on the cluster.
+
 ## Preparing and running: two allocations
 
 The preparation — resolving targets, building, collecting — is one task, and is not sized from

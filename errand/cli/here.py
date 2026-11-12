@@ -115,35 +115,13 @@ def _ceiling( mem ) -> list:
 
 def run_entries( entries, modules, *, root, out_root, overrides, env_name, tags,
                  version, report, queued = True, quiet = False, selectors = None, ask = None ):
-    E.set_tags( tags )
     selectors = selectors or { }
     ask = ask or Ask()
     quiet = quiet or ask.quiet
-    where = R.place( env_name )
     if not quiet:
         print( head( f"\n{'=' * 10} {len( entries )} entr{'y' if len( entries ) == 1 else 'ies'}"
-                     f"  {env_name}  {where} {'=' * 10}" ), flush = True )
-
+                     f"  {env_name}  {R.place( env_name )} {'=' * 10}" ), flush = True )
     for e in entries:
-        try:
-            resolved = E.resolve_params( e.params, overrides )
-        except ValueError as err:
-            print( bad( f"  {e.name}: {err}" ) )
-            report.failed.append( ( e, str( err ) ) )
-            continue
-
-        shown = shown_params( resolved, overrides )
-        leaf, entry_root = R.dirs_for( out_root, e, shown, where, root )
-        R.clear( leaf )
-        R.point_latest_at( leaf )
-
-        site = f"{e.file.name}:{e.line}" if e.line else e.file.name
-        if shown:
-            told = ", ".join( f"{k}={v!r}" for k, v in shown.items() )
-            print( dim( f"  {e.name} ({site}) -- {told}" ), flush = True )
-
-        E.begin_run( e, resolved, leaf )
-        status, error, hint = "PASS", None, None
         # The claim is taken OUTSIDE the timing: waiting for the machine is not
         # part of how long the work takes, and recording it as if it were would
         # make a benchmark's numbers depend on who else was busy.
@@ -157,94 +135,133 @@ def run_entries( entries, modules, *, root, out_root, overrides, env_name, tags,
             # Everything this entry starts inherits the claim: an errand it
             # runs must not queue for a machine its own parent is holding.
             handed = { **granted.env(), **granted.handed_down() } if granted else { }
-            with _with_env( handed ):
-                if granted and granted.devices and granted.path:
-                    print( dim( f"  gpu {','.join( str( d ) for d in granted.devices )}" ),
-                           flush = True )
-                started = time.perf_counter()
-                with capture( leaf / R.OUTPUT, ask.log ) as buf:
-                    try:
-                        ranks = mpi.ranks_of( e.resources, ask.resources )
-                        if ranks > 1 and not mpi.inside() and ( e.runner is None or not e.runner.whole_files ):
-                            # One process per rank, each running this body: errand
-                            # stays here and reads what they wrote.
-                            if e.runner is not None:
-                                raise RuntimeError( f"{e.runner.name} entries cannot run on several ranks" )
-                            status, error, hint, got = mpi.run(
-                                e, n = ranks, stack = _stack_of( env_name, tags ), root = root, leaf = leaf,
-                                resolved = resolved, argv = target_argv( e, resolved, overrides ),
-                                env = { **handed, **_handed_to_the_run( root, tags ),
-                                        **( { P.OUT_DIR: str( leaf ) } if ask.visible else { } ) } )
-                            E.results.update( got )
-                        elif e.runner is None:
-                            if e.module not in modules:
-                                # It was registered while ANOTHER file imported
-                                # this one: there are now two of every entry it
-                                # declares, and this copy belongs to an import
-                                # errand did not make and cannot repeat.
-                                raise RuntimeError(
-                                    f"{e.file.name} was imported by another file rather than "
-                                    f"read on its own, so everything it declares is declared "
-                                    f"twice.\n  a file that declares work is not a module to "
-                                    f"import from -- move what is shared into one that declares "
-                                    f"none ( a name starting with `_` is the usual sign )" )
-                            # The target's arguments are its `sys.argv`, as
-                            # they would be for `python file.py args…`.
-                            kept_argv = sys.argv
-                            sys.argv = [ str( e.file ), *target_argv( e, resolved, overrides ) ]
-                            try:
-                                discovery.import_file( modules[ e.module ], root )
-                            finally:
-                                sys.argv = kept_argv
-                        else:
-                            # Somebody else's suite: it runs itself, and only
-                            # says what came of it. Everything around the run
-                            # is the same as for anything here.
-                            # A directory is handed over only when one was
-                            # asked for: the private record is errand's.
-                            got = e.runner.run( e, P.RunContext(
-                                root = root, out_dir = leaf, params = resolved,
-                                env = { **handed, **_handed_to_the_run( root, tags ),
-                                        **( { P.OUT_DIR: str( leaf ) } if ask.visible else { } ) },
-                                selector = selectors.get( e.name ),
-                                build_dir = build_dir_for( root, env_name ),
-                                args = target_argv( e, resolved, overrides ),
-                                wrap = ask.wrap + _ranks_wrap( e, ask, env_name, tags ) ) )
-                            status, error = got.status, got.error
-                            E.results.update( got.results )
-                            if got.output:
-                                print( got.output, end = "" )
-                    except local.Skipped as s:
-                        status, error, hint = "SKIP", s.reason, s.hint
-                    except BaseException as exc:         # SystemExit included
-                        status, error = "FAIL", f"{type( exc ).__name__}: {exc}"
-                        traceback.print_exc()
-                duration = time.perf_counter() - started
-        E.end_run()
-
-        if status == "PASS":
-            print( f"{GREEN}PASS{RESET} {e.name} {dim( f'({site})' )}", flush = True )
-            if e.traits[ "stable_path" ]:
-                # What it produced IS the point, so name the files and the path
-                # to open rather than leave it to be reconstructed.
-                written = sorted( f.name for f in leaf.iterdir()
-                                  if f.name not in ( R.RESULT, R.OUTPUT ) )
-                print( dim( f"  {_short( leaf.parent / R.LATEST, root )}/" ) )
-                for name in written:
-                    print( dim( f"    {name}" ) )
-        elif status == "SKIP":
-            print( f"{YELLOW}SKIP{RESET} {e.name} {dim( f'({site})' )} - {error}", flush = True )
-            report.skipped.append( ( e, error, hint ) )
-        else:
-            print( f"{RED}FAIL{RESET} {e.name} {dim( f'({site})' )} - {error}", flush = True )
-            report.failed.append( ( e, error ) )
-
-        R.write_result(
-            leaf, entry = e, root = root, env_name = env_name, where = where, tags = tags,
-            status = status, error = error, duration_s = duration, ram = R.ram_mb(),
-            params = shown, results = dict( E.results ), output_text = buf.getvalue(),
-            version = version,
-        )
-        R.refresh( entry_root )
-
+            devices = granted.devices if granted and granted.devices and granted.path else None
+            status, error, hint = run_case( e, modules, root = root, out_root = out_root,
+                                            overrides = overrides, env_name = env_name, tags = tags,
+                                            version = version, selectors = selectors, ask = ask,
+                                            handed = handed, devices = devices )
+        tally( report, e, status, error, hint )
     return report
+
+
+def tally( report, e, status, error, hint ):
+    if status == "SKIP":
+        report.skipped.append( ( e, error, hint ) )
+    elif status != "PASS":
+        report.failed.append( ( e, error ) )
+
+
+def run_case( e, modules, *, root, out_root, overrides, env_name, tags, version, selectors, ask,
+              handed, devices = None ):
+    """One entry with one set of values, once the machine is granted: run it, say how it went,
+    and write its record. -> ( status, error, hint )."""
+    E.set_tags( tags )
+    where = R.place( env_name )
+    try:
+        resolved = E.resolve_params( e.params, overrides )
+    except ValueError as err:
+        print( bad( f"  {e.name}: {err}" ) )
+        return "FAIL", str( err ), None
+
+    shown = shown_params( resolved, overrides )
+    leaf, entry_root = R.dirs_for( out_root, e, shown, where, root )
+    R.clear( leaf )
+    R.point_latest_at( leaf )
+
+    site = f"{e.file.name}:{e.line}" if e.line else e.file.name
+    if shown:
+        told = ", ".join( f"{k}={v!r}" for k, v in shown.items() )
+        print( dim( f"  {e.name} ({site}) -- {told}" ), flush = True )
+
+    E.begin_run( e, resolved, leaf )
+    status, error, hint = "PASS", None, None
+    with _with_env( handed ):
+        if devices:
+            print( dim( f"  gpu {','.join( str( d ) for d in devices )}" ), flush = True )
+        started = time.perf_counter()
+        with capture( leaf / R.OUTPUT, ask.log ) as buf:
+            try:
+                ranks = mpi.ranks_of( e.resources, ask.resources )
+                if ranks > 1 and not mpi.inside() and ( e.runner is None or not e.runner.whole_files ):
+                    # One process per rank, each running this body: errand
+                    # stays here and reads what they wrote.
+                    if e.runner is not None:
+                        raise RuntimeError( f"{e.runner.name} entries cannot run on several ranks" )
+                    status, error, hint, got = mpi.run(
+                        e, n = ranks, stack = _stack_of( env_name, tags ), root = root, leaf = leaf,
+                        resolved = resolved, argv = target_argv( e, resolved, overrides ),
+                        env = { **handed, **_handed_to_the_run( root, tags ),
+                                **( { P.OUT_DIR: str( leaf ) } if ask.visible else { } ) } )
+                    E.results.update( got )
+                elif e.runner is None:
+                    if e.module not in modules:
+                        # It was registered while ANOTHER file imported
+                        # this one: there are now two of every entry it
+                        # declares, and this copy belongs to an import
+                        # errand did not make and cannot repeat.
+                        raise RuntimeError(
+                            f"{e.file.name} was imported by another file rather than "
+                            f"read on its own, so everything it declares is declared "
+                            f"twice.\n  a file that declares work is not a module to "
+                            f"import from -- move what is shared into one that declares "
+                            f"none ( a name starting with `_` is the usual sign )" )
+                    # The target's arguments are its `sys.argv`, as
+                    # they would be for `python file.py args…`.
+                    kept_argv = sys.argv
+                    sys.argv = [ str( e.file ), *target_argv( e, resolved, overrides ) ]
+                    try:
+                        discovery.import_file( modules[ e.module ], root )
+                    finally:
+                        sys.argv = kept_argv
+                else:
+                    # Somebody else's suite: it runs itself, and only
+                    # says what came of it. Everything around the run
+                    # is the same as for anything here.
+                    # A directory is handed over only when one was
+                    # asked for: the private record is errand's.
+                    got = e.runner.run( e, P.RunContext(
+                        root = root, out_dir = leaf, params = resolved,
+                        env = { **handed, **_handed_to_the_run( root, tags ),
+                                **( { P.OUT_DIR: str( leaf ) } if ask.visible else { } ) },
+                        selector = selectors.get( e.name ),
+                        build_dir = build_dir_for( root, env_name ),
+                        args = target_argv( e, resolved, overrides ),
+                        wrap = ask.wrap + _ranks_wrap( e, ask, env_name, tags ) ) )
+                    status, error = got.status, got.error
+                    E.results.update( got.results )
+                    if got.output:
+                        print( got.output, end = "" )
+            except local.Skipped as s:
+                status, error, hint = "SKIP", s.reason, s.hint
+            except KeyboardInterrupt:
+                # Ctrl-C stops the run: it is not this entry failing, and nothing runs after it.
+                raise
+            except BaseException as exc:         # SystemExit included
+                status, error = "FAIL", f"{type( exc ).__name__}: {exc}"
+                traceback.print_exc()
+        duration = time.perf_counter() - started
+    E.end_run()
+
+    if status == "PASS":
+        print( f"{GREEN}PASS{RESET} {e.name} {dim( f'({site})' )}", flush = True )
+        if e.traits[ "stable_path" ]:
+            # What it produced IS the point, so name the files and the path
+            # to open rather than leave it to be reconstructed.
+            written = sorted( f.name for f in leaf.iterdir()
+                              if f.name not in ( R.RESULT, R.OUTPUT ) )
+            print( dim( f"  {_short( leaf.parent / R.LATEST, root )}/" ) )
+            for name in written:
+                print( dim( f"    {name}" ) )
+    elif status == "SKIP":
+        print( f"{YELLOW}SKIP{RESET} {e.name} {dim( f'({site})' )} - {error}", flush = True )
+    else:
+        print( f"{RED}FAIL{RESET} {e.name} {dim( f'({site})' )} - {error}", flush = True )
+
+    R.write_result(
+        leaf, entry = e, root = root, env_name = env_name, where = where, tags = tags,
+        status = status, error = error, duration_s = duration, ram = R.ram_mb(),
+        params = shown, results = dict( E.results ), output_text = buf.getvalue(),
+        version = version,
+    )
+    R.refresh( entry_root )
+    return status, error, hint

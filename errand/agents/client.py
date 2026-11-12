@@ -116,6 +116,28 @@ class Connection:
             self._close()
 
 
+GRACE = ( 2.0, 5.0 )        # seconds after Ctrl-C at which SIGTERM, then SIGKILL, follow SIGINT
+
+
+def stop( call: Call ):
+    """Ctrl-C, over there: SIGINT to the process and all it started ( its process group ), then
+    SIGTERM, then SIGKILL, for whatever is still alive -- a Python that catches KeyboardInterrupt
+    and goes on, a program that ignores SIGINT. What errand started is stopped, not asked."""
+    import threading
+
+    def send( sig ):
+        try:
+            call.send( F.SIGNAL, { "sig": int( sig ) } )
+        except OSError:
+            pass
+
+    send( signal.SIGINT )
+    for after, sig in zip( GRACE, ( signal.SIGTERM, signal.SIGKILL ) ):
+        t = threading.Timer( after, send, args = ( sig, ) )
+        t.daemon = True
+        t.start()
+
+
 def shell( conn: Connection, line: str, *, cwd = None, quiet = False, capture = False, input = None,
            timeout = None, env = None, login = False ) -> subprocess.CompletedProcess:
     """`sh -c line` where the agent is: Over.shell's contract, over a connection already open.
@@ -140,9 +162,10 @@ def shell( conn: Connection, line: str, *, cwd = None, quiet = False, capture = 
                 call.send( F.SIGNAL, { "sig": signal.SIGKILL } )
                 raise subprocess.TimeoutExpired( line, timeout ) from None
             except KeyboardInterrupt:
-                # Ctrl-C reaches what runs over there, as it would through `ssh -t`.
+                # Ctrl-C stops what runs over there ( `stop` ), and this waits for it to be gone.
+                if not interrupted:
+                    stop( call )
                 interrupted += 1
-                call.send( F.SIGNAL, { "sig": signal.SIGINT if interrupted == 1 else signal.SIGKILL } )
                 continue
             if kind == F.EXIT:
                 code = int( F.load( payload ).get( "code", -1 ) )
@@ -179,3 +202,61 @@ def attach( conn: Connection, pid: str, out = 0, err = 0 ) -> Call:
     call = conn.open( { "op": "attach", "id": pid, "out": out, "err": err } )
     call.reply()
     return call
+
+
+def interact( conn: Connection, argv, *, cwd = None, env = None ) -> int:
+    """`argv` over there with a terminal, this one: keys go as they are typed, the screen comes
+    back as it is drawn, a resize follows. Ctrl-C is a key like the others: the terminal over
+    there turns it into SIGINT for what has the foreground. -> its exit code."""
+    import os
+    import shutil
+    import sys
+
+    size = shutil.get_terminal_size()
+    tty = { "cols": size.columns, "rows": size.lines, "term": os.environ.get( "TERM" ) }
+    call = conn.open( { "op": "spawn", "argv": list( argv ), "cwd": cwd, "env": env, "keep": False, "tty": tty } )
+    call.reply()
+    fd = sys.stdin.fileno()
+    raw = sys.stdin.isatty()
+    if raw:
+        import termios
+        import tty as ttys
+        kept = termios.tcgetattr( fd )
+        ttys.setraw( fd )
+
+        def resized( *_ ):
+            s = shutil.get_terminal_size()
+            try:
+                call.send( F.RESIZE, { "cols": s.columns, "rows": s.lines } )
+            except OSError:
+                pass
+
+        was = signal.signal( signal.SIGWINCH, resized )
+
+    def keys():
+        try:
+            for chunk in iter( lambda: os.read( fd, 1024 ), b"" ):
+                call.send( F.IN, chunk )
+        except OSError:
+            pass
+        if not raw:
+            call.send( F.EOF )
+
+    threading.Thread( target = keys, daemon = True ).start()
+    code = -1
+    try:
+        while True:
+            kind, payload = call.next()
+            if kind in ( F.OUT, F.ERR ):
+                view = memoryview( payload )
+                while view:
+                    view = view[ os.write( 1, view ) : ]
+            elif kind == F.EXIT:
+                code = int( F.load( payload ).get( "code", -1 ) )
+                break
+    finally:
+        conn.forget( call.channel )
+        if raw:
+            termios.tcsetattr( fd, termios.TCSADRAIN, kept )
+            signal.signal( signal.SIGWINCH, was )
+    return code

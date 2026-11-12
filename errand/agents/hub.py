@@ -13,7 +13,6 @@ seconds, the hub closes its streams and goes.
 """
 from __future__ import annotations
 
-import fcntl
 import os
 import socket
 import threading
@@ -21,6 +20,7 @@ import time
 from pathlib import Path
 
 from . import frames as F, upstream as U
+from . import endpoint
 
 
 class Upstream:
@@ -33,6 +33,8 @@ class Upstream:
         self.out    = self.proc.stdout.fileno()
         self.writer = F.Writer( self._write )
         self.routes : dict = { }        # upstream channel -> ( client writer, client channel )
+        self.used   = time.monotonic()  # the last frame either way: a stream unused for its target's
+        self.keep   = float( target.get( "keep_alive" ) or U.KEEP_ALIVE )   # keep_alive is closed
         self.lock   = threading.Lock()
         self.next   = 1
         self.alive  = True
@@ -40,6 +42,7 @@ class Upstream:
         threading.Thread( target = self._pump, daemon = True ).start()
 
     def _write( self, data ):
+        self.used = time.monotonic()
         self.proc.stdin.write( data )
         self.proc.stdin.flush()
 
@@ -56,6 +59,7 @@ class Upstream:
         try:
             while True:
                 channel, kind, payload = F.read_frame( lambda n: os.read( self.out, n ) )
+                self.used = time.monotonic()
                 with self.lock:
                     route = self.routes.get( channel )
                     if kind == F.EXIT:
@@ -95,7 +99,8 @@ class Upstream:
 class Hub:
     def __init__( self, root: Path, keep_alive: float ):
         self.root, self.keep_alive = Path( root ), keep_alive
-        self.upstreams : dict = { }     # json of target -> Upstream
+        self.upstreams : dict = { }     # identity of target -> Upstream
+        self.making    : dict = { }     # identity of target -> the lock of whoever is making it
         self.clients = 0
         self.idle_since = time.monotonic()
         self.lock = threading.Lock()
@@ -104,8 +109,18 @@ class Hub:
         key = U.identity( target )
         with self.lock:
             up = self.upstreams.get( key )
+            if up is not None and up.alive:
+                return up
+            making = self.making.setdefault( key, threading.Lock() )
+        # Not under the hub's lock: reaching an environment goes through `rsh`, which comes back
+        # here for the host's stream while this one is still being made.
+        with making:
+            with self.lock:
+                up = self.upstreams.get( key )
             if up is None or not up.alive:
-                up = self.upstreams[ key ] = Upstream( self, target )
+                up = Upstream( self, target )
+                with self.lock:
+                    self.upstreams[ key ] = up
             return up
 
     def forget( self, up: Upstream ):
@@ -156,6 +171,15 @@ class Hub:
             conn.close()
 
     def idle( self ) -> bool:
+        # A stream nobody used for its target's keep_alive goes: what it holds over there ( an
+        # allocation's node, a machine ) is let go of, and the next command reaches it again.
+        now = time.monotonic()
+        with self.lock:
+            stale = [ ( k, up ) for k, up in self.upstreams.items() if not up.routes and now - up.used > up.keep ]
+            for k, _ in stale:
+                del self.upstreams[ k ]
+        for _, up in stale:
+            up.close()
         with self.lock:
             if self.clients:
                 self.idle_since = time.monotonic()
@@ -163,12 +187,16 @@ class Hub:
             return time.monotonic() - self.idle_since > self.keep_alive
 
     def run( self ) -> int:
-        self.root.mkdir( parents = True, exist_ok = True )
-        held = open( self.root / "lock", "w" )
-        try:
-            fcntl.flock( held, fcntl.LOCK_EX | fcntl.LOCK_NB )
-        except OSError:
-            return 0
+        def client( conn, threading ):
+            with self.lock:
+                self.clients += 1
+            threading.Thread( target = self.serve_client, args = ( conn, ), daemon = True ).start()
+
+        def closing():
+            for up in list( self.upstreams.values() ):
+                up.close()
+
+        return endpoint.serve( self.root, self.idle, client, closing )
         path = self.root / "sock"
         if path.exists():
             path.unlink()

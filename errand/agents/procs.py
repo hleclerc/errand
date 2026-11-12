@@ -13,23 +13,21 @@ offsets it had reached, and misses nothing.
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import signal
-import subprocess
 import threading
 import time
 import uuid
 from pathlib import Path
 
-from . import frames as F
+from . import frames as F, spawn
 
 
 KEEP_DAYS = 7          # finished processes' directories are removed after this
 
 
 class Proc:
-    def __init__( self, root: Path, argv, env = None, cwd = None, keep = False, pid = None ):
+    def __init__( self, root: Path, argv, env = None, cwd = None, keep = False, pid = None, tty = None ):
         self.id   = pid or uuid.uuid4().hex[ : 16 ]
         self.dir  = root / "proc" / self.id
         self.keep = keep
@@ -38,22 +36,19 @@ class Proc:
         self.code = None
         self.dir.mkdir( parents = True, exist_ok = True )
         ( self.dir / "meta.json" ).write_text( json.dumps(
-            { "argv": list( argv ), "cwd": cwd, "keep": keep, "started": time.time() } ) )
-        full_env = { **os.environ, **( env or { } ) }
-        self.popen = subprocess.Popen( list( argv ), cwd = cwd or None, env = full_env,
-                                       stdin = subprocess.PIPE, stdout = subprocess.PIPE,
-                                       stderr = subprocess.PIPE, start_new_session = True )
-        self._readers = [ threading.Thread( target = self._pump, args = ( self.popen.stdout, "out", F.OUT ), daemon = True ),
-                          threading.Thread( target = self._pump, args = ( self.popen.stderr, "err", F.ERR ), daemon = True ) ]
+            { "argv": list( argv ), "cwd": cwd, "keep": keep, "tty": bool( tty ), "started": time.time() } ) )
+        self.child = spawn.start( argv, env, cwd, tty )
+        self._readers = [ threading.Thread( target = self._pump, args = ( read, name, F.OUT if name == "out" else F.ERR ),
+                                            daemon = True ) for read, name in self.child.streams ]
         for t in self._readers:
             t.start()
         threading.Thread( target = self._wait, daemon = True ).start()
 
     # -- output -------------------------------------------------------------
 
-    def _pump( self, pipe, name, kind ):
+    def _pump( self, read, name, kind ):
         with open( self.dir / name, "ab" ) as log:
-            for chunk in iter( lambda: os.read( pipe.fileno(), 65536 ), b"" ):
+            for chunk in iter( lambda: read( 65536 ), b"" ):
                 with self.lock:
                     log.write( chunk )
                     log.flush()
@@ -67,7 +62,7 @@ class Proc:
                 self.listeners.remove( ( writer, channel ) )
 
     def _wait( self ):
-        code = self.popen.wait()
+        code = self.child.wait()
         for t in self._readers:
             t.join()
         with self.lock:
@@ -102,23 +97,16 @@ class Proc:
     # -- input and signals ----------------------------------------------------
 
     def write( self, data: bytes ):
-        try:
-            self.popen.stdin.write( data )
-            self.popen.stdin.flush()
-        except ( BrokenPipeError, ValueError ):
-            pass
+        self.child.write( data )
 
     def close_input( self ):
-        try:
-            self.popen.stdin.close()
-        except OSError:
-            pass
+        self.child.close_input()
+
+    def resize( self, cols: int, rows: int ):
+        self.child.resize( cols, rows )
 
     def signal( self, sig: int ):
-        try:
-            os.killpg( self.popen.pid, sig )
-        except ( ProcessLookupError, PermissionError ):
-            pass
+        self.child.signal( sig )
 
 
 def finished( root: Path ) -> list:

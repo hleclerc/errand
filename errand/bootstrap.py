@@ -55,7 +55,7 @@ def is_errand( argv ) -> bool:
     from .layers import INTERPRETERS
     import sys
     return ( len( argv ) >= 3 and ( Path( str( argv[ 0 ] ) ).name in INTERPRETERS or str( argv[ 0 ] ) == sys.executable )
-             and list( argv[ 1 : 3 ] ) == [ "-m", "errand" ] )
+             and str( argv[ 1 ] ) == "-m" and str( argv[ 2 ] ).split( "." )[ 0 ] == "errand" )
 
 
 def key() -> str:
@@ -206,11 +206,13 @@ def prepare( ssh, inner, there, echo = print ) -> str:
     return home
 
 
-def command( cmd, inner, home: str, preferred: str = "python3" ):
-    """`cmd`, errand itself, as it must cross to start over there.
+def command( cmd, inner, home: str, preferred: str = "python3", boot: str | None = None ):
+    """`cmd`, errand itself ( `python -m errand…`, or one of its modules ), as it must cross to
+    start over there.
 
     A layer that chooses the interpreter replaces `python` as it always did; the
-    file it is handed is the shipped copy. With none, the command finds its
+    file it is handed is the shipped copy -- or `boot`, a copy that is already
+    where the command starts ( this machine's ). With none, the command finds its
     Python where it starts. A Docker or Podman container keeps `-m errand`: the
     home directory the copy lives in is not inside it."""
     from . import layers as L
@@ -219,8 +221,10 @@ def command( cmd, inner, home: str, preferred: str = "python3" ):
         return cmd
     if any( isinstance( l, L.Docker ) for l in inner ):
         return L.Command( L.under( argv, preferred ), cmd.env )
-    rest = [ str( a ) for a in argv[ 3 : ] ]
+    module = str( argv[ 2 ] )
+    rest = ( [ ] if module == "errand" else [ "-m", module ] ) + [ str( a ) for a in argv[ 3 : ] ]
     if L.chooses_python( inner ):
-        return L.Command( [ "python", f"{home}/{boot_rel()}", *rest ], cmd.env )
-    then = f'exec "$py" "$HOME"/{shlex.quote( boot_rel() )} "$@"\n'
+        return L.Command( [ "python", boot or f"{home}/{boot_rel()}", *rest ], cmd.env )
+    where = shlex.quote( boot ) if boot else f'"$HOME"/{shlex.quote( boot_rel() )}'
+    then = f'exec "$py" {where} "$@"\n'
     return L.Command( [ "sh", "-c", _script( then, preferred ), "sh", *rest ], cmd.env )

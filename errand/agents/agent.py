@@ -9,14 +9,14 @@ One agent per directory: a lock held for its whole life says so.
 """
 from __future__ import annotations
 
-import fcntl
 import os
 import socket
+import sys
 import threading
 import time
 from pathlib import Path
 
-from . import frames as F
+from . import endpoint, frames as F
 from .procs import finished, Proc, sweep
 
 
@@ -37,6 +37,7 @@ class Agent:
         try:
             while True:
                 channel, kind, payload = F.read_frame( conn.recv )
+                self.idle_since = time.monotonic()     # asked something: in use
                 if kind == F.OPEN:
                     self.open( writer, channels, channel, F.load( payload ) )
                     continue
@@ -49,6 +50,9 @@ class Agent:
                     proc.close_input()
                 elif kind == F.SIGNAL:
                     proc.signal( int( F.load( payload ).get( "sig", 15 ) ) )
+                elif kind == F.RESIZE:
+                    size = F.load( payload )
+                    proc.resize( size.get( "cols", 80 ), size.get( "rows", 24 ) )
                 elif kind == F.CLOSE:
                     channels.pop( channel, None )
                     with proc.lock:
@@ -67,9 +71,13 @@ class Agent:
         op = req.get( "op" )
         try:
             if op == "ping":
-                writer.send( channel, F.REPLY, { "ok": True, "pid": os.getpid(), "root": str( self.root ) } )
+                writer.send( channel, F.REPLY, { "ok": True, "pid": os.getpid(), "root": str( self.root ),
+                                                 "python": sys.executable, "home": os.path.expanduser( "~" ) } )
             elif op == "spawn":
-                proc = Proc( self.root, req[ "argv" ], req.get( "env" ), req.get( "cwd" ), bool( req.get( "keep" ) ) )
+                # what it starts knows which agent started it: where a zygote beside it lives ( `warm` )
+                env = { **( req.get( "env" ) or { } ), "ERRAND_AGENT_DIR": str( self.root ) }
+                proc = Proc( self.root, req[ "argv" ], env, req.get( "cwd" ), bool( req.get( "keep" ) ),
+                             tty = req.get( "tty" ) )
                 with self.lock:
                     self.procs[ proc.id ] = proc
                 channels[ channel ] = proc
@@ -109,41 +117,43 @@ class Agent:
     # -- the life of it -------------------------------------------------------
 
     def idle( self ) -> bool:
+        """Nothing running, nothing asked, for `keep_alive`. A client that is merely connected does not
+        count: a hub keeps its streams open between commands, and an allocation held warm must still
+        be let go of once nobody uses it ( its hub then reaches a new one )."""
         with self.lock:
-            running = any( p.code is None for p in self.procs.values() )
-            if self.clients or running:
+            if any( p.code is None for p in self.procs.values() ):
                 self.idle_since = time.monotonic()
-                return False
-            return time.monotonic() - self.idle_since > self.keep_alive
+        busy = time.monotonic() - self.idle_since <= self.keep_alive
+        if busy:
+            self._busy()
+            return False
+        # An agent started under this one's directory ( an environment's, in an allocation whose
+        # node agent this is ) that was busy lately keeps this one: going would end what it runs.
+        now = time.time()
+        for f in self.root.glob( "*/busy" ):
+            try:
+                if now - f.stat().st_mtime <= self.keep_alive:
+                    return False
+            except OSError:
+                pass
+        return True
 
-    def run( self ):
+    def _busy( self ):
+        """Say so on disk, at most every ten seconds: for an agent above this one ( `idle` )."""
+        now = time.time()
+        if now - getattr( self, "_said", 0 ) >= 10:
+            self._said = now
+            try:
+                ( self.root / "busy" ).touch()
+            except OSError:
+                pass
+
+    def run( self ) -> int:
+        def client( conn, threading ):
+            with self.lock:
+                self.clients += 1          # counted before `idle` can look again
+            threading.Thread( target = self.serve_client, args = ( conn, ), daemon = True ).start()
+
         self.root.mkdir( parents = True, exist_ok = True )
-        held = open( self.root / "lock", "w" )
-        try:
-            fcntl.flock( held, fcntl.LOCK_EX | fcntl.LOCK_NB )
-        except OSError:
-            return 0                       # another agent has this directory: it answers
         sweep( self.root )
-        path = self.root / "sock"
-        if path.exists():
-            path.unlink()
-        server = socket.socket( socket.AF_UNIX, socket.SOCK_STREAM )
-        server.bind( str( path ) )
-        os.chmod( path, 0o600 )
-        server.listen( 16 )
-        server.settimeout( 1.0 )
-        try:
-            while not self.idle():
-                try:
-                    conn, _ = server.accept()
-                except socket.timeout:
-                    continue
-                conn.settimeout( None )
-                with self.lock:
-                    self.clients += 1          # counted before `idle` can look again
-                threading.Thread( target = self.serve_client, args = ( conn, ), daemon = True ).start()
-        finally:
-            server.close()
-            if path.exists():
-                path.unlink()
-        return 0
+        return endpoint.serve( self.root, self.idle, client )

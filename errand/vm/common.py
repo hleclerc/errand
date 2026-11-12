@@ -3,7 +3,6 @@ the timeouts, the error a machine raises, and the small helpers everything here 
 """
 from __future__ import annotations
 
-import fcntl
 import os
 from pathlib import Path
 
@@ -20,6 +19,7 @@ def _lock( path: Path, block = True ):
     """An exclusive flock on `path` -> the open file, or None if not now."""
     handle = open( path, "a" )
     try:
+        import fcntl            # here: the layer is also declared, never run, where there is no fcntl
         fcntl.flock( handle, fcntl.LOCK_EX | ( 0 if block else fcntl.LOCK_NB ) )
     except BlockingIOError:
         handle.close()

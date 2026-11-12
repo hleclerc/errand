@@ -28,10 +28,12 @@ import datetime
 import os
 import re
 import subprocess
+import sys
 import time
 from pathlib import Path
 
-from . import bootstrap, layers as L, yamlish
+from . import layers as L, yamlish
+
 
 def batch_rel( root ) -> str:
     from . import config
@@ -76,104 +78,21 @@ def forget( root: Path, ident: str ):
 
 # ── letting go ───────────────────────────────────────────────────────────────
 
-def detach( env, tags, argv, *, root, log: Path, child_env: dict, phase = "run",
-            then = None ) -> dict:
-    """Start `argv` through `env`'s layers of `phase` and come straight back.
-
-    `then` is what to run once that is done, inside the same allocation but
-    outside the layers after its scheduler: how a preparation submits the run
-    it has just sized, without anybody waiting for it here.
-
-    -> { kind, handle, host?, remote_root?, options? }, or { kind: "failed" }.
-    """
-    stack = env.stack_for( phase, tags )
-    ctx = L.Context( root = root, tags = tags, batch = True, phase = phase )
-    ssh = L.ssh_of( stack )
-    batch = L.batch_of( stack )
-
-    if L.vm_of( stack ) is not None:
+def detach( env, tags, argv, *, root, log: Path, child_env: dict ) -> dict:
+    """`errand <argv>` here, in a session of its own, and come straight back: an environment
+    with nothing to go through ( an environment with layers is prepared and submitted by
+    `cli/drive.submit` ). -> { kind: "local", handle, log }, or { kind: "failed" }."""
+    if L.vm_of( env.stack_for( "run", tags ) ) is not None:
         return { "kind": "failed", "handle": "",
                  "error": f"{env.name} is a virtual machine: `--batch` does not reach one yet" }
-
-    tail, python, work, home = stack, "python", ctx, None
-    if ssh is not None:
-        tail, python = stack[ 1 : ], ssh.python
-        work = L.Context( root = ssh.remote_root( ctx ), tags = tags, remote = True,
-                          batch = True, phase = phase )
-        L.push( root, ssh.host, work.root, ssh.options )
-        # errand itself goes, and finds -- or has made -- a Python to start on ( `bootstrap` ).
-        home = bootstrap.prepare( ssh, tail, ssh.place( ctx ) )
-
-    def errand_cmd( args, inner ):
-        made = L.Command( [ python, "-m", "errand", *args ], dict( child_env ) )
-        return made if home is None else bootstrap.command( made, inner, home, python )
-
-    cmd = errand_cmd( argv, tail )
-    follow = errand_cmd( then, [ ] ) if then else None
-    if follow is not None and batch is not None:
-        # Inside the allocation, outside the layers after the scheduler -- but with the interpreter they choose: the
-        # submission is errand itself, and must not run in a container or under a module it does not need.
-        k = tail.index( batch )
-        chosen = L.interpreters_of( tail[ k + 1 : ] )
-        follow = L.compose( chosen, errand_cmd( then, chosen ), work )
-        inner = L.compose( tail[ k + 1 : ], cmd, work )
-        cmd = L.Command( [ "sh", "-c", f"{inner.shell()} && {follow.shell()}" ], { } )
-        tail = tail[ : k + 1 ]
-        follow = None
-    wrapped = L.compose( tail, cmd, work )
-    if follow is not None:
-        # No scheduler: the same detached session goes on to the next step.
-        wrapped = L.Command( [ "sh", "-c", f"{wrapped.shell()} && {follow.shell()}" ], { } )
-
-    if ssh is None and batch is None:
-        log.parent.mkdir( parents = True, exist_ok = True )
-        with open( log, "wb" ) as handle:
-            # A session of its own: closing the terminal, or the shell sending
-            # a hangup to its group, must not take the work with it.
-            child = subprocess.Popen( wrapped.argv, cwd = root,
-                                      env = { **os.environ, **wrapped.env },
-                                      stdout = handle, stderr = subprocess.STDOUT,
-                                      start_new_session = True )
-        return { "kind": "local", "handle": str( child.pid ), "log": str( log ) }
-
-    if ssh is None:
-        # A batch system here on this machine: it is its own detachment.
-        got = subprocess.run( wrapped.argv, cwd = root, capture_output = True, text = True,
-                              env = { **os.environ, **wrapped.env } )
-        return _from_submission( got, kind = "batch" )
-
-    remote_log = f"{work.root}/{batch_rel( root )}/{log.name}"
-    line = ( f"mkdir -p {work.root}/{batch_rel( root )} && cd {work.root} && "
-             f"{wrapped.shell()}" )
-
-    if batch is not None:
-        # sbatch returns as soon as the job is queued: nothing to let go of.
-        got = _ssh_capture( ssh, line )
-        record = _from_submission( got, kind = "batch" )
-    else:
-        # Let go over there: a new session, output to a file we can fetch, and
-        # the pid printed back so there is something to ask about later.
-        detached = ( f"{line} > {remote_log} 2>&1 & echo ERRAND_PID=$!" )
-        got = _ssh_capture( ssh, detached )
-        found = re.search( r"ERRAND_PID=(\d+)", got.stdout or "" )
-        record = ( { "kind": "ssh", "handle": found.group( 1 ) } if found
-                   else { "kind": "failed", "handle": "",
-                          "error": ( got.stderr or got.stdout or "" ).strip()[ : 400 ] } )
-
-    record.update( host = ssh.host, remote_root = str( work.root ),
-                   options = list( ssh.options ), log = remote_log )
-    return record
-
-
-def submitted_path( plan: Path ) -> Path:
-    """Where a preparation says which job it submitted for the run it prepared."""
-    return plan.with_name( plan.stem + ".submitted.json" )
-
-
-def _ssh_capture( ssh, line ):
-    import shlex
-    return subprocess.run( [ "ssh", *ssh.options, ssh.host, f"$SHELL -ic {shlex.quote( line )}" ],
-                           capture_output = True, text = True )
+    log.parent.mkdir( parents = True, exist_ok = True )
+    with open( log, "wb" ) as handle:
+        # A session of its own: closing the terminal, or the shell sending
+        # a hangup to its group, must not take the work with it.
+        child = subprocess.Popen( [ sys.executable, "-m", "errand", *argv ],
+                                  cwd = root, env = { **os.environ, **child_env },
+                                  stdout = handle, stderr = subprocess.STDOUT, start_new_session = True )
+    return { "kind": "local", "handle": str( child.pid ), "log": str( log ) }
 
 
 def _from_submission( got, kind ):
@@ -241,18 +160,9 @@ def runs_of( root: Path, record: dict ) -> list:
     return out
 
 
-def run_job( root: Path, place: dict ):
-    """The job a preparation submitted for its run phase, as a place of its own."""
-    if not place.get( "plan" ):
-        return None
-    got = _json( submitted_path( root / place[ "plan" ] ) )
-    return { **place, **got } if got else None
-
-
 def alive_anywhere( root: Path, place: dict ):
-    """Still going: the preparation, or the run it submitted."""
-    then = run_job( root, place )
-    return alive( then ) if then is not None else alive( place )
+    """Still going."""
+    return alive( place )
 
 
 def collect( root: Path, record: dict ):

@@ -19,12 +19,12 @@ Nothing else about the run changes — same paths, same queue, same output.
 
 ## The output tree is the state
 
-Because each place writes its [plan](./environments#preparing-then-running) before anything runs
-there, **the arrival of a result file where the plan said one would be is itself the completion
-signal.** Until a place has written its plan, `errand status` says it is *preparing*; where the run
-is sized from the plan, the preparation is what is submitted, and it submits the run when it knows.
+`--batch` prepares first, before giving the shell back: the entries are collected and built where
+the environment is, and the [plan](./environments#preparing-then-running) comes back here. Then the
+run is submitted, sized from that plan, and let go of. **The arrival of a result file where the plan
+said one would be is itself the completion signal.**
 
-No protocol between the two sides, no daemon, nothing that can get out of sync. The tree is the
+Nothing has to stay connected for that, and nothing can get out of sync. The tree is the
 [record](./output) every run leaves in `.errand/runs/` — or the visible one, with `-o` — so a detached
 run needs no output directory of its own to be followed.
 

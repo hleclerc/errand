@@ -51,6 +51,7 @@ Read outside in: *that machine, an allocation on it, a container, your command.*
 | `Slurm`, `Oar`, `Pbs`, `Sge`, `Lsf` | an allocation, sized from what the work asks for |
 | `Windows` | a Windows VM under QEMU that errand installs and boots — MSVC included |
 | `Vars` | environment variables for the child |
+| `Preload` | sessions forked from a process that has already imported torch, jax… — chosen, never by default |
 
 **Kept current by themselves.** Before every run, errand compares what each layer declares — a
 Python version, a `requirements.txt`, a container recipe, a pip list — with what it last built, and

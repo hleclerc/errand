@@ -74,8 +74,24 @@ the rsyncs, which use it as their remote shell, and the checks and builds of `se
 in again, and a run that took 4 s of connecting takes under one. Here, a **hub** keeps the
 connection open between commands. Both go away on their own after 15 minutes with nothing to do.
 
-What the agent starts writes its output to disk over there, so a closed laptop or a dropped network
-loses nothing. The work goes on, and its output is caught up with afterwards.
+Past the layers, at the end of the stack, a second agent runs with the environment's own
+interpreter, inside the micromamba environment, the module, the container. It is started once and
+reused, and it is what collects and runs the entries.
+
+With `errand.Preload( "torch", "jax" )` at the end of a stack, a session does not start a new
+Python each time. The environment agent keeps a process beside it that has already imported what
+the layer names, and what earlier sessions used (`learn = False` sticks to the names). Each session
+is a fork of it: a copy of its own, with nothing left over from the one before, and the project's
+own modules are always read again. Without the layer, every session is a Python started anew.
+
+What the agents start writes its output to disk over there, so a closed laptop or a dropped network
+loses nothing. The work goes on, and `errand attach` follows it again: it shows the output from the
+start, waits for the end, and brings the results back.
+
+```bash
+errand run --env gpu 'bench/**::*'      # the laptop closes halfway
+errand attach                            # later: the rest, the report, the results here
+```
 
 | `ERRAND_AGENT` | |
 |---|---|

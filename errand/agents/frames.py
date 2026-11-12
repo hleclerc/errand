@@ -7,6 +7,7 @@ process's output, its exit ). Its number is chosen by whoever opens it, and is
 only meaningful on that one connection: the hub renumbers when it relays.
 
     OPEN    -> agent    a request, JSON: { "op": "spawn" | "attach" | "list" | "ping", ... }
+                        ( a spawn with "tty": { "cols", "rows" } gets a terminal )
     REPLY   <- agent    the answer to OPEN, JSON: { "ok": true, ... } or { "error": "..." }
     OUT     <- agent    stdout bytes
     ERR     <- agent    stderr bytes
@@ -15,6 +16,7 @@ only meaningful on that one connection: the hub renumbers when it relays.
     SIGNAL  -> agent    JSON: { "sig": n }
     CLOSE   -> agent    the client lets go of the channel; the process lives on if it may
     EXIT    <- agent    JSON: { "code": n }; the channel is over
+    RESIZE  -> agent    JSON: { "cols": c, "rows": r }, for a process started with a terminal
 
 Payloads are bytes as they are; JSON ones are UTF-8.
 """
@@ -25,9 +27,9 @@ import struct
 import threading
 
 
-OPEN, REPLY, OUT, ERR, IN, EOF, SIGNAL, CLOSE, EXIT = range( 1, 10 )
+OPEN, REPLY, OUT, ERR, IN, EOF, SIGNAL, CLOSE, EXIT, RESIZE = range( 1, 11 )
 NAMES = { OPEN: "open", REPLY: "reply", OUT: "out", ERR: "err", IN: "in", EOF: "eof",
-          SIGNAL: "signal", CLOSE: "close", EXIT: "exit" }
+          SIGNAL: "signal", CLOSE: "close", EXIT: "exit", RESIZE: "resize" }
 
 HEADER = struct.Struct( ">IBI" )
 MAX = 1 << 24                       # a frame bigger than this is a broken stream, not data

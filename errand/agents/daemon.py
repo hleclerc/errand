@@ -13,7 +13,6 @@ the agent does not notice.
 from __future__ import annotations
 
 import os
-import socket
 import sys
 import threading
 import time
@@ -23,19 +22,17 @@ from pathlib import Path
 WAIT = 15.0          # seconds a bridge waits for the agent it started to answer
 
 
-def reach( root: Path ) -> socket.socket | None:
-    s = socket.socket( socket.AF_UNIX, socket.SOCK_STREAM )
-    try:
-        s.connect( str( root / "sock" ) )
-        return s
-    except OSError:
-        s.close()
-        return None
+def reach( root: Path ):
+    from .endpoint import reach as at
+    return at( root )
 
 
 def start( root: Path, keep_alive: float, what = "agent" ):
-    """The agent -- or the hub -- detached from whoever asked: double fork, new session, stdio to a log."""
+    """The agent -- or the hub -- detached from whoever asked: double fork, new session, stdio to a log.
+    On Windows, a process of its own, out of the console and of the job of whoever started it."""
     root.mkdir( parents = True, exist_ok = True )
+    if sys.platform == "win32":
+        return _start_windows( root, keep_alive, what )
     if os.fork():
         return
     os.setsid()
@@ -60,6 +57,22 @@ def start( root: Path, keep_alive: float, what = "agent" ):
     os._exit( code )
 
 
+def _start_windows( root: Path, keep_alive: float, what ):
+    import subprocess
+    # Not CREATE_NEW_PROCESS_GROUP: that disables Ctrl-C for the group AND what it starts, which a
+    # terminal the agent opens ( `conpty` ) would then never deliver.
+    flags = subprocess.DETACHED_PROCESS | getattr( subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0x01000000 )
+    argv = [ sys.executable, "-m", "errand.agents", "hub" if what == "hub" else "serve", str( root ), str( keep_alive ) ]
+    with open( root / "log", "ab" ) as log:
+        try:
+            subprocess.Popen( argv, stdin = subprocess.DEVNULL, stdout = log, stderr = log, close_fds = True,
+                              creationflags = flags )
+        except OSError:
+            # a job that does not let its processes leave it: the agent lives as long as the job
+            subprocess.Popen( argv, stdin = subprocess.DEVNULL, stdout = log, stderr = log, close_fds = True,
+                              creationflags = flags & ~0x01000000 )
+
+
 def connect( root: Path, keep_alive: float ) -> int:
     sock = reach( root )
     if sock is None:
@@ -75,7 +88,7 @@ def connect( root: Path, keep_alive: float ) -> int:
     return bridge( sock )
 
 
-def bridge( sock: socket.socket ) -> int:
+def bridge( sock ) -> int:
     from .client import MARKER
     stdin, stdout = sys.stdin.buffer.raw, sys.stdout.buffer.raw
     stdout.write( MARKER )             # what came before this was a login shell talking
