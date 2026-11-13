@@ -90,6 +90,17 @@ An idle environment agent exits and frees its GPU memory or its container. A hos
 it has no environment agent and is idle. A warm allocation is released when its node agents exit.
 The hub goes last. `errand agents stop <name>` stops one agent and everything below it.
 
+**What is kept warm gives way.** A virtual machine nobody uses, or a zygote that has imported torch
+ahead, holds its claim in the machine's queue as preemptible. On another machine, the claim is held
+there by `python -m errand.queue hold`. A request that would fit without such claims leaves an
+eviction request beside each of them and waits, and their holders give the room back as soon as
+they are idle, not at the end of their `keep`. So `keep` can be generous, since it costs nobody
+anything: a VM's default is five minutes. On a cluster, politeness is a short `keep_alive`. A warm
+allocation is only reused by a command that fits in it: its ranks, its cores and cards per task,
+`exclusive`, and its `--time` against what the job has left. Anything else gets a job of its own,
+after the warm allocation is given back if nothing runs in it, so no `srun` ever asks more than was
+allocated.
+
 **Schedulers cut the chain, unless asked.** Under `--batch` nothing stays connected. The
 preparation (`collect` and `build`, which size the allocation) is done before submitting. The job
 runs `python <boot> worker plan.json`: the same environment agent, driven by a file instead of a

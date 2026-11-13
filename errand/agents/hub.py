@@ -9,7 +9,8 @@ an agent pays for reaching it; the next ones do not.
 A stream that breaks ( a network drop ) ends the calls that were on it with a
 `lost` EXIT, and the next route opens a new one -- the agent over there did not
 notice, and what it runs goes on. With no command connected for `keep_alive`
-seconds, the hub closes its streams and goes.
+seconds, the hub closes its streams and goes -- with its directory, when the sources
+it was started from have changed since.
 """
 from __future__ import annotations
 
@@ -103,6 +104,7 @@ class Hub:
         self.making    : dict = { }     # identity of target -> the lock of whoever is making it
         self.clients = 0
         self.idle_since = time.monotonic()
+        self.started = time.time()
         self.lock = threading.Lock()
 
     def upstream( self, target: dict ) -> Upstream:
@@ -136,6 +138,9 @@ class Hub:
         try:
             channel, kind, payload = F.read_frame( conn.recv )
             req = F.load( payload )
+            if kind == F.OPEN and req.get( "op" ) in ( "streams", "stop" ):
+                writer.send( channel, F.REPLY, self.streams() if req[ "op" ] == "streams" else self.stop( req ) )
+                return
             if kind != F.OPEN or req.get( "op" ) != "route":
                 writer.send( channel, F.REPLY, { "error": "route first" } )
                 return
@@ -170,7 +175,72 @@ class Hub:
                 self.idle_since = time.monotonic()
             conn.close()
 
+    def streams( self ) -> dict:
+        """What this hub keeps open ( `errand agents` )."""
+        now = time.monotonic()
+        with self.lock:
+            ups = list( self.upstreams.values() )
+        return { "ok": True, "pid": os.getpid(), "root": str( self.root ), "up": time.time() - self.started,
+                 "streams": [ { "id": U.name( up.target ), "kind": up.target.get( "kind" ),
+                                "idle": now - up.used, "keep": up.keep, "calls": len( up.routes ),
+                                "alive": up.alive } for up in ups ] }
+
+    def stop( self, req: dict ) -> dict:
+        """Ask the agents whose name holds `match` to go, deepest first ( an environment before the
+        machine or the allocation it runs in ), then close their streams. Without `match`, every one,
+        then the hub itself. An agent with something running is left alone, unless `force`."""
+        import queue as Q
+        match, force = req.get( "match" ) or "", bool( req.get( "force" ) )
+        with self.lock:
+            chosen = [ ( k, up ) for k, up in self.upstreams.items()
+                       if match in U.name( up.target ) ]
+        chosen.sort( key = lambda kv: -len( U.name( kv[ 1 ].target ) ) )
+        said, kept = [ ], 0
+        for k, up in chosen:
+            name = U.name( up.target )
+            got = Q.Queue()
+
+            class Back:
+                def send( self, channel, kind, payload = b"" ):
+                    got.put( ( kind, payload ) )
+
+            how = "stopped"
+            # What runs in it may be the bridge to an agent just stopped, still closing: a few tries.
+            for attempt in range( 6 if said else 1 ):
+                how, mine = "stopped", None
+                try:
+                    mine = up.open( Back(), 0 )
+                    up.writer.send( mine, F.OPEN, { "op": "stop", "force": force } )
+                    kind, payload = got.get( timeout = 10 )
+                    answer = F.load( payload ) if kind == F.REPLY else { }
+                    if answer.get( "error" ):
+                        how = "closed ( an agent of older sources: it goes on its own )"
+                    elif not answer.get( "ok" ):
+                        how = f"left: {answer.get( 'running' )} running"
+                except Exception:
+                    how = "closed"
+                finally:
+                    with up.lock:
+                        up.routes.pop( mine, None )
+                if not how.startswith( "left" ):
+                    break
+                time.sleep( 0.5 )
+            if how.startswith( "left" ):
+                kept += 1
+                said.append( { "id": name, "how": how } )
+                continue
+            with self.lock:
+                if self.upstreams.get( k ) is up:
+                    del self.upstreams[ k ]
+            up.close()
+            said.append( { "id": name, "how": how } )
+        if not match and not kept:
+            self.quitting = True
+        return { "ok": True, "stopped": said, "hub": not match and not kept }
+
     def idle( self ) -> bool:
+        if getattr( self, "quitting", False ):
+            return True
         # A stream nobody used for its target's keep_alive goes: what it holds over there ( an
         # allocation's node, a machine ) is let go of, and the next command reaches it again.
         now = time.monotonic()
@@ -195,30 +265,10 @@ class Hub:
         def closing():
             for up in list( self.upstreams.values() ):
                 up.close()
+            # A hub of sources since replaced is never reached again ( its directory is named after
+            # them ): it takes its directory with it. The current one keeps it, and its log.
+            if U.hub_dir( fresh = True ) != self.root:
+                import shutil
+                shutil.rmtree( self.root, ignore_errors = True )
 
         return endpoint.serve( self.root, self.idle, client, closing )
-        path = self.root / "sock"
-        if path.exists():
-            path.unlink()
-        server = socket.socket( socket.AF_UNIX, socket.SOCK_STREAM )
-        server.bind( str( path ) )
-        os.chmod( path, 0o600 )
-        server.listen( 16 )
-        server.settimeout( 1.0 )
-        try:
-            while not self.idle():
-                try:
-                    conn, _ = server.accept()
-                except socket.timeout:
-                    continue
-                conn.settimeout( None )
-                with self.lock:
-                    self.clients += 1
-                threading.Thread( target = self.serve_client, args = ( conn, ), daemon = True ).start()
-        finally:
-            server.close()
-            if path.exists():
-                path.unlink()
-            for up in list( self.upstreams.values() ):
-                up.close()
-        return 0

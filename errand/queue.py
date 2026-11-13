@@ -298,6 +298,15 @@ def _acquire( needs: dict, exclusive: bool, label: str, mine: Path, echo ) -> li
                 others = [ o for o in held() if o[ "path" ] != str( mine ) ]
                 ahead = [ w for w in waiting_exclusive() if w[ "path" ] != str( queued ) ]
                 waiting, got = _fits( needs, exclusive, others, ahead )
+                if waiting is not None:
+                    # What is only kept warm gives way: ask it, and wait for it to go.
+                    keen = [ o for o in others if not o.get( "preemptible" ) ]
+                    gives = [ o for o in others if o.get( "preemptible" ) ]
+                    if gives and _fits( needs, exclusive, keen, ahead )[ 0 ] is None:
+                        for o in gives:
+                            evict( o[ "path" ] )
+                        waiting = ", ".join( o.get( "label", "something" ) for o in gives ) + \
+                            ", kept warm, to make room"
                 if waiting is None:
                     yamlish.write( mine, { "label": label, "pid": os.getpid(), "host": host(),
                                            "exclusive": exclusive, "since": time.time(),
@@ -346,7 +355,7 @@ def claim( needs: dict, *, exclusive = False, label = "", enabled = True, echo =
     finally:
         stop.set()
         beat.join( timeout = 1.0 )
-        mine.unlink( missing_ok = True )
+        release( mine )
 
 
 def _devices_of( spelt: str ) -> list:
@@ -358,6 +367,15 @@ class Granted:
     """What the machine gave: where the claim is, and which devices are ours."""
     path   : Path | None
     devices: list
+
+    def preemptible( self, flag = True ):
+        """Kept warm and nothing more: anybody who needs the room may ask for it ( `evicted` )."""
+        if self.path is not None:
+            mark( self.path, flag )
+
+    def evicted( self ) -> bool:
+        """Somebody needs what this holds, and it said it could give it up."""
+        return self.path is not None and evicted( self.path )
 
     def handed_down( self ) -> dict:
         """What everything this entry starts must be told."""
@@ -375,6 +393,77 @@ class Granted:
         listed = ",".join( str( d ) for d in self.devices )
         return { "CUDA_VISIBLE_DEVICES": listed, "HIP_VISIBLE_DEVICES": listed,
                  "ROCR_VISIBLE_DEVICES": listed }
+
+
+# ── kept warm, and giving way ────────────────────────────────────────────────
+#
+# A claim marked `preemptible` holds what is only kept warm -- a virtual
+# machine nobody uses at the moment, a process that has imported torch ahead.
+# A request that does not fit, but would without such claims, leaves an
+# eviction request beside each of them and waits; their holders give the room
+# back as soon as they are idle, rather than at the end of their keep_alive.
+
+def _evict_dir( ) -> Path:
+    d = queue_dir() / "evict"
+    d.mkdir( parents = True, exist_ok = True )
+    return d
+
+
+def evict( claim_path ):
+    ( _evict_dir() / Path( claim_path ).name ).touch()
+
+
+def evicted( claim_path ) -> bool:
+    return ( _evict_dir() / Path( claim_path ).name ).exists()
+
+
+def mark( claim_path, preemptible: bool ):
+    """Say, in the claim itself, whether it may be asked to give way."""
+    with _lock():
+        row = yamlish.read( Path( claim_path ) )
+        if row is not None and bool( row.get( "preemptible" ) ) != preemptible:
+            yamlish.write( Path( claim_path ), { **row, "preemptible": preemptible } )
+        if not preemptible:
+            ( _evict_dir() / Path( claim_path ).name ).unlink( missing_ok = True )
+
+
+def release( claim_path ):
+    Path( claim_path ).unlink( missing_ok = True )
+    ( _evict_dir() / Path( claim_path ).name ).unlink( missing_ok = True )
+
+
+def try_claim( needs: dict, *, label = "", preemptible = True ) -> Path | None:
+    """A claim taken only if it fits now, for whatever holds without a thread to keep it alive
+    ( a zygote, which must not have one ): the caller touches it ( `touch` ), and releases it."""
+    if os.environ.get( CLAIM ) is not None or os.environ.get( "ERRAND_NO_QUEUE" ) or someone_else_is_scheduling():
+        return None
+    needs = normalize( needs )
+    mine = _claims_dir() / f"{host()}-{os.getpid()}-{time.time_ns()}.yaml"
+    with _lock():
+        others = held()
+        waiting, got = _fits( needs, False, others, waiting_exclusive() )
+        if waiting is not None:
+            return None
+        yamlish.write( mine, { "label": label, "pid": os.getpid(), "host": host(), "exclusive": False,
+                               "since": time.time(), "devices": got, "preemptible": preemptible, **needs } )
+    return mine
+
+
+def resize( claim_path, **needs ):
+    """What a claim holds, said again: a zygote's memory grows with what it imports."""
+    with _lock():
+        row = yamlish.read( Path( claim_path ) )
+        if row is not None:
+            yamlish.write( Path( claim_path ), { **row, **normalize( needs ) } )
+
+
+def touch( claim_path ) -> bool:
+    """Still breathing. -> False when the claim was reclaimed meanwhile."""
+    try:
+        os.utime( claim_path, None )
+        return True
+    except OSError:
+        return False
 
 
 def _heartbeat( path: Path, stop: threading.Event ):
@@ -403,5 +492,44 @@ def describe( ) -> list:
         if row.get( "devices" ):
             what += "  gpu " + ",".join( str( d ) for d in row[ "devices" ] )
         age = time.time() - float( row.get( "since", time.time() ) )
-        out.append( f"{row.get( 'label', '?' )}  {what}  {age:.0f}s  pid {row.get( 'pid' )}" )
+        warm = "  ( kept warm: gives way )" if row.get( "preemptible" ) else ""
+        out.append( f"{row.get( 'label', '?' )}  {what}  {age:.0f}s  pid {row.get( 'pid' )}{warm}" )
     return out
+
+
+# ── a claim on this machine, for a process elsewhere ─────────────────────────
+
+def hold( spec: dict ) -> int:
+    """`python -m errand.queue hold '<json>'`: a claim on THIS machine, for whoever holds the
+    stream to this process -- a keeper on another machine, for the machine it boots here.
+
+    Says `granted <devices>` once it has it, `evict` when somebody needs the room; reads `warm`
+    ( it may give way ) and `busy` ( it may not ); goes, and releases, when its input closes."""
+    import json
+    import select
+    import sys
+    spec = json.loads( spec ) if isinstance( spec, str ) else spec
+    with claim( spec.get( "needs" ) or { }, exclusive = bool( spec.get( "exclusive" ) ), label = spec.get( "label", "" ),
+                echo = lambda m: print( m, file = sys.stderr, flush = True ) ) as granted:
+        print( "granted " + ",".join( str( d ) for d in granted.devices ), flush = True )
+        said = False
+        while True:
+            ready, _, _ = select.select( [ sys.stdin ], [ ], [ ], 1.0 )
+            if ready:
+                line = sys.stdin.readline()
+                if not line:
+                    return 0
+                if line.strip() in ( "warm", "busy" ):
+                    granted.preemptible( line.strip() == "warm" )
+                    said = False
+            if not said and granted.evicted():
+                print( "evict", flush = True )
+                said = True
+
+
+if __name__ == "__main__":
+    import sys
+    if len( sys.argv ) == 3 and sys.argv[ 1 ] == "hold":
+        sys.exit( hold( sys.argv[ 2 ] ) )
+    print( "usage: python -m errand.queue hold SPEC", file = sys.stderr )
+    sys.exit( 2 )

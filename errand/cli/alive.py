@@ -142,3 +142,59 @@ class NodeHost:
 
     def describe( self ):
         return "the allocation"
+
+
+def _left( line: str ) -> int | None:
+    """`squeue -o %L`: `D-HH:MM:SS`, `HH:MM:SS`, `MM:SS`, `UNLIMITED` -> seconds, None for no limit."""
+    line = line.strip()
+    if not line or line.upper() in ( "UNLIMITED", "NOT_SET", "INVALID" ):
+        return None
+    parts = line.split( "-" )
+    days = int( parts[ 0 ] ) if len( parts ) == 2 else 0
+    hms = [ int( x ) for x in parts[ -1 ].split( ":" ) ]
+    while len( hms ) < 3:
+        hms.insert( 0, 0 )
+    return days * 86400 + hms[ 0 ] * 3600 + hms[ 1 ] * 60 + hms[ 2 ]
+
+
+def fits( alloc: "Allocation", needs: dict, time = None, host = None ):
+    """Can this command run in the allocation held warm, without going beyond it? -> ( yes, why not ).
+
+    Its ranks within the allocation's tasks, its cores and cards per task within those declared,
+    `exclusive` only in an exclusive one, its time within what the job has left -- or, with no job
+    yet, within the time the job will be given. Never an `srun` that asks more than was allocated."""
+    from ..layers import slurm_seconds
+    s, needs = alloc.sched, needs or { }
+    tasks = ( s.nodes or 1 ) * ( s.ntasks_per_node or 1 )
+    ranks = int( needs.get( "ranks" ) or 1 )
+    if ranks > tasks:
+        return False, f"{ranks} ranks, {tasks} task{'s' if tasks > 1 else ''} allocated"
+    for key, have in ( ( "cpus", s.cpus or 1 ), ( "gpus", s.gpus or 0 ) ):
+        want = float( needs.get( key ) or 0 )
+        if want > have:
+            return False, f"{key}={want:g} per task, {have:g} allocated"
+    if needs.get( "exclusive" ) and "--exclusive" not in alloc.flags:
+        return False, "the machine to itself, in a shared allocation"
+    if time:
+        want = slurm_seconds( time )
+        left = None
+        if host is not None:
+            got = host.shell( f'j=$( cat {shlex.quote( alloc.dir )}/job 2>/dev/null ) && '
+                              f'squeue -h -j "$j" -o "%T %L" 2>/dev/null', capture = True )
+            said = ( got.stdout or "" ).strip().split()
+            if len( said ) == 2 and said[ 0 ] == "RUNNING":
+                left = _left( said[ 1 ] )
+        if left is None and s.time:
+            left = slurm_seconds( s.time )
+        if left is not None and want > left:
+            return False, f"--time {time}, {left} s left in it"
+    return True, None
+
+
+def release_if_idle( alloc: "Allocation", host ) -> bool:
+    """Give the allocation held warm back -- if nothing runs in it: a session that does is never cut."""
+    d = shlex.quote( alloc.dir )
+    got = host.shell( f'j=$( cat {d}/job 2>/dev/null ) || exit 0; '
+                      f'for p in {d}/"$j"/env-*/proc/*/; do [ -d "$p" ] && [ ! -f "$p/exit" ] && exit 3; done; '
+                      f'scancel "$j" && rm -f {d}/job && echo released', capture = True )
+    return "released" in ( got.stdout or "" )

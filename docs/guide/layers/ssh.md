@@ -78,26 +78,12 @@ Past the layers, at the end of the stack, a second agent runs with the environme
 interpreter, inside the micromamba environment, the module, the container. It is started once and
 reused, and it is what collects and runs the entries.
 
-With `errand.Preload( "torch", "jax" )` at the end of a stack, a session does not start a new
-Python each time. The environment agent keeps a process beside it that has already imported what
-the layer names, and what earlier sessions used (`learn = False` sticks to the names). Each session
-is a fork of it: a copy of its own, with nothing left over from the one before, and the project's
-own modules are always read again. Without the layer, every session is a Python started anew.
+With [`Preload`](./preload) at the end of a stack, sessions are forks of a process that has already
+imported torch or jax. What the agents start writes its output to disk over there, so a closed
+laptop loses nothing: `errand attach` picks the work up again.
 
-What the agents start writes its output to disk over there, so a closed laptop or a dropped network
-loses nothing. The work goes on, and `errand attach` follows it again: it shows the output from the
-start, waits for the end, and brings the results back.
-
-```bash
-errand run --env gpu 'bench/**::*'      # the laptop closes halfway
-errand attach                            # later: the rest, the report, the results here
-```
-
-| `ERRAND_AGENT` | |
-|---|---|
-| `hub` | through the hub. The default on a terminal |
-| `direct` | a connection owned by the command, closed with it. The default without a terminal (cron, CI) |
-| `off` | no agent: one ssh per remote command, as before |
+How long each piece stays, how it gives way, Ctrl-C, terminals, `ERRAND_AGENT`:
+→ [Fast, and nothing lost](../agents).
 
 ## The paths are computed before the run happens
 

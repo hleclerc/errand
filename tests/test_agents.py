@@ -110,6 +110,20 @@ if test( "a probe does not outlive its client" ):
         assert not marker.exists(), "a process that may not outlive its client did"
 
 
+if test( "nor its channel: through a hub the stream stays, and a closed channel is a client gone" ):
+    agents = fresh()
+    with scratch() as d:
+        conn = agents.open( local( d ) )
+        marker = Path( d ) / "still-here"
+        call = conn.open( { "op": "spawn", "argv": [ "sh", "-c", f"sleep 2; touch {marker}" ], "keep": False } )
+        call.reply()
+        call.close()                    # the connection stays: as rsync's remote shell, through the hub
+        time.sleep( 4 )
+        assert not marker.exists(), "an rsync --server whose client went would wait forever"
+        assert conn.ping()[ "ok" ]
+        conn.close()
+
+
 if test( "an agent with nothing to do goes, and takes its socket with it" ):
     agents = fresh()
     with scratch() as d:
@@ -144,6 +158,48 @@ if test( "through the hub: two commands, one agent, one stream" ):
         assert seen[ 0 ][ 1 ] == "through-the-hub" and seen[ 0 ] == seen[ 1 ], seen
         hubs = list( Path( home ).glob( ".cache/errand/hub-*" ) )
         assert len( hubs ) == 1 and ( hubs[ 0 ] / "sock" ).exists(), "the hub did not stay"
+
+
+if test( "a hub that goes takes its directory with it once its sources were replaced, not before" ):
+    from errand.agents import hub as H, upstream as U
+    with scratch() as d:
+        old, current = Path( d ) / "hub-old", Path( d ) / "hub-current"
+        kept = U.hub_dir
+        U.hub_dir = lambda fresh = False: current
+        try:
+            for root in ( old, current ):
+                assert H.Hub( root, 0.0 ).run() == 0, "nobody connected: it goes at once"
+        finally:
+            U.hub_dir = kept
+        assert not old.exists(), "a hub nobody will reach again"
+        assert ( current / "log" ).exists() or ( current / "lock" ).exists(), "the current one keeps its directory"
+
+
+if test( "errand agents lists what the hub keeps, and stop takes it all down, the hub included" ):
+    with scratch() as home, scratch() as d, scratch() as proj:
+        ( Path( proj ) / "errand-project.py" ).write_text( "" )
+        env = { **os.environ, "HOME": home, "ERRAND_HUB_KEEP_ALIVE": "60", "PYTHONPATH": str( ROOT ) }
+        got = subprocess.run( [ sys.executable, "-c", HUB.format( root = str( ROOT ), d = d ).replace(
+                                  '"keep_alive": 5', '"keep_alive": 60, "id": "here:test-agent"' ) ],
+                              capture_output = True, text = True, env = env, timeout = 60 )
+        assert got.returncode == 0, got.stderr
+
+        def errand( *words ):
+            return subprocess.run( [ sys.executable, "-m", "errand", *words ], cwd = proj, capture_output = True,
+                                   text = True, env = env, timeout = 120 )
+
+        listed = errand( "agents" )
+        assert listed.returncode == 0 and "here:test-agent" in listed.stdout, listed.stdout + listed.stderr
+        stopped = errand( "agents", "stop" )
+        assert "here:test-agent: stopped" in stopped.stdout and "stopped" in stopped.stdout.split( "hub" )[ -1 ], \
+            stopped.stdout + stopped.stderr
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and ( ( Path( d ) / "sock" ).exists() or
+                                                 list( Path( home ).glob( ".cache/errand/hub-*/sock" ) ) ):
+            time.sleep( 0.2 )
+        assert not ( Path( d ) / "sock" ).exists(), "the agent stayed"
+        assert not list( Path( home ).glob( ".cache/errand/hub-*/sock" ) ), "the hub stayed"
+        assert "no hub running" in errand( "agents" ).stdout
 
 
 if test( "rsync's remote shell is told apart from its options" ):
@@ -203,3 +259,27 @@ if test( "a process can have a terminal: its size, a resize, and Ctrl-C as a key
         call.send( F.IN, b"\x03" )                         # what a terminal makes of it: SIGINT
         until( b"[exit]" )
         assert b"KeyboardInterrupt" in out and out.endswith( b"[exit]" ), out
+
+
+if test( "a server that starts takes away what nobody serves any more beside it, and nothing else" ):
+    from errand.agents import endpoint
+    with scratch() as d:
+        base = Path( d )
+        for name in ( "me", "stale", "recent", "served", "session" ):
+            ( base / name ).mkdir()
+            ( base / name / "lock" ).touch()
+        ( base / "not-ours" ).mkdir()                       # no lock: not an agent's
+        # a session somebody may still attach to: finished two hours ago, its output kept
+        ( base / "session" / "proc" / "x" ).mkdir( parents = True )
+        ( base / "session" / "proc" / "x" / "meta.json" ).write_text( '{"keep": true}' )
+        ( base / "session" / "proc" / "x" / "exit" ).write_text( "0" )
+        old = time.time() - 7200
+        for name in ( "stale", "served", "not-ours", "session" ):
+            for p in ( base / name, *( base / name ).rglob( "*" ) ):
+                os.utime( p, ( old, old ) )
+        held = endpoint.hold( base / "served" / "lock" )    # somebody serves it
+        try:
+            endpoint.sweep( base / "me" )
+        finally:
+            held.close()
+        assert sorted( p.name for p in base.iterdir() ) == [ "me", "not-ours", "recent", "served", "session" ]

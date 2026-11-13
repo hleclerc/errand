@@ -93,6 +93,8 @@ class Reach:
 
     def start( self, request: dict, child: dict ):
         w = self.where
+        if self.kind == "alive":
+            self._warm_or_not()
         if not agents.enabled() and self.kind != "watched":
             # No agent ( ERRAND_AGENT=off ): the same session, through one ssh of its own, or here.
             line = self.line( request, child )
@@ -115,6 +117,22 @@ class Reach:
             return LocalSession( [ "sh", "-c", line ], cwd = str( w.root ) )
         self.target = U.ssh_target( w.ssh )
         return Session.start( agents.open( self.target ), [ "sh", "-c", LOGIN, "sh", line ] )
+
+
+    def _warm_or_not( self ):
+        """The allocation held warm, if this command fits in it; else a job of its own ( `srun` ),
+        after giving the warm one back if nothing runs in it -- it may hold the very nodes."""
+        w = self.where
+        alloc = alive.Allocation( self.env, self.tags, w )
+        host = L.Over( w.ssh, w.there ) if w.ssh is not None else L.Here( w.root )
+        needs = { k: v for k, v in ( self.ctx.needs or { } ).items() if k != "time" }
+        ok, why = alive.fits( alloc, needs, ( self.ctx.needs or { } ).get( "time" ), host )
+        if ok:
+            return
+        say( f"  not in the allocation kept warm ( {why} ): a job of its own" )
+        if alive.release_if_idle( alloc, host ):
+            say( "  the allocation kept warm was given back first" )
+        self.kind = "command"
 
 
 def _requests( env, tags, verb, known, kinds, where ) -> dict:
@@ -263,15 +281,24 @@ def attach( root, ident = None, *, report ) -> int:
     for path in lives:
         rec = json.loads( path.read_text() )
         say( f"\n  -> {rec[ 'env' ]}  ( {rec[ 'id' ]} )" )
-        conn = agents.open( rec[ "target" ] )
-        boxes = [ { } for _ in rec[ "procs" ] ]
-        rcs = follow_all( [ Session( conn, pid ) for pid in rec[ "procs" ] ], report, boxes )
-        if rcs is None:
-            path.unlink( missing_ok = True )
-            return INTERRUPTED
-        rc |= max( rcs ) if rcs else 0
-        if any( b.get( "lost" ) for b in boxes ):
-            continue
+        from .standing import processes
+        try:
+            gone = any( p is None for p in processes( rec ) )
+        except Exception:
+            gone = False                                # cannot tell: try to follow it
+        if gone:
+            # Its output over there was let go of. What it wrote in the project is still there.
+            say( "  its output is gone over there: bringing back what it wrote" )
+        else:
+            conn = agents.open( rec[ "target" ] )
+            boxes = [ { } for _ in rec[ "procs" ] ]
+            rcs = follow_all( [ Session( conn, pid ) for pid in rec[ "procs" ] ], report, boxes )
+            if rcs is None:
+                path.unlink( missing_ok = True )
+                return INTERRUPTED
+            rc |= max( rcs ) if rcs else 0
+            if any( b.get( "lost" ) for b in boxes ):
+                continue
         ssh = SimpleNamespace( **rec[ "ssh" ] ) if rec.get( "ssh" ) else None
         _bring_back( SimpleNamespace( root = root, ssh = ssh, there = Path( rec[ "there" ] ) ), rec[ "env" ], { },
                      rec.get( "pull", [ ] ) )

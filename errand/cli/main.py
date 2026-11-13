@@ -102,7 +102,7 @@ def main( argv = None ):
         if unknown:
             print( bad( f"errand {verb}: unknown option {unknown[ 0 ]}" ) )
             return 2
-        wanted = { "forget": 1, "vm": 1, "setup": None, "attach": None }.get( verb, 0 )
+        wanted = { "forget": 1, "vm": 1, "setup": None, "attach": None, "agents": None }.get( verb, 0 )
         if wanted is not None and len( words ) != wanted:
             print( bad( f"errand {verb}: " + ( f"takes no argument ( got {' '.join( words )} )"
                                                if not wanted else "expects one argument" ) ) )
@@ -135,6 +135,9 @@ def main( argv = None ):
         return queue.wait_idle()
 
     if verb == "forget":
+        if words[ 0 ] == "finished":
+            from .batches import forget_finished
+            return forget_finished( root )
         batch.forget( root, words[ 0 ] )
         return 0
 
@@ -142,8 +145,17 @@ def main( argv = None ):
         report = Report()
         return _epilogue( report, drive.attach( root, words[ 0 ] if words else None, report = report ) )
 
-    if verb in ( "status", "watch" ):
-        return show_batches( root, live = verb == "watch" )
+    if verb == "agents":
+        from . import standing
+        return standing.main( words, force = known.force )
+
+    if verb == "status":
+        from . import standing
+        left = standing.show_live( root )
+        return show_batches( root, quiet_if_none = bool( left ) )
+
+    if verb == "watch":
+        return show_batches( root, live = True )
 
     if verb == "queue":
         return print_queue()

@@ -27,6 +27,7 @@ errand.envs[ "cluster" ] = errand.Env( [
 | [`Module`](./module) | Lmod / environment modules, the way a cluster picks a toolchain |
 | [`Mpi`](./mpi) | a launcher of its own for [several processes](../mpi), where neither `mpiexec` nor Slurm's `srun` is the one — rarely needed |
 | [`Vars`](./vars) | environment variables for the child process |
+| [`Preload`](./preload) | at the end: sessions forked from a process that has already imported torch, jax… |
 
 ## The interpreter
 

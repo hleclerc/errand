@@ -20,10 +20,12 @@ target is the target's: `errand --env gpu run t.py` and `errand run --env gpu t.
 | `tui` | [the screen](/guide/tui) |
 | `queue` | what the host has, and what is holding it |
 | `wait` | return once nothing holds the machine and nothing is queued for it |
-| `status` | how the [detached](/guide/detached) work is going; one shot, plain text |
+| `status` | what was left running by a lost connection, and how the [detached](/guide/detached) work is going; one shot, plain text |
 | `watch` | the same, live, until everything has landed |
-| `forget ID` | drop a submission from the list, keeping its results |
+| `forget ID`, `forget finished` | drop a submission from the list, or every one that is over, keeping their results |
+| `attach` | follow again what a command left running when the connection was lost, and bring its results back — [Close the laptop](/guide/agents#close-the-laptop) |
 | `vm stop` | stop the [virtual machines](/guide/layers/windows) kept warm between commands |
+| `agents [stop [NAME]]` | what is kept between commands — the hub, its agents — and stopping it; `--force` even with something running — [agents](/guide/agents#what-is-up-and-stopping-it) |
 
 ## Everybody's options
 
@@ -35,6 +37,7 @@ target is the target's: `errand --env gpu run t.py` and `errand run --env gpu t.
 | `--root PATH` | the project root. Default: found by walking up from the cwd for an `errand-*.py` |
 | `-h`, `--help` | the help; after a verb, that verb's |
 | `-V`, `--version` | which errand this is |
+| `-v`, `--verbose` | every command errand starts, here and over there, on stderr — [When something breaks](/guide/upkeep#when-something-breaks) |
 
 An option that belongs to another verb is an error rather than ignored: `errand shell --batch`
 says `--batch` is `run`'s.
@@ -149,3 +152,11 @@ Non-zero when anything failed — including a candidate file that could not be i
 [costs its own row and takes the return code with it](/guide/running#a-file-that-will-not-import).
 A [skip](/guide/configuration#what-only-this-machine-can-supply) is its own status and is not a
 failure, but it is never silent either.
+
+## Environment variables
+
+| | |
+|---|---|
+| `ERRAND_AGENT` | `hub` (default on a terminal), `direct` (default without one), `off` — [agents](/guide/agents#when-you-want-it-otherwise) |
+| `ERRAND_HUB_KEEP_ALIVE` | seconds the hub stays up with nothing to do. Default 900 |
+| `ERRAND_WARM` | `0`: every session a Python started anew, even with a [`Preload`](/guide/layers/preload) |

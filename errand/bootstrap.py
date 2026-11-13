@@ -69,15 +69,18 @@ def key() -> str:
 _sources = None
 
 
-def sources_key() -> str:
+def sources_key( fresh = False ) -> str:
     """What errand's sources ARE, not where they are: an agent started from other
-    sources is another agent ( ADR 0005, staleness )."""
+    sources is another agent ( ADR 0005, staleness ). `fresh`: what they are now,
+    for a process that may have outlived them."""
     global _sources
-    if _sources is None:
+    if _sources is None or fresh:
         h = hashlib.sha1()
         for p in sorted( PACKAGE.rglob( "*.py" ) ):
             h.update( str( p.relative_to( PACKAGE ) ).encode() + b"\0" + p.read_bytes() )
-        _sources = h.hexdigest()[ : 12 ]
+        if not fresh or _sources is None:
+            _sources = h.hexdigest()[ : 12 ]
+        return h.hexdigest()[ : 12 ]
     return _sources
 
 

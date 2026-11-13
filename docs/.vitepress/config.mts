@@ -59,6 +59,7 @@ export default defineConfig( {
             { text: 'Nix, Guix',                   link: '/guide/layers/nix-guix' },
             { text: 'Module',                      link: '/guide/layers/module' },
             { text: 'Mpi',                         link: '/guide/layers/mpi' },
+            { text: 'Preload',                     link: '/guide/layers/preload' },
             { text: 'Vars',                        link: '/guide/layers/vars' },
           ] },
         ]
@@ -67,6 +68,7 @@ export default defineConfig( {
         text: 'Running', collapsed: true,
         items: [
           { text: 'Running it',            link: '/guide/running' },
+          { text: 'Fast, and nothing lost', link: '/guide/agents' },
           { text: 'Runners', link: '/guide/runners/', collapsed: true, items: [
             { text: 'Pytest',                  link: '/guide/runners/pytest' },
             { text: 'Catch2',                  link: '/guide/runners/catch2' },

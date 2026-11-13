@@ -148,6 +148,17 @@ def session( request: dict ) -> int:
 
 # ── the zygote ───────────────────────────────────────────────────────────────
 
+def _rss_mb() -> float:
+    """What this process holds in memory, in MB."""
+    try:
+        pages = int( Path( "/proc/self/statm" ).read_text().split()[ 1 ] )
+        return pages * os.sysconf( "SC_PAGE_SIZE" ) / ( 1 << 20 )
+    except ( OSError, ValueError, IndexError ):
+        import resource
+        peak = resource.getrusage( resource.RUSAGE_SELF ).ru_maxrss
+        return peak / ( 1 << 20 ) if sys.platform == "darwin" else peak / 1024
+
+
 def _blas() -> bool:
     """Is an OpenBLAS mapped in this process? Its thread pool, started when it is loaded, survives a
     fork: OpenBLAS stops it before one and starts it again after ( pthread_atfork ), which is what
@@ -174,6 +185,7 @@ class Zygote:
         self.idle_since = time.monotonic()
         self.loaded : dict = { }          # module -> ( file, mtime ) at import
         self.state = self._read_state()
+        self.claim, self.claimed, self.touched, self.claim_lost = None, 0.0, 0.0, False
 
     def _read_state( self ) -> dict:
         try:
@@ -362,11 +374,16 @@ class Zygote:
                                     except ( ProcessLookupError, PermissionError ):
                                         pass
                 self._reap()
+                self._breathe()
                 if self.children:
                     self.idle_since = time.monotonic()
                     continue
                 if [ r for r in ready if r != self.wake ]:
                     continue
+                # What it holds is only kept warm: counted in the machine's queue, and given up
+                # as soon as somebody needs the room.
+                if not self._hold_room():
+                    break
                 # idle: learn, import what is wanted -- until somebody asks for a fork -- or go
                 self._learn()
                 if self._stale():
@@ -382,8 +399,39 @@ class Zygote:
             self.server.close()
             if path.exists():
                 path.unlink()
+            if self.claim is not None:
+                from .. import queue
+                queue.release( self.claim )
             held.close()
         return 0
+
+    def _hold_room( self ) -> bool:
+        """-> False when this zygote should go: no room for it, or somebody asked for the room."""
+        from .. import queue
+        rss = _rss_mb()
+        if self.claim is None:
+            self.claim = queue.try_claim( { "ram": f"{int( rss )}M" }, label = f"zygote {self.where.parent.name}" )
+            if self.claim is None and not queue.someone_else_is_scheduling() and not os.environ.get( queue.CLAIM ) \
+                    and not os.environ.get( "ERRAND_NO_QUEUE" ):
+                return False                       # no room to keep anything warm
+            self.claimed = rss
+        elif rss > self.claimed * 1.1 + 50:
+            queue.resize( self.claim, ram = f"{int( rss )}M" )
+            self.claimed = rss
+        if self.claim is not None and ( self.claim_lost or queue.evicted( self.claim ) ):
+            return False                           # taken for dead meanwhile, or asked for the room
+        return True
+
+    def _breathe( self ):
+        """The claim is touched every turn of the loop, sessions running or not: a claim nobody
+        touches for half a minute is taken for dead."""
+        if self.claim is None:
+            return
+        from .. import queue
+        now = time.monotonic()
+        if now - self.touched > 5:
+            self.touched = now
+            self.claim_lost = not queue.touch( self.claim )
 
 
 def _reseed():

@@ -72,27 +72,71 @@ def _without_value( argv, flag ):
 MARKS = { batch.DONE: "ok", batch.RUNNING: "..", batch.LOST: "??" }
 
 
-def show_batches( root, live = False ):
+RECENT = 86400.0       # a launch settled longer ago than this is only counted, not shown
+
+
+def settle( root, record, rows ) -> bool:
+    """Finished, everywhere it ran, and brought back: then it is `settled`, said so in its record,
+    and nobody is asked about it again."""
+    if record.get( "settled" ):
+        return True
+    if not rows or not batch.finished( rows ) or any( batch.alive( p ) for p in record.get( "places", [ ] ) ):
+        return False
+    record[ "settled" ] = True
+    batch.save( root, record )
+    return True
+
+
+def _age( record ) -> float:
+    import datetime
+    try:
+        return time.time() - datetime.datetime.fromisoformat( str( record.get( "when" ) ) ).timestamp()
+    except ValueError:
+        return 0.0
+
+
+def show_batches( root, live = False, quiet_if_none = False ):
     records = batch.load_all( root )
     if not records:
-        print( dim( "  nothing launched from here" ) )
+        if not quiet_if_none:
+            print( dim( "  nothing launched from here" ) )
         return 0
     try:
         while True:
             for record in records:
-                batch.collect( root, record )
+                if not record.get( "settled" ):
+                    batch.collect( root, record )
             if live:
                 print( "\033[2J\033[H", end = "" )
-            everything = [ ]
+            everything, older = [ ], 0
             for record in records:
                 rows = batch.states( root, record )
                 everything += rows
+                if settle( root, record, rows ) and _age( record ) > RECENT:
+                    older += 1
+                    continue
                 _show_one( root, record, rows )
+            if older:
+                print( dim( f"\n  and {older} older launch{'es' if older > 1 else ''}, finished"
+                            f"   ( errand forget finished drops them; their results stay )" ) )
             if not live or batch.finished( everything ):
                 return 0
             time.sleep( 2.0 )
     except KeyboardInterrupt:
         return 0
+
+
+def forget_finished( root ) -> int:
+    """`errand forget finished`: every launch that is over, gone from the list. Results stay."""
+    dropped = 0
+    for record in batch.load_all( root ):
+        if not record.get( "settled" ):
+            batch.collect( root, record )
+        if settle( root, record, batch.states( root, record ) ):
+            batch.forget( root, record[ "id" ] )
+            dropped += 1
+    print( dim( f"  {dropped} finished launch{'es' if dropped != 1 else ''} forgotten; their results stay" ) )
+    return 0
 
 
 def _show_one( root, record, rows ):
@@ -101,7 +145,7 @@ def _show_one( root, record, rows ):
     print( head( f"\n{record[ 'id' ]}  {record[ 'command' ] or '(everything)'}" )
            + dim( f"   {record[ 'when' ]}   {done}/{len( rows )} [{bar:<8}]" ) )
     for place in record.get( "places", [ ] ):
-        state = batch.alive( place )
+        state = False if record.get( "settled" ) else batch.alive( place )
         how = "running" if state else ( "finished" if state is False else "unknown" )
         job = f"{place[ 'kind' ]} {place.get( 'handle' ) or '-'}"
         print( dim( f"    {place[ 'env' ]}: {job} on {place.get( 'host' ) or 'this machine'} - {how}" ) )

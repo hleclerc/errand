@@ -43,7 +43,9 @@ class Windows( L.Gateway, L.Artefact ):
     provision: list = field( default_factory = list )   # PowerShell: a `.ps1` of the project, or a line
     fetch    : list = field( default_factory = list )   # what to bring back after each command
     also     : list = field( default_factory = list )   # sibling checkouts the work needs ( `../loom` ), copied in beside the project
-    keep     : str = "0"             # how long it stays up once no errand process holds it any more
+    # how long it stays up once no errand process holds it any more -- and only while nobody needs its cores:
+    # kept warm, its claim gives way to any work that asks for them ( `queue`, preemptible )
+    keep     : str = "5m"
     data     : str | None = "32G"    # a disk kept from one boot to the next, as E:, where the project
                                      # lands -- so what a command leaves ( a build ) is there for the next
                                      # one. Grows as it is written, up to this; None: everything is C:, reset

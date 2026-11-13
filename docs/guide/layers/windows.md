@@ -2,7 +2,7 @@
 
 ```python
 Windows( iso = None, key = None, index = 1, cpus = 4, ram = "8G", disk = "64G",
-         msvc = True, python = None, provision = [ ], fetch = [ ], keep = "0", data = "32G", root = None )
+         msvc = True, python = None, provision = [ ], fetch = [ ], keep = "5m", data = "32G", root = None )
 ```
 
 **First, or right after the `Ssh` of the machine that boots it.** A Windows virtual machine under
@@ -77,7 +77,10 @@ with the same report and the same records, which come back here. `errand shell -
 `cmd.exe` in a pseudo-console, with colours, Ctrl-C and resizing.
 
 The machine is held for as long as the command runs, and `keep` says how long it stays up after
-that. While it is up, its agent is too, and the next command starts at once.
+that: five minutes by default. While it is up, its agent is too, and the next command starts at once.
+Kept up and unused, it is only kept warm. Its claim in the queue of the machine that runs QEMU says
+so, and any work that needs its cores asks for them: the machine stops then, without waiting for the
+end of `keep`.
 
 Without a Python, `errand run --env win` hands the guest the command itself, through cmd.exe, as
 above. `--batch` does not reach a virtual machine yet.

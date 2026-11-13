@@ -9,7 +9,8 @@ import subprocess
 import sys
 import time
 
-from .. import layers as L, queue
+from .. import layers as L
+from .claim import held as claim_on
 from .common import _alive, _lock, _read, BOOT_TIMEOUT
 from .datadisk import DATA_DRIVE, DATA_SCRIPT, FLUSH_SCRIPT, powershell
 
@@ -32,8 +33,8 @@ class Keeping:
             ( self.live / "state" ).write_text( "queued" )
             # The queue is this machine's: cores over there are counted only
             # when over there is here.
-            with queue.claim( { "cpus": config[ "cpus" ], "ram": config[ "ram" ] },
-                              label = f"windows vm {self.name[ : 8 ]}", enabled = not self.host.remote ):
+            with claim_on( self.host, { "cpus": config[ "cpus" ], "ram": config[ "ram" ] },
+                       f"windows vm {self.name[ : 8 ]}" ) as claim:
                 self.there( 'mkdir -p "$1" && rm -f "$3" && qemu-img create -q -f qcow2 -b "$2" -F qcow2 "$3"',
                             self.spot, f"{self.image}/base.qcow2", overlay, what = "the overlay" )
                 data = self.data_disk( config.get( "data" ) )
@@ -60,7 +61,7 @@ class Keeping:
                     # Asked rarely: over ssh every question is a connection.
                     if ticks % 15 == 0 and self.gone( pid ):
                         break
-                    held = self._idle( config[ "keep" ] )
+                    held = self._idle( config[ "keep" ], claim )
         finally:
             ( self.live / "state" ).write_text( "stopping" )
             if pid is not None:
@@ -86,15 +87,26 @@ class Keeping:
         self.there( 'test -f "$1" || qemu-img create -q -f qcow2 "$1" "$2"', path, size, what = "the data disk" )
         return path
 
-    def _idle( self, keep: float ):
+    def _idle( self, keep: float, claim = None ):
         """Long enough since the last command, no errand process still holding
         the machine, and nobody about to send one? -> the locks, to be held until
-        this process exits; or None."""
+        this process exits; or None.
+
+        While nobody holds it, the machine is only kept warm: its claim says so,
+        and somebody who needs its cores asks for them -- then it goes now,
+        whatever `keep` says."""
+        holders = self.holders()
+        if claim is not None:
+            if bool( holders ) == getattr( self, "_warm", True ):
+                self._warm = not holders
+                claim.preemptible( not holders )
+            if not holders and claim.evicted():
+                keep = -1
         try:
             since = time.time() - ( self.live / "used" ).stat().st_mtime
         except OSError:
             since = keep + 1
-        if since <= keep or self.holders():
+        if since <= keep or holders:
             return None
         start = _lock( self.live / "start.lock", block = False )
         if start is None:

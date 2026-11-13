@@ -81,3 +81,24 @@ def _through_hub( target: dict ) -> Connection:
 
 
 __all__ = [ "attach", "Call", "Connection", "enabled", "interact", "Lost", "mode", "open", "shell", "start" ]
+
+
+def ask_hub( root, request: dict, timeout = 30.0 ):
+    """A request to the hub serving in `root` itself ( `streams`, `stop` ): its reply, None if none serves there."""
+    import socket
+    from . import daemon
+    sock = daemon.reach( root )
+    if sock is None:
+        return None
+    conn = Connection( sock.recv, sock.sendall, lambda: sock.shutdown( socket.SHUT_RDWR ) )
+    call = conn.calls[ 0 ] = Call( conn, 0 )
+    try:
+        conn.writer.send( 0, F.OPEN, request )
+        return call.reply( timeout = timeout )
+    except ( Lost, TimeoutError, RuntimeError, OSError ):
+        return None
+    finally:
+        try:
+            conn.close()
+        except OSError:
+            pass

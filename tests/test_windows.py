@@ -133,8 +133,8 @@ if test( "what is missing is said with the command that fixes it, on that machin
             raise AssertionError( f"accepted: {f}" )
 
 
-if test( "a machine is up while an errand process holds it, and not a moment more by default" ):
-    assert vm.Windows().keep == "0"
+if test( "a machine is up while an errand process holds it, then kept warm for `keep`" ):
+    assert vm.Windows().keep == "5m", "kept warm a little: it gives way to whoever needs its cores"
     with tempfile.TemporaryDirectory() as tmp, cache( tmp ):
         m = vm.Machine( L.Here( Path( tmp ) ), facts( cache = tmp ), "img" )
         ( m.live / "holders" ).mkdir( parents = True )
@@ -150,6 +150,30 @@ if test( "a machine is up while an errand process holds it, and not a moment mor
             lock.close()
         os.utime( m.live / "used" )
         assert m._idle( 3600 ) is None, "`keep` still means what it says once nobody holds it"
+
+
+if test( "kept warm, a machine says so in its claim, and goes as soon as somebody needs the room" ):
+    class Claim:
+        def __init__( self ):
+            self.warm, self.asked = [ ], False
+        def preemptible( self, flag = True ):
+            self.warm.append( flag )
+        def evicted( self ):
+            return self.asked
+
+    with tempfile.TemporaryDirectory() as tmp, cache( tmp ):
+        m, claim = vm.Machine( L.Here( Path( tmp ) ), facts( cache = tmp ), "img" ), Claim()
+        ( m.live / "holders" ).mkdir( parents = True )
+        ( m.live / "used" ).touch()
+        ( m.live / "holders" / str( os.getpid() ) ).touch()
+        assert m._idle( 3600, claim ) is None and claim.warm == [ False ], "in use: it may not give way"
+        ( m.live / "holders" / str( os.getpid() ) ).unlink()
+        assert m._idle( 3600, claim ) is None and claim.warm == [ False, True ], "nobody: only kept warm"
+        claim.asked = True
+        held = m._idle( 3600, claim )
+        assert held is not None, "asked for its cores: it goes now, whatever `keep` says"
+        for lock in held:
+            lock.close()
 
 
 if test( "no image, no command -- and said so" ):

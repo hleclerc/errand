@@ -43,6 +43,15 @@ def identity( target: dict ) -> str:
     return json.dumps( [ "ssh", target[ "host" ], list( target.get( "options", [ ] ) ) ] )
 
 
+def name( target: dict ) -> str:
+    """How a person calls it: the host, `here:<dir>`, or the id an environment agent was given."""
+    if target.get( "id" ):
+        return str( target[ "id" ] )
+    if target[ "kind" ] == "local":
+        return f"here:{target[ 'dir' ]}"
+    return str( target.get( "host" ) )
+
+
 def of_host( host: str, options = ( ) ) -> dict:
     """The target of `host`, for what knows only the host and its options ( rsync )."""
     return { "kind": "ssh", "host": host, "options": list( options ), "python": "python3", "keep_alive": KEEP_ALIVE }
@@ -125,5 +134,5 @@ def direct( target: dict ) -> Connection:
     return Connection( lambda n: os.read( out, n ), write, close, marker = True )
 
 
-def hub_dir( ) -> Path:
-    return Path.home() / bootstrap.BASE / f"hub-{bootstrap.sources_key()}"
+def hub_dir( fresh = False ) -> Path:
+    return Path.home() / bootstrap.BASE / f"hub-{bootstrap.sources_key( fresh )}"

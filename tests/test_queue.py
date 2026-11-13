@@ -339,3 +339,36 @@ if test( "`errand run -x cmd` runs the command through the queue and says its co
                             env = { **os.environ, "PYTHONPATH": os.pathsep.join( sys.path ) } )
         assert r.returncode != 0, r.stdout + r.stderr
         assert "exit 3" in r.stdout, r.stdout + r.stderr
+
+
+if test( "what is only kept warm gives way: a request that would fit without it asks, and gets the room" ):
+    import os, tempfile, threading, time
+    from errand import queue as Q
+    with tempfile.TemporaryDirectory() as tmp:
+        kept = { k: os.environ.pop( k, None ) for k in ( "XDG_RUNTIME_DIR", Q.CLAIM, "ERRAND_NO_QUEUE",
+                                                        *Q.ALLOCATION_VARS ) }
+        os.environ[ "XDG_RUNTIME_DIR" ] = tmp
+        try:
+            total = Q.capacity()[ "cpus" ]
+            warm = Q.try_claim( { "cpus": total }, label = "a warm vm" )
+            assert warm is not None and Q.held()[ 0 ][ "preemptible" ]
+
+            def holder():                       # what a keeper does: touch, and give way when asked
+                while not Q.evicted( warm ):
+                    Q.touch( warm )
+                    time.sleep( 0.1 )
+                Q.release( warm )
+
+            threading.Thread( target = holder, daemon = True ).start()
+            said = [ ]
+            t = time.monotonic()
+            with Q.claim( { "cpus": 1 }, label = "real work", echo = said.append ):
+                assert time.monotonic() - t < 10
+            assert any( "kept warm" in s for s in said ), said
+            assert not Q.held(), "the room was given, then the work's own claim went"
+        finally:
+            for k, v in kept.items():
+                if v is None:
+                    os.environ.pop( k, None )
+                else:
+                    os.environ[ k ] = v

@@ -85,10 +85,13 @@ class Proc:
             else:
                 self.listeners.append( ( writer, channel ) )
 
-    def detach( self, writer ):
-        """A client is gone. A process that may not outlive it goes with it."""
+    def detach( self, writer, channel = None ):
+        """A client is gone -- or, with `channel`, closed that channel only ( through a hub, the stream
+        stays ). A process that may not outlive it goes with it: left running, an `rsync --server`
+        whose client went would wait for its input forever, and keep its agent from ever going."""
         with self.lock:
-            self.listeners = [ l for l in self.listeners if l[ 0 ] is not writer ]
+            self.listeners = [ l for l in self.listeners
+                               if not ( l[ 0 ] is writer and ( channel is None or l[ 1 ] == channel ) ) ]
             orphan = not self.listeners
         if orphan and not self.keep and self.code is None:
             self.signal( signal.SIGTERM )

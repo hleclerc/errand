@@ -18,45 +18,35 @@ hero:
 
 features:
   - icon: 🧭
-    title: Layers, so you never write the ssh-slurm-apptainer script again
-    details: "An environment is a stack of layers — micromamba, conda, uv, a venv, Nix, Guix, module load, Docker, Podman, Apptainer, ssh, Slurm, a Windows VM — in any combination. Apptainer inside Slurm inside ssh is three lines."
+    title: Any stack of layers
+    details: "micromamba, uv, Apptainer, ssh, Slurm, a Windows VM… Apptainer in Slurm over ssh is three lines. Files go there and come back."
     link: /guide/environments
     linkText: Environments
   - icon: 🔄
-    title: Built, installed and kept current
-    details: "Each layer says what it needs — a Python version, a requirements.txt, a container recipe. errand builds it the first time, checks it before every run, and brings it up to date when the declaration changed. What already exists is adopted, never rebuilt behind your back."
+    title: Automatic builds and installs
+    details: "The conda env from its requirements, the Apptainer or Docker image from its recipe: built on first use, rebuilt when what it declares changes."
     link: /guide/upkeep
     linkText: Keeping them current
-  - icon: 📦
-    title: Files there and back
-    details: "Over ssh the project is rsynced before the command runs, and what you name comes back after: --pull a directory, -o an output directory per run, handed to the command as $ERRAND_OUT_DIR."
-    link: /guide/remote
-    linkText: Running elsewhere
+  - icon: ⚡
+    title: Warm between commands
+    details: "The first run leaves agents behind. The next one over ssh takes a second, not eight; on a cluster, it skips the queue."
+    link: /guide/agents
+    linkText: Fast, and nothing lost
+  - icon: 💻
+    title: Close the laptop
+    details: "The work goes on over there. errand attach picks it up, results included. --batch gives the shell back at once."
+    link: /guide/agents#close-the-laptop
+    linkText: Close the laptop
   - icon: 🧩
-    title: Whatever you would have typed
-    details: "errand run make check, errand run train.py, errand run ./bench. And for a suite — pytest, Catch2, cargo — `path::test` runs its tests one by one, each recorded, marks and all."
+    title: Name a target, errand finds the tool
+    details: "A script, a binary, a command, a test... errand reads the content to pick the right tool (e.g. python, pytest, cargo, Catch2)"
     link: /guide/running
     linkText: Running it
-  - icon: ✖️
-    title: Several places at once
-    details: "--env local,cluster is two runs; --fp 32,64 picks environments by tag, and an environment that does not say covers both. The same command, side by side."
-    link: /guide/tags
-    linkText: Tags
   - icon: 🔒
-    title: The machine to yourself when it matters
-    details: "A queue per host, outside the process: errand run -x ./bench waits for what is running and holds everything else back; --cpus and --gpus take a share, and a card is assigned, not merely counted."
+    title: Resource management
+    details: "-x for a timing nothing disturbs, --cpus and --gpus for a share. What is only kept warm gives way."
     link: /guide/machine
     linkText: Sharing the machine
-  - icon: 🛰️
-    title: Detach anything
-    details: "--batch launches the work and gives you the shell back — a detached session locally, a released ssh command, an sbatch on a cluster. errand status and errand watch say how it is going."
-    link: /guide/detached
-    linkText: Detached runs
-  - icon: 🪶
-    title: No dependencies, ever
-    details: "errand's job is to build the environment the work runs in, so it has to run before any environment exists. It writes YAML without pyyaml and draws its screen with the standard library's curses."
-    link: /guide/installing
-    linkText: Installing
 ---
 
 ## One command, through every layer
@@ -84,7 +74,11 @@ errand run --env cluster --pull out make results # ...and out/ comes back
 errand run --env local,cluster ./bench           # in both places
 errand run --batch --env cluster train.py        # and give me the shell back
 errand shell --env cluster                       # be let in, to look around
+errand attach                                    # the laptop closed: pick the run up again
 ```
+
+The second command to the cluster does not log in again: the [agents](/guide/agents) the first one
+left are still there, and the layers are already entered.
 
 <Term scene="stack" caption="errand run --env cluster train.py. The ssh, the allocation and the container are the three layers declared above; setting them up, entering them and fetching the files back is errand's part." />
 

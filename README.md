@@ -23,7 +23,13 @@ errand run --env cluster python train.py --lr 1e-3  # rsync, srun, apptainer, an
 errand run --env cluster --pull out make results    # ...and out/ comes back here
 errand run --env local,cluster ./bench              # in both places, one after the other
 errand shell --env cluster                          # be let in, to look around
+errand attach                                       # the laptop closed: pick the run up again
 ```
+
+The first command leaves small agents behind, so the next one neither logs in nor queues again: a run
+over ssh in a second instead of eight, an allocation held warm for a while, torch already imported
+with `Preload`. They stop on their own when unused and give way when someone needs the room; a
+closed laptop loses nothing, and Ctrl-C stops the work through every layer.
 
 The site has everything, split by theme, with tutorials: **<https://hleclerc.github.io/errand/>**
 (built from [`docs/`](docs/)).

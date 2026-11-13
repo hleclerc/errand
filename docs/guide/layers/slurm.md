@@ -129,9 +129,17 @@ environment agent it starts, and are built there too. A venv or an environment i
 own `srun`. The allocation is sized from what is declared, since it outlives the command that started
 it: ranks fit when `nodes × ntasks_per_node` is enough for them.
 
+A command runs in it only if it fits: its ranks within the allocation's tasks, its cores and cards
+per task within those declared, `exclusive` only if the allocation is, its `--time` within what the
+job has left. Otherwise it gets a job of its own, sized for it, and the warm allocation is given back
+first if nothing runs in it, since it may hold the very nodes. No `srun` ever asks more than was
+allocated.
+
 Once nothing has used it for `keep_alive`, the agent goes, the job ends, and the allocation is
-released; at the latest, its `time` releases it. Nothing has to be remembered, and nothing stays
+released; at the latest, its `time` releases it. On a cluster other people share, a short
+`keep_alive` is the polite one. Nothing has to be remembered, and nothing stays
 held by mistake. Its job and its directory are in `~/.cache/errand/alloc/` on the cluster.
+→ [Fast, and nothing lost](../agents)
 
 ## Preparing and running: two allocations
 

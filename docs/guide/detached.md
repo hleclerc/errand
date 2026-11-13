@@ -70,6 +70,10 @@ neighbour is visible without opening anything.
 `errand watch` holds no state of its own: it polls the tree and the batch systems, so it can be started,
 killed and restarted at any point, and several can watch at once.
 
+A launch that is over everywhere and brought back is **settled**: nobody is asked about it again,
+so `status` stays quick however many there are. Those settled more than a day ago are counted on one
+line rather than shown; `errand forget finished` drops them from the list, and their results stay.
+
 ## The same thing on a screen
 
 [`errand tui`](./tui) shows this table on its runs page, over the same tree. Tick `detach` in the

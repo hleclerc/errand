@@ -103,6 +103,7 @@ def serve( root: Path, idle, client, closing = None ) -> int:
     held = hold( root / "lock" )
     if held is None:
         return 0
+    sweep( root )
     server, accept = listen( root )
     server.settimeout( 1.0 )
     try:
@@ -124,3 +125,44 @@ def serve( root: Path, idle, client, closing = None ) -> int:
             closing()
         held.close()
     return 0
+
+
+def sweep( root: Path, older = 3600.0 ):
+    """The directories beside this one that nobody serves any more -- an agent or a hub of sources
+    since replaced -- untouched for an hour, and whose lock is free: they go. Not one that holds a
+    session somebody may still attach to."""
+    import shutil
+    import time
+    now = time.time()
+    for d in root.parent.iterdir() if root.parent.is_dir() else [ ]:
+        if d == root or not d.is_dir() or not ( d / "lock" ).exists():
+            continue
+        try:
+            if now - max( p.stat().st_mtime for p in [ d, *d.iterdir() ] ) < older:
+                continue
+        except ( OSError, ValueError ):
+            continue
+        if _attachable( d, now ):
+            continue                           # a session `errand attach` may still come back for
+        free = hold( d / "lock" )
+        if free is None:
+            continue                       # somebody serves it
+        free.close()
+        shutil.rmtree( d, ignore_errors = True )
+
+
+def _attachable( d: Path, now: float ) -> bool:
+    """A session kept for its client ( `keep` ), unfinished or finished less than a week ago: its
+    output is what `errand attach` replays, and it goes when the agent's own sweep says so."""
+    import json
+    from .procs import KEEP_DAYS
+    for p in ( d / "proc" ).iterdir() if ( d / "proc" ).is_dir() else [ ]:
+        try:
+            if not json.loads( ( p / "meta.json" ).read_text() ).get( "keep" ):
+                continue
+            done = p / "exit"
+            if not done.exists() or now - done.stat().st_mtime < KEEP_DAYS * 86400:
+                return True
+        except ( OSError, ValueError ):
+            continue
+    return False

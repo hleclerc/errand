@@ -51,6 +51,11 @@ errand -v run --env lmo ./solve             # every command errand starts, said 
 | `-q` | no banner |
 | `-v`, `--verbose` | every command errand starts, with where and what it is handed; a failure with its code ( [When something breaks](./upkeep#when-something-breaks) ) |
 
+What is only kept warm, such as a virtual machine nobody uses at the moment or a process that has
+imported torch ahead ([`Preload`](./layers/preload)), holds its claim as one that gives way. A request that would fit
+without it asks for the room and gets it, without waiting for the end of a `keep`. `errand queue`
+shows those claims as kept warm. → [Giving way](./agents#giving-way)
+
 With `-m`, where the user bus allows it, the command is put in a `systemd-run --user --scope` with
 `MemoryMax` set, so a runaway allocation takes down the command and not the machine. Without a
 bus — over ssh, from cron — the command still runs, only without its ceiling.

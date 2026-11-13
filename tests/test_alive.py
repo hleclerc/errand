@@ -72,3 +72,24 @@ if test( "setup builds what comes after a scheduler held warm inside the allocat
         assert reached == [ True ], "the allocation is reached once"
     finally:
         A.Allocation = kept
+
+
+if test( "a command runs in the allocation kept warm only if it fits in it: never an srun beyond it" ):
+    from errand.cli.alive import Allocation, fits, _left
+    env = errand.Env( [ errand.Ssh( host = "cluster" ),
+                        errand.Slurm( nodes = 2, ntasks_per_node = 2, cpus = 4, gpus = 1, time = "0:30:00",
+                                      keep_alive = "10m" ) ] )
+    a = Allocation( env, { }, where() )
+    assert fits( a, { "ranks": 4, "cpus": 4, "gpus": 1 } ) == ( True, None )
+    assert not fits( a, { "ranks": 8 } )[ 0 ], "more ranks than tasks"
+    assert not fits( a, { "cpus": 8 } )[ 0 ] and not fits( a, { "gpus": 2 } )[ 0 ], "more per task than allocated"
+    assert not fits( a, { "exclusive": True } )[ 0 ], "the machine to itself, in a shared allocation"
+    assert not fits( a, { }, time = "1:00:00" )[ 0 ], "longer than the job it would be"
+
+    class Squeue:                                   # the job is running, with 9 minutes left
+        def shell( self, line, **kw ):
+            return SimpleNamespace( stdout = "RUNNING 9:00\n", returncode = 0 )
+
+    assert fits( a, { }, time = "0:05:00", host = Squeue() )[ 0 ]
+    assert not fits( a, { }, time = "0:10:00", host = Squeue() )[ 0 ], "longer than what the job has left"
+    assert _left( "1-02:03:04" ) == 93784 and _left( "05:00" ) == 300 and _left( "UNLIMITED" ) is None

@@ -74,6 +74,8 @@ def load_all( root: Path ) -> list:
 
 def forget( root: Path, ident: str ):
     record_path( root, ident ).unlink( missing_ok = True )
+    for log in batch_dir( root ).glob( f"{ident}-*.log" ):
+        log.unlink( missing_ok = True )
 
 
 # ── letting go ───────────────────────────────────────────────────────────────
@@ -195,7 +197,8 @@ def states( root: Path, record: dict ) -> list:
     """
     rows = [ ]
     for place in record.get( "places", [ ] ):
-        living = alive_anywhere( root, place )
+        # settled: over everywhere, and nobody is asked again ( `errand status` )
+        living = False if record.get( "settled" ) else alive_anywhere( root, place )
         plan = plan_of_place( root, place )
         if plan is None:
             rows.append( { "label": "(preparing)", "env": place.get( "env" ), "place": "?",

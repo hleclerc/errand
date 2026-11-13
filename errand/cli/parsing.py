@@ -32,9 +32,10 @@ VERBS = {
     "wait"  : ( "wait until nothing holds the machine", [ ] ),
     "status": ( "how the launched ( --batch ) work is going", [ ] ),
     "watch" : ( "the same, live", [ ] ),
-    "forget": ( "drop a submission from the list: errand forget ID", [ ] ),
+    "forget": ( "drop a submission from the list: errand forget ID, or every one that is over: errand forget finished", [ ] ),
     "attach": ( "follow again what a command left running ( a lost connection ), and bring it back", [ ] ),
     "vm"    : ( "the virtual machines kept warm between commands: errand vm stop", [ ] ),
+    "agents": ( "what is kept between commands: errand agents [stop [NAME]]", [ "force" ] ),
 }
 COMMON = [ "env", "env_tags", "root", "help", "version", "verbose" ]
 
@@ -99,7 +100,7 @@ def build_parser( tag_names = ( ) ):
 
     # setup, init
     p.add_argument( "--force", action = "store_true",
-                    help = "setup: from scratch; init: replace what is there" )
+                    help = "setup: from scratch; init: replace what is there; agents stop: even with something running" )
     p.add_argument( "--dry-run", action = "store_true", help = "say what setup would do, and do nothing" )
 
     for name in tag_names:

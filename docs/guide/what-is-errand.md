@@ -49,6 +49,9 @@ Nothing to declare for any of it:
   every errand on the machine: `errand run -x ./bench` waits for what is running and holds
   everything else back. A timing taken while something else was running is not a timing.
   → [Sharing the machine](./machine)
+- **Warm between commands, and nothing lost.** The first command leaves agents behind, so the next
+  one does not log in, queue or import again. Close the laptop: the work goes on, and
+  `errand attach` picks it up. → [Fast, and nothing lost](./agents)
 - **Let it run.** `--batch` launches the work and gives the shell back; `errand status` and
   `errand watch` say how it is going. → [Detached runs](./detached)
 - **A record of every run** — what ran, where, when, how it ended, what it said — kept in errand's

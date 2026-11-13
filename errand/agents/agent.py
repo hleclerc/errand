@@ -55,8 +55,7 @@ class Agent:
                     proc.resize( size.get( "cols", 80 ), size.get( "rows", 24 ) )
                 elif kind == F.CLOSE:
                     channels.pop( channel, None )
-                    with proc.lock:
-                        proc.listeners = [ l for l in proc.listeners if l != ( writer, channel ) ]
+                    proc.detach( writer, channel )
         except ( F.Broken, OSError ):
             pass
         finally:
@@ -91,6 +90,15 @@ class Agent:
                     channels[ channel ] = proc
                     writer.send( channel, F.REPLY, { "ok": True, "id": proc.id } )
                     proc.attach( writer, channel, req.get( "out", 0 ), req.get( "err", 0 ) )
+            elif op == "stop":
+                # Asked to go now ( `errand agents stop` ): only with nothing running, unless forced.
+                with self.lock:
+                    running = sum( 1 for p in self.procs.values() if p.code is None )
+                if running and not req.get( "force" ):
+                    writer.send( channel, F.REPLY, { "ok": False, "running": running } )
+                else:
+                    self.stopping = True
+                    writer.send( channel, F.REPLY, { "ok": True, "running": running } )
             elif op == "list":
                 writer.send( channel, F.REPLY, { "ok": True, "procs": finished( self.root ) } )
             else:
@@ -120,6 +128,8 @@ class Agent:
         """Nothing running, nothing asked, for `keep_alive`. A client that is merely connected does not
         count: a hub keeps its streams open between commands, and an allocation held warm must still
         be let go of once nobody uses it ( its hub then reaches a new one )."""
+        if getattr( self, "stopping", False ):
+            return True
         with self.lock:
             if any( p.code is None for p in self.procs.values() ):
                 self.idle_since = time.monotonic()
