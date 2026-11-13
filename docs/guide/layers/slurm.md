@@ -138,7 +138,8 @@ allocated.
 Once nothing has used it for `keep_alive`, the agent goes, the job ends, and the allocation is
 released; at the latest, its `time` releases it. On a cluster other people share, a short
 `keep_alive` is the polite one. Nothing has to be remembered, and nothing stays
-held by mistake. Its job and its directory are in `~/.cache/errand/alloc/` on the cluster.
+held by mistake. Its job and its directory are in `~/.cache/errand/alloc/` on the cluster, and go
+with the job.
 → [Fast, and nothing lost](../agents)
 
 ## Preparing and running: two allocations

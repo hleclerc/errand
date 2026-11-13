@@ -77,15 +77,15 @@ class Marked:
 class Session( Marked ):
     """Started by an agent, and kept: it outlives this process ( `agents.start` )."""
 
-    def __init__( self, conn, pid: str ):
+    def __init__( self, conn, pid: str, store = None ):
         super().__init__()
         self.conn, self.pid = conn, pid
-        self.call = agents.attach( conn, pid )
+        self.call = agents.attach( conn, pid, store = store )
         threading.Thread( target = self._pump, daemon = True ).start()
 
     @classmethod
-    def start( cls, conn, argv, *, cwd = None, env = None ):
-        return cls( conn, agents.start( conn, argv, cwd = cwd, env = env ) )
+    def start( cls, conn, argv, *, cwd = None, env = None, store = None ):
+        return cls( conn, agents.start( conn, argv, cwd = cwd, env = env, store = store ), store )
 
     def _pump( self ):
         try:

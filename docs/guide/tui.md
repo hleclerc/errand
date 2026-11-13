@@ -27,7 +27,7 @@ nothing to aim at, only a direction.
 | `esc` | clear the search, then leave | `F12` | leave |
 
 The screen has nothing of its own: it writes a command, and it reads
-[the record of every run](./output) — `.errand/runs/`, and `runs/` where `-o` made one. Everything it
+[the record of every run](./output) — `errand-outputs/runs/`. Everything it
 shows you could have got with `errand` and `ls`.
 
 ## cases — what do I run

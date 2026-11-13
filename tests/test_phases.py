@@ -120,7 +120,7 @@ if test( "two passes: the preparation writes the plan, the run checks it and run
         # prepared on its own, by the preparation's layers, then run by the run's ( through their agents )
         assert "prepared 1 entry in two" in output, output
         assert "who run" in output, "the run phase goes through the run phase's layers"
-        plans = list( ( project / ".errand" / "plans" ).glob( "*-two.json" ) )
+        plans = list( ( project / "errand-outputs" / "state" / "plans" ).glob( "*-two.json" ) )
         assert len( plans ) == 1, plans
         plan = json.loads( plans[ 0 ].read_text() )
         assert [ e[ "name" ] for e in plan[ "entries" ] ] == [ "hello" ], plan

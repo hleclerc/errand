@@ -7,7 +7,7 @@ You do not have to write these files from a blank page: **`errand init`** reads 
 writes an `errand-project.py` holding, in comments, the runner lines that would fit what it found
 and a `default_run` to start from (see [Start from what you have](./start)), and an
 `errand-envs.py` holding a commented stack of layers ready to adapt. Nothing is active until you
-uncomment it — `errand run` itself never guesses. It adds `.errand/`, `runs/` and `errand-envs.py` to
+uncomment it — `errand run` itself never guesses. It adds `errand-outputs/` and `errand-envs.py` to
 `.gitignore` if there is a git here, and never overwrites.
 
 To declare what the project does, and where it runs, put **`errand-*.py`** files at the root of the
@@ -27,7 +27,7 @@ the default unless `errand.default_env` names another:
 # errand-project.py
 import errand
 
-errand.configure( out = "runs", src = [ "core/src", "app/src" ] )
+errand.configure( src = [ "core/src", "app/src" ] )
 errand.runners.replace( errand.Catch2( dir = "tests/cpp" ) )
 errand.default_run = [ "tests/**::*", "bench/**::*" ]     # what a bare `errand run` runs
 ```
@@ -54,22 +54,26 @@ The root of the project is the nearest directory, walking up from the current on
 import errand
 
 errand.configure(
-    out     = "runs",     # where the visible output tree goes, with -o
-    state   = ".errand",  # errand's own record: every run, the plans, the history
-    src     = [ ],        # paths prepended to every child's PYTHONPATH
-    exclude = [ ],        # directories discovery must not walk into
+    outputs_directory = "errand-outputs",  # everything errand writes: every run, what it built, its bookkeeping
+    builds_directory  = None,              # what errand builds, elsewhere: another disk, a shared directory
+    src               = [ ],               # paths prepended to every child's PYTHONPATH
+    exclude           = [ ],               # directories discovery must not walk into
 )
 ```
 
 | | |
 |---|---|
-| `out` | the tree `-o` writes to. See [the output tree](./output) |
-| `state` | errand's private record of every run, asked for or not. `ERRAND_STATE_DIR` overrides it for one machine — a scratch disk, a shared filesystem |
+| `outputs_directory` | the directory errand writes everything to: `runs/` ( the record of every run, asked for or not ), `builds/`, `state/`. See [the output tree](./output). Relative to the project root, or absolute. `ERRAND_OUTPUTS_DIR` overrides it for one machine — a scratch disk, a shared filesystem; over ssh, [`errand_outputs_directory`](./layers/ssh) does |
+| `builds_directory` | what errand builds ( Windows images ) and its records of it, put somewhere else than `errand-outputs/builds/`: another disk, or a directory several projects share. Relative to the root, or absolute — then the same path on every machine |
 | `src` | your package layout, so a child process can import your code without an install |
 | `exclude` | vendored code, fixtures, a copy of something that would be imported and should not be |
 
-`--out` overrides the first for one run, and `--root` the project root, which is what the children
-errand starts for itself use.
+The `out` and `state` of an older errand are ignored, with a warning: what they named is in
+`errand-outputs/` now. `builds_directory` is not `build`, the directory where a runner's build goes
+( `build/<env>/` ), which is unchanged.
+
+`--out` puts one invocation's runs somewhere else, and `--root` overrides the project root, which is
+what the children errand starts for itself use.
 
 ## default_run
 

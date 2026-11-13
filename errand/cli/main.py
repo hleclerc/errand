@@ -38,10 +38,13 @@ def main( argv = None ):
     root = Path( pre.root ).resolve() if pre.root else find_root()
 
     config.load( root, warn = lambda m: print( warn( f"  warning: {m}" ), file = sys.stderr ) )
+    try:
+        config.migrate( root, echo = lambda m: print( m, file = sys.stderr ) )
+    except OSError as err:
+        print( warn( f"  warning: could not move .errand/ into {config.outputs( root )}: {err}" ), file = sys.stderr )
 
-    # Where each run is recorded: errand's own state when nobody asked for a
-    # directory -- the history, the screen and `--batch` read it there -- and a
-    # tree of the project's ( `runs/` ) when somebody did, with `-o` or `--out`.
+    # Where each run is recorded: `errand-outputs/runs/` -- the history, the screen
+    # and `--batch` read it there -- unless `--out` names another tree.
     out_root = output_tree( root, pre )
 
     parser = build_parser( config.tag_names() )
@@ -114,7 +117,7 @@ def main( argv = None ):
         # interpreter carries, and a missing screen must not cost the command
         # line.
         from .. import tui
-        return tui.main( root = root, out_root = out_root, also = [ root / config.settings.out ] )
+        return tui.main( root = root, out_root = out_root )
 
     if verb == "init":
         from .. import detect

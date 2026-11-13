@@ -1,7 +1,7 @@
 # Ssh: running elsewhere
 
 ```python
-Ssh( host, root = None, python = "python3", options = [ ], also = [ ] )
+Ssh( host, root = None, python = "python3", options = [ ], also = [ ], errand_outputs_directory = None )
 ```
 
 **Must be the first layer** — `errand.Env()` refuses a stack where it is not. Everything after it
@@ -26,7 +26,7 @@ errand run -k bench --env box "bench/**::*"
   → gpu-box:/home/me/proj  env=box  tags=cuda
   rsync push → gpu-box:/home/me/proj
   ...
-  rsync pull ← gpu-box:/home/me/proj [.errand/runs/bench/solvers.py/cost]
+  rsync pull ← gpu-box:/home/me/proj [errand-outputs/runs/bench/solvers.py/cost]
 ```
 
 | | |
@@ -36,6 +36,7 @@ errand run -k bench --env box "bench/**::*"
 | `python` | the interpreter to try first over there when no later layer chooses one ( [below](#nothing-to-install-over-there) ) |
 | `options` | passed to ssh **and** to rsync — a port, an identity, a jump host |
 | `also` | sibling checkouts the work needs ( `[ "../loom" ]` ), pushed to the same relative place over there |
+| `errand_outputs_directory` | where errand writes for the project over there — runs, builds, state — say `/scratch/me/proj-out`. The project's copy then holds a symlink `errand-outputs` to it. Default: the copy's own `errand-outputs/` |
 
 ## Nothing to install over there
 
@@ -92,8 +93,8 @@ This is the whole trick, and everything else follows from it.
 The same rules applied to the same entries and parameters give the same answer on both sides, so
 **nothing has to be declared at runtime**, and the rest of the remote tree — which holds unrelated
 runs from other days — stays put. Only the directories this invocation was going to write are
-pulled back: its record in `.errand/runs/`, and its visible directory under `runs/` when `-o` asked
-for one. Anything else the command writes comes back with `--pull DIR`.
+pulled back: its directories in `errand-outputs/runs/`, with the files the run wrote there when
+`-o` asked for them. Anything else the command writes comes back with `--pull DIR`.
 
 Matrices are expanded on **this** side, one plain run per combination, each value crossing already
 split. The remote side never sees a matrix; it sees plain runs.
@@ -118,14 +119,15 @@ rsync has to get the same options as ssh, or it reaches a different machine than
 
 ## What gets pushed
 
-The push is an rsync of the project, with the obvious things excluded: `.git`, `runs`, `build`,
-`dist`, `__pycache__`, `*.pyc`, `*.so`, `*.o`, `node_modules`, `.venv`, `*.egg-info`,
+The push is an rsync of the project, with the obvious things excluded: `.git`, `errand-outputs`
+( and an old `.errand` ), `build`, `dist`, `__pycache__`, `*.pyc`, `*.so`, `*.o`, `node_modules`, `.venv`, `*.egg-info`,
 `.mypy_cache`, `.pytest_cache`, and by their exact paths what the project's layers build there ( an
 image with its `.new`, `.prev` and `.part` ). Anything else found only over there is deleted, and
 `errand` prints what went.
 
-`runs` is excluded in both directions on purpose: the remote tree's own history is not yours to
-overwrite, and the only runs you want back are the ones you just asked for.
+`errand-outputs` is excluded in both directions on purpose: each side's records, plans and builds
+are its own. The remote tree's history is not yours to overwrite, and the only runs you want back are
+the ones you just asked for.
 
 ## Building over there
 

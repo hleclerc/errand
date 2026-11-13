@@ -6,14 +6,16 @@ import time
 
 from .. import queue
 from .guest import autounattend, EVALUATION_ISO, setup_script
-from .common import BOOT_TIMEOUT, INSTALL_TIMEOUT, VmError
+from .common import _sh, BOOT_TIMEOUT, INSTALL_TIMEOUT, VmError
 from .facts import accel, Facts, need, package_hint, qemu_hint
 from .machine import Machine
 
 
-def install( host, name: str, declared: dict, booted: dict, echo = print ) -> int:
+def install( host, name: str, declared: dict, booted: dict, echo = print, wanted = ( ) ) -> int:
     """`errand setup` for a `Windows` layer: install from the ISO, check it answers,
-    and only then call it ready -- decided here, done through `host`."""
+    and only then call it ready -- decided here, done through `host`. Then the
+    project's images nobody declares any more ( not in `wanted` ) go, and the ISO
+    it downloaded too: twenty gigabytes each, they would pile up."""
     try:
         facts = Facts.of( host )
         need( facts, ( "ssh", "scp", "ssh-keygen", "tar" ), "they come with OpenSSH and tar" )
@@ -79,7 +81,32 @@ def install( host, name: str, declared: dict, booted: dict, echo = print ) -> in
 
     m.there( 'date > "$1/ready" && rm -rf "$2"', m.image, work, what = "marking it ready" )
     echo( f"  windows is ready {facts.where}: {m.image}" )
+    _prune( m, { name, *wanted }, echo )
     return 0
+
+
+PRUNE = r"""
+cd "$1" || exit 0
+shift
+for d in */; do
+    n=${d%/}
+    case " $* " in *" $n "*) continue ;; esac
+    for p in "$n"/live/*.pid; do
+        [ -f "$p" ] && kill -0 "$( cat "$p" )" 2>/dev/null && continue 2       # booted: in use
+    done
+    rm -rf "$n" && echo "errand-pruned=$n"
+done
+"""
+
+
+def _prune( m: Machine, keep: set, echo ):
+    """The images of this project that no environment declares any more, and the downloads."""
+    images = m.image.rsplit( "/", 1 )[ 0 ]
+    got = m.host.shell( _sh( PRUNE, images, *sorted( keep ) ) + " ; " + _sh( 'rm -rf "$1"', m.downloads ),
+                        capture = True )
+    for line in ( got.stdout or "" ).splitlines():
+        if line.startswith( "errand-pruned=" ):
+            echo( f"  an image no environment declares any more was removed: {line.split( '=', 1 )[ 1 ]}" )
 
 
 def _check( m: Machine, booted: dict, work: str, echo ) -> bool:

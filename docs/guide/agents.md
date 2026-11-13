@@ -110,12 +110,24 @@ errand shell --env win          # cmd.exe in the Windows guest, as at its consol
 
 ## Leaving nothing behind
 
+What errand keeps per user, here and over there, under `~/.cache/errand`, is only what is live:
+sockets, locks, pids, and a word per running command saying where its output goes. What piles up
+is the project's, in its `errand-outputs/` (over there, in the project's copy):
+
+| what | where | until |
+|---|---|---|
+| a command's output, kept for `errand attach` | `errand-outputs/state/procs/` | it is brought back |
+| run records | `errand-outputs/runs/` | you remove them |
+| Windows images | `errand-outputs/builds/windows/` | a newer one is ready |
+
 Agents and the hub stop when they have had nothing to do for their time, and take their sockets
 with them. A hub started from sources that have since changed also takes its directory with it.
 Errand's directories are named after its sources, so an edit to errand means new ones. When an agent
 or a hub starts, it removes the directories beside its own that nobody serves any more: untouched
-for an hour, and with a lock that no process holds. Everything lives under `~/.cache/errand`, here
-and over there.
+for an hour, and with a lock that no process holds. A Slurm allocation held warm takes its
+directory with it when the job ends; a virtual machine nobody used for a day leaves nothing here.
+What stays in `~/.cache/errand` for good is errand's own: its sources, and the Python it made for
+itself where the machine had none.
 
 ## What is up, and stopping it
 

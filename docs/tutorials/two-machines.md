@@ -103,23 +103,23 @@ errand run -o --env here,there bench/solvers.py::cost --n=100000
   → bigbox.lab.example:/home/me/scratch/proj  env=there  tags=driver:cpu,remote
   rsync push → bigbox.lab.example:/home/me/scratch/proj
   ...
-  rsync pull ← bigbox.lab.example:/home/me/scratch/proj [.errand/runs/bench/solvers.py/cost, runs/bench/solvers.py/cost]
+  rsync pull ← bigbox.lab.example:/home/me/scratch/proj [errand-outputs/runs/bench/solvers.py/cost]
 ```
 
 The comma is a [matrix](/guide/matrices); the two runs share one timestamp because they are one
 command. The remote side never sees a matrix — it is expanded here, into plain runs, and the paths
-to fetch back are worked out **before** anything starts. Every run is recorded in `.errand/runs/`;
-`-o` asks for the same tree where you will look at it, under `runs/`:
+to fetch back are worked out **before** anything starts. Every run is recorded, here, in
+`errand-outputs/runs/`:
 
 ```text
-runs/bench/solvers.py/cost/
+errand-outputs/runs/bench/solvers.py/cost/
   2026-10-02_14h22m07-here@laptop-n=100000/result.yaml
   2026-10-02_14h22m07-there@bigbox-n=100000/result.yaml
   summary.yaml
 ```
 
 ```bash
-cat runs/bench/solvers.py/cost/summary.yaml
+cat errand-outputs/runs/bench/solvers.py/cost/summary.yaml
 ```
 
 One row per run, with the extents across them. That file is recomputed from the neighbouring
@@ -163,7 +163,7 @@ sync.
 
 ```bash
 errand run -o --env here,there bench/solvers.py::cost --n=100000
-cat runs/bench/solvers.py/cost/summary.yaml
+cat errand-outputs/runs/bench/solvers.py/cost/summary.yaml
 ```
 
 Same command, new rows. The old runs are still there — only the run directory is cleared and

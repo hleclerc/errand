@@ -80,9 +80,9 @@ if test( "the shell comes straight back, and the work carries on", tags = [ "slo
         assert handed_back < 4.0, f"it waited ({handed_back:.1f}s): the point is that it does not"
         assert "submitted" in output, output
         # ...and nothing has finished yet, which is why there is a status command
-        assert not list( ( project / "runs" ).rglob( "result.yaml" ) )
+        assert not list( ( project / "errand-outputs" / "runs" ).rglob( "result.yaml" ) )
 
-        leaves = lambda: list( ( project / "runs" ).rglob( "result.yaml" ) )
+        leaves = lambda: list( ( project / "errand-outputs" / "runs" ).rglob( "result.yaml" ) )
         assert wait_for( lambda: len( leaves() ) == 2 ), "the detached run never finished"
 
         code, output = run_errand( project, "status" )
@@ -97,7 +97,7 @@ if test( "the record holds only what the tree cannot say", tags = [ "slow" ] ):
     with tempfile.TemporaryDirectory() as tmp:
         project = write_project( Path( tmp ) / "proj", "", { "bench_slow.py": SLOW } )
         run_errand( project, "run", "-o", "--batch", "-k", "bench", "**::*" )
-        assert wait_for( lambda: list( ( project / "runs" ).rglob( "result.yaml" ) ) )
+        assert wait_for( lambda: list( ( project / "errand-outputs" / "runs" ).rglob( "result.yaml" ) ) )
 
         records = B.load_all( project )
         assert len( records ) == 1
@@ -122,7 +122,7 @@ if test( "the record holds only what the tree cannot say", tags = [ "slow" ] ):
         import json
         written = project / record[ "places" ][ 0 ][ "plan" ]
         plan = json.loads( written.read_text() )
-        plan[ "runs" ].append( { **plan[ "runs" ][ 0 ], "under": "runs/never/here" } )
+        plan[ "runs" ].append( { **plan[ "runs" ][ 0 ], "under": "errand-outputs/runs/never/here" } )
         written.write_text( json.dumps( plan ) )
         assert B.states( project, record )[ 1 ][ "state" ] == B.LOST
         assert B.finished( B.states( project, record ) )
@@ -132,13 +132,13 @@ if test( "a submission can be dropped from the list", tags = [ "slow" ] ):
     with tempfile.TemporaryDirectory() as tmp:
         project = write_project( Path( tmp ) / "proj", "", { "bench_slow.py": SLOW } )
         run_errand( project, "run", "-o", "--batch", "-k", "bench", "**::*" )
-        assert wait_for( lambda: list( ( project / "runs" ).rglob( "result.yaml" ) ) )
+        assert wait_for( lambda: list( ( project / "errand-outputs" / "runs" ).rglob( "result.yaml" ) ) )
 
         ident = B.load_all( project )[ 0 ][ "id" ]
         code, _ = run_errand( project, "forget", ident )
         assert code == 0 and B.load_all( project ) == [ ]
         # forgetting the record does not forget the results
-        assert list( ( project / "runs" ).rglob( "result.yaml" ) )
+        assert list( ( project / "errand-outputs" / "runs" ).rglob( "result.yaml" ) )
 
 
 # --- over there -------------------------------------------------------------
@@ -176,7 +176,7 @@ if test( "a remote run is let go of, and collected later", tags = [ "ssh", "slow
         # which is what asking does.
         def collected( ):
             run_errand( project, "status" )
-            return list( ( project / "runs" ).rglob( "result.yaml" ) )
+            return list( ( project / "errand-outputs" / "runs" ).rglob( "result.yaml" ) )
 
         assert wait_for( collected, seconds = 180 ), "the results never came back"
         code, output = run_errand( project, "status" )

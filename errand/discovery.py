@@ -29,7 +29,8 @@ from . import entries as E, runner as R, targets as T
 SKIP_DIRS = {
     ".git", ".hg", ".svn", "__pycache__", "node_modules", "build", "dist",
     ".venv", "venv", ".tox", ".mypy_cache", ".pytest_cache", ".ruff_cache",
-    ".cache", ".idea", ".vscode", "target", "runs", ".claude",
+    ".cache", ".idea", ".vscode", "target", ".claude",
+    "errand-outputs", ".errand",
 }
 
 # The package errand imports candidate files under. A synthetic root, so that a

@@ -56,7 +56,7 @@ def arrive( env, tags, root ):
     home = None
     if ssh is not None:
         say( f"  rsync push -> {ssh.host}:{there}" )
-        L.push( root, ssh.host, there, ssh.options, echo = say )
+        L.push( root, ssh.host, there, ssh.options, echo = say, outputs = ssh.errand_outputs_directory )
         for other in ssh.also:
             L.push( Path( os.path.normpath( root / other ) ), ssh.host,
                     Path( os.path.normpath( there / other ) ), ssh.options )
@@ -93,6 +93,9 @@ class Reach:
 
     def start( self, request: dict, child: dict ):
         w = self.where
+        if w.ssh is not None:
+            # over there, errand's outputs are the copy's own: not wherever this side keeps them
+            child = { **child, config.OUTPUTS_ENV: config.outputs_rel( w.root ) }
         if self.kind == "alive":
             self._warm_or_not()
         if not agents.enabled() and self.kind != "watched":
@@ -108,7 +111,7 @@ class Reach:
             conn = agents.open( self.target )
             return Session.start( conn, envs.ops_argv( envs.python_of( conn ), w.boot, request,
                                                        L.preload_of( self.inner ) ),
-                                  cwd = str( w.there ), env = child )
+                                  cwd = str( w.there ), env = child, store = store_of( w ) )
         line = self.line( request, child )
         if self.kind == "watched":
             host = L.Over( w.ssh, w.there ) if w.ssh is not None else L.Here( w.root )
@@ -116,7 +119,7 @@ class Reach:
         if w.ssh is None:
             return LocalSession( [ "sh", "-c", line ], cwd = str( w.root ) )
         self.target = U.ssh_target( w.ssh )
-        return Session.start( agents.open( self.target ), [ "sh", "-c", LOGIN, "sh", line ] )
+        return Session.start( agents.open( self.target ), [ "sh", "-c", LOGIN, "sh", line ], store = store_of( w ) )
 
 
     def _warm_or_not( self ):
@@ -237,6 +240,14 @@ def _drive_guest( env, tags, verb, known, *, root, report, kinds, pull ) -> int:
 
 # ── coming back ──────────────────────────────────────────────────────────────
 
+def store_of( where ) -> str:
+    """Where the agent keeps what a session writes, for `errand attach`: in the project over there
+    ( `errand-outputs/state/procs/` ), never in the agent's own directory, which every project shares."""
+    if where.ssh is None:
+        return str( config.state( where.root ) / "procs" )
+    return f"{where.there}/{config.state_rel( where.root )}/procs"
+
+
 def _remember( root, env, reach, sessions, where, pull ):
     """What `errand attach` needs, when there is something to attach to."""
     pids = [ s.pid for s in sessions if getattr( s, "pid", None ) ]
@@ -248,7 +259,8 @@ def _remember( root, env, reach, sessions, where, pull ):
     live.write_text( json.dumps( { "id": ident, "env": env.name, "target": reach.target, "procs": pids,
                                    "ssh": None if where.ssh is None else
                                    { "host": where.ssh.host, "options": list( where.ssh.options ) },
-                                   "there": str( where.there ), "pull": list( pull ) }, indent = 1 ) )
+                                   "there": str( where.there ), "store": store_of( where ),
+                                   "pull": list( pull ) }, indent = 1 ) )
     return live
 
 
@@ -292,7 +304,7 @@ def attach( root, ident = None, *, report ) -> int:
         else:
             conn = agents.open( rec[ "target" ] )
             boxes = [ { } for _ in rec[ "procs" ] ]
-            rcs = follow_all( [ Session( conn, pid ) for pid in rec[ "procs" ] ], report, boxes )
+            rcs = follow_all( [ Session( conn, pid, rec.get( "store" ) ) for pid in rec[ "procs" ] ], report, boxes )
             if rcs is None:
                 path.unlink( missing_ok = True )
                 return INTERRUPTED

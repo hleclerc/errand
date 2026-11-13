@@ -105,7 +105,7 @@ def processes( rec ) -> list:
     """What the agent says of the sessions a live record names: one dict each, None for one whose
     output is gone over there. Raises when the agent cannot be asked."""
     conn = agents.open( rec[ "target" ] )
-    call = conn.open( { "op": "list" } )
+    call = conn.open( { "op": "list", "store": rec.get( "store" ), "ids": [ str( p ) for p in rec[ "procs" ] ] } )
     try:
         procs = { str( p[ "id" ] ): p for p in call.reply( 20 ).get( "procs", [ ] ) }
     finally:

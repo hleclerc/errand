@@ -25,7 +25,7 @@ run is submitted, sized from that plan, and let go of. **The arrival of a result
 said one would be is itself the completion signal.**
 
 Nothing has to stay connected for that, and nothing can get out of sync. The tree is the
-[record](./output) every run leaves in `.errand/runs/` — or the visible one, with `-o` — so a detached
+[record](./output) every run leaves in `errand-outputs/runs/`, so a detached
 run needs no output directory of its own to be followed.
 
 What is kept locally is only what the tree cannot say — which runs belong to one submission, and

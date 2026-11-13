@@ -7,7 +7,8 @@ The allocation is an `sbatch` job whose batch step IS an agent -- a bare one,
 on the Python `bootstrap` finds there -- so it holds the allocation for as long
 as it serves, and goes once nothing used it for `keep_alive`: the job ends,
 the allocation is released, nobody has to remember to. The job and the agent's
-directory are written under `~/.cache/errand/alloc/<name>/` on the cluster.
+directory are written under `~/.cache/errand/alloc/<name>/` on the cluster, and
+go with the job: what sessions write is kept in the project ( `errand-outputs/state/procs/` ).
 
 A command reaches that agent through the host agent of the login node: a
 script that finds the job ( or submits it, and waits for it to run ), then
@@ -66,18 +67,24 @@ class Allocation:
     def script( self ) -> str:
         # The node agent waits little once nothing runs: what is used is the environment agent,
         # whose stream the hub closes after keep_alive -- then the allocation goes.
-        serve = self._python( f'exec "$py" {shlex.quote( self.boot )} -m errand.agents serve '
-                              f'"{self.dir}/$SLURM_JOB_ID" {max( 30, self.keep // 4 )}\n' )
+        # Once it went on its own, the job leaves nothing behind: its directory, its output, the
+        # word that it was the one. A job that failed keeps its output, for the next command to say.
+        d = shlex.quote( self.dir )
+        serve = self._python( f'"$py" {shlex.quote( self.boot )} -m errand.agents serve '
+                              f'{d}/"$SLURM_JOB_ID" {max( 30, self.keep // 4 )} || exit $?\n'
+                              f'rm -rf {d}/"$SLURM_JOB_ID" {d}/slurm-"$SLURM_JOB_ID".out\n'
+                              f'[ "$( cat {d}/job 2>/dev/null )" = "$SLURM_JOB_ID" ] && rm -f {d}/job\n'
+                              f'rmdir {d} 2>/dev/null; exit 0\n' )
         connect = self._python( f'exec "$py" {shlex.quote( self.boot )} -m errand.agents connect "$1" "$2"\n' )
         flags = " ".join( shlex.quote( f ) for f in self.flags )
-        d = shlex.quote( self.dir )
         return f'''
 d={d}; mkdir -p "$d"
 j=$( cat "$d/job" 2>/dev/null )
 st=""; [ -n "$j" ] && st=$( squeue -h -j "$j" -o %T 2>/dev/null )
 case "$st" in
     RUNNING|PENDING|CONFIGURING) ;;
-    *)  j=$( sbatch --parsable {flags} --job-name errand-alive --output "$d/slurm-%j.out" --wrap {shlex.quote( serve )} ) || exit 1
+    *)  rm -rf "$d"/[0-9]* "$d"/slurm-*.out          # what jobs before this one left
+        j=$( sbatch --parsable {flags} --job-name errand-alive --output "$d/slurm-%j.out" --wrap {shlex.quote( serve )} ) || exit 1
         j=${{j%%;*}}; echo "$j" > "$d/job"
         echo "errand: holding an allocation for {self.env.name}: job $j ( released after {self.keep} s of nothing )" >&2 ;;
 esac

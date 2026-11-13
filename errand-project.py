@@ -13,7 +13,6 @@ That boundary works both ways, and both are the rule doing its job:
 import errand
 
 errand.configure(
-    out = "runs",
     # The suite makes little projects in temporary directories; nothing here is vendored, and
     # `examples/` is example code that is MEANT to be found -- it is how the examples are tested.
     exclude = [ "dist", "build", ".venv-release" ],

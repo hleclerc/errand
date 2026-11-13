@@ -95,7 +95,35 @@ if test( "losing the connection loses nothing: the process goes on, and is caugh
             rest += payload if kind == F.OUT else b""
             code = F.load( payload )[ "code" ] if kind == F.EXIT else None
         assert ( rest, code ) == ( b"two\n", 7 ), ( rest, code )
-        assert ( Path( d ) / "proc" / pid / "out" ).read_bytes() == b"one\ntwo\n", "the output is on disk"
+        time.sleep( 0.2 )
+        assert not ( Path( d ) / "proc" / pid ).exists(), "delivered: nobody needs it any more"
+
+
+if test( "the agent's directory holds only what runs; the output is the project's, until delivered" ):
+    agents = fresh()
+    from errand.agents import frames as F
+    with scratch() as d, scratch() as project:
+        store = f"{project}/errand-outputs/state/procs"
+        conn = agents.open( local( d ) )
+        pid = agents.start( conn, [ "sh", "-c", "echo one; sleep 1; echo two" ], store = store )
+        mark = Path( d ) / "proc" / pid
+        assert ( mark / "where" ).read_text() == f"{store}/{pid}" and not ( mark / "out" ).exists()
+        conn.close()                                   # gone before the end: nothing delivered
+        agents._open.clear()
+        time.sleep( 2 )
+        assert not mark.exists(), "finished: nothing of it left in the agent's directory"
+        assert ( Path( store ) / pid / "out" ).read_bytes() == b"one\ntwo\n", "kept in the project"
+        conn = agents.open( local( d ) )
+        call = conn.open( { "op": "list", "store": store, "ids": [ pid ] } )
+        assert [ p[ "code" ] for p in call.reply( 10 )[ "procs" ] ] == [ 0 ]
+        call = agents.attach( conn, pid, store = store )
+        got = [ call.next( 10 ) ]
+        while got[ -1 ][ 0 ] != F.EXIT:
+            got.append( call.next( 10 ) )
+        assert got[ 0 ] == ( F.OUT, b"one\ntwo\n" ), got
+        time.sleep( 0.2 )
+        assert not ( Path( store ) / pid ).exists(), "brought back: it goes"
+        agents._open.clear()
 
 
 if test( "a probe does not outlive its client" ):

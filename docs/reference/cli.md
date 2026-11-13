@@ -73,7 +73,7 @@ none declared it prints this help.
 |---|---|
 | `-j N`, `--jobs N` | N entries at a time, one process each. `auto` means as many as the machine has cores. Default 1 |
 | `--batch` | launch and give the shell back — [detached](/guide/detached) |
-| `-o` | a visible output directory for each run, under `runs/` ( `errand.configure( out = … )` ), exported as `$ERRAND_OUT_DIR` and brought back |
+| `-o` | an output directory of its own for each run — the run's directory under `errand-outputs/runs/` — exported as `$ERRAND_OUT_DIR`, and what it holds brought back |
 | `--out PATTERN` | the same under another tree, or a pattern: `"results/{env}/{when}"`, with `{path}` `{name}` `{when}` `{place}` `{env}` `{params}` |
 | `--no-setup` | skip the freshness check for this run |
 | `--no-queue` | this run does not wait, and does not hold |
@@ -90,9 +90,9 @@ none declared it prints this help.
 | `-q` | no banners |
 | `--at FILE:LINE` | run exactly the entry at that call site. This is how errand's own child processes are started; you will not normally type it |
 
-Every run is recorded, privately, in errand's state directory ( `.errand/runs/…` ) — the history,
-the screen, `status` and `--batch` read it there. A visible directory is made only with `-o` or
-`--out`; see [Output](/guide/output).
+Every run is recorded in `errand-outputs/runs/…`, with or without `-o` — the history, the screen,
+`status` and `--batch` read it there. `-o` and `--out` only give the run a directory to write its own
+files in; see [Output](/guide/output).
 
 ```bash
 errand run --env gpu python -c "import torch; print( torch.cuda.is_available() )"

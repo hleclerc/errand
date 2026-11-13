@@ -12,11 +12,16 @@ from .transfer import MSYS2_PACKAGES, MSYS2_REPO, RSYNC_FILES
 class Supplies:
     """What installing needs, fetched by the machine that runs QEMU."""
 
+    @property
+    def downloads( self ) -> str:
+        return f"{self.image.rsplit( '/', 2 )[ 0 ]}/downloads"           # beside windows/
+
     # -- installing -----------------------------------------------------------
 
     def obtain_iso( self, iso: str, echo = print ) -> str:
         """-> the ISO as the machine that runs QEMU names it: a path of the
-        project over there, or a download into its cache, made by it."""
+        project over there, or a download beside the images, made by it --
+        and removed once the image is installed ( `install` )."""
         if "://" not in iso:
             out = self.host.shell( _sh( 'cd "$( dirname "$1" )" 2>/dev/null && test -f "$( basename "$1" )" '
                                         '&& echo "errand-path=$( pwd )/$( basename "$1" )"', iso ),
@@ -25,7 +30,7 @@ class Supplies:
             if not found:
                 raise VmError( f"no ISO at {iso} {self.facts.where}" )
             return found.group( 1 ).strip()
-        target = f"{self.facts.cache}/errand/iso/{L.fingerprint( iso )}.iso"
+        target = f"{self.downloads}/{L.fingerprint( iso )}.iso"
         if self.host.shell( L.sh( [ "test", "-f", target ] ), quiet = True ).returncode == 0:
             return target
         if "curl" in self.facts.tools:

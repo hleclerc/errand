@@ -44,8 +44,8 @@ errand run --env local,gpu train.py,eval.py                                 # tw
 errand run --env local,gpu --fp 32,64 bench/solvers.py::cost --n=1000,5000  # eight runs
 ```
 
-Each value is an axis, the cartesian product is run, and every combination gets its own record — and
-its own directory, with [`-o`](./output) — so the results sit side by side. When there is more than
+Each value is an axis, the cartesian product is run, and every combination gets its own record, in
+[its own directory](./output), so the results sit side by side. When there is more than
 one run, the grid is said once before anything starts — `4 runs: n = 1000 | 5000, method = newton |
 lbfgs` — so a comma that was not meant as one is seen in time.
 
@@ -65,11 +65,11 @@ good thing to want, and often the thing you most want.
 
 ## What a matrix does to the tree
 
-A matrix is **more names, never more levels** — here as `-o` lays it out under `runs/`; the private
-record in `.errand/runs/` has the same shape:
+A matrix is **more names, never more levels** — here as it is laid out under
+`errand-outputs/runs/`:
 
 ```text
-runs/bench_solver.py/solve/
+errand-outputs/runs/bench_solver.py/solve/
   2026-09-24_18h04m11-local@thishost-method=cg,n=10000/result.yaml
   2026-09-24_18h04m11-gpu@thishost-method=cg,n=10000/result.yaml
   2026-09-24_18h04m11-gpu@gpu-box-method=cg,n=10000/result.yaml

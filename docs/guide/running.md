@@ -119,7 +119,7 @@ its result file rather than parsed out of its chatter: the path was worked out b
 started, and the file is the record either way.
 
 While a run is parallel its output is still live *in its record*: `output.txt` is written as the
-run talks — under `.errand/runs/`, or the visible tree with [`-o`](./output) — so `tail -f` works on
+run talks — under [`errand-outputs/runs/`](./output) — so `tail -f` works on
 it, and so does [the screen](./tui).
 
 ## Running something in an environment, without an entry

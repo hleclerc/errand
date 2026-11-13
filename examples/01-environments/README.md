@@ -62,15 +62,15 @@ parameter:
 ```bash
 errand run --env local,gpu "bench_solver.py::*"
 errand run --fp 32,64 "bench_solver.py::*"
-errand run -o --env local,gpu "bench_solver.py::*" --n=10000,100000  # 4 runs, kept under runs/
+errand run -o --env local,gpu "bench_solver.py::*" --n=10000,100000  # 4 runs, side by side
 errand run -t 'cuda=True' "bench_solver.py::*"                       # every cuda environment there is
 ```
 
-Each combination gets its own record, and with `-o` its own visible directory, so the results end
-up side by side:
+Each combination gets its own record, in a directory of its own under `errand-outputs/runs/`, so
+the results end up side by side:
 
 ```
-runs/bench_solver.py/solve/
+errand-outputs/runs/bench_solver.py/solve/
   2026-09-24_18h04m11-local@thishost-method=cg,n=10000/result.yaml
   2026-09-24_18h04m11-gpu@thishost-method=cg,n=10000/result.yaml
   2026-09-24_18h04m11-gpu@gpu-box-method=cg,n=10000/result.yaml

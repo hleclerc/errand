@@ -21,7 +21,7 @@ RSYNC_FILES    = [ "rsync.exe", "msys-2.0.dll", "msys-crypto-3.dll", "msys-iconv
                    "msys-xxhash-0.dll", "msys-zstd-1.dll" ]
 GUEST_MSYS     = r"C:\errand\msys"
 GUEST_RSYNC    = "C:/errand/msys/usr/bin/rsync.exe"
-EXCLUDES = [ *L.RSYNC_EXCLUDES, ".errand" ]
+EXCLUDES = [ *L.RSYNC_EXCLUDES, "errand-outputs", ".errand" ]
 
 
 def msys_path( path: str ) -> str:

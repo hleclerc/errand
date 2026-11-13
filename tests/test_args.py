@@ -78,7 +78,7 @@ if test( "a file of errand's gets them as its sys.argv, and a script as its own"
         assert code == 0 and "script got ['--size', '4096', '--env', 'gpu']" in output, output
 
         # Two sets of arguments are two runs, and two directories.
-        leaves = sorted( p.name for p in ( project / "runs" / "scripts" / "show.py" ).iterdir() )
+        leaves = sorted( p.name for p in ( project / "errand-outputs" / "runs" / "scripts" / "show.py" ).iterdir() )
         assert any( "args=--size_4096_--env_gpu" in name for name in leaves ), leaves
 
         # Under -j, each child gets them too.

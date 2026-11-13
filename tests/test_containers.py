@@ -165,7 +165,7 @@ if test( "a run inside a container comes back out", tags = [ "container", "slow"
         code, output = run_errand( project, "run", "-o", "-k", "bench", "--env", "boxed", "**::*", "--n=2,3" )
         assert code == 0, output
 
-        leaves = sorted( ( project / "runs" ).rglob( "result.yaml" ) )
+        leaves = sorted( ( project / "errand-outputs" / "runs" ).rglob( "result.yaml" ) )
         assert len( leaves ) == 2, f"{[ str( p ) for p in leaves ]}\n{output}"
 
         from errand import yamlish

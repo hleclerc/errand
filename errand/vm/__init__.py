@@ -32,9 +32,9 @@ this one's.
 **Three moments, three costs.**
 
     install   once per declaration, 20 to 60 minutes. What comes out is a
-              disk image, kept in ~/.cache/errand/windows/<fingerprint>/ on
-              the machine that runs QEMU, and shared by every project that
-              declares the same thing. It is a build like any other layer's:
+              disk image, kept in the project's errand-outputs/builds/windows/<fingerprint>/
+              on the machine that runs QEMU; the one it replaces goes once it
+              is ready. It is a build like any other layer's:
               `errand setup` does it, a changed declaration redoes it, `--dry-run`
               says so.
     boot      once per warm period, half a minute to a few. Every boot starts

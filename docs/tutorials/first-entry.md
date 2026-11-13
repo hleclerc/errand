@@ -99,8 +99,7 @@ if p := experiment( "gaps", n = Param( 100_000 ) ):
     p.results[ "largest_gap" ] = max( gaps )
 ```
 
-`p.out_dir` is this run's own directory, already created — in errand's private record,
-`.errand/runs/`, or under `runs/` when the run was given `-o`. An experiment gets a stable `latest/`
+`p.out_dir` is this run's own directory, already created, under `errand-outputs/runs/`. An experiment gets a stable `latest/`
 symlink beside the stamped ones, so a tab left open on `latest/gaps.svg` keeps working.
 
 ## Try it
@@ -128,13 +127,13 @@ A comma on a parameter is a matrix:
 errand run -o -k bench '**::*' --n=100000,1000000,10000000
 ```
 
-Three runs, three directories — `-o` asks for them to be visible, under `runs/` — and a summary at
-the entry's root with one row per size.
+Three runs, three directories under `errand-outputs/runs/` — `-o` lets each write its own files
+there — and a summary at the entry's root with one row per size.
 
 ## What you get back
 
 ```text
-runs/test_primes.py/sieve/
+errand-outputs/runs/test_primes.py/sieve/
   2026-09-24_18h04m11-default@thishost-n=100000/
     result.yaml          <- status, duration, RAM, params, results, tags
   2026-09-24_18h04m11-default@thishost-n=1000000/
@@ -142,10 +141,11 @@ runs/test_primes.py/sieve/
   latest -> the newest of them
   summary.yaml           <- one row per run, and the extents: read this after a matrix
 
-runs/test_primes.py/gaps/latest/gaps.svg     <- stable path, reload the tab ( errand run -o test_primes.py::gaps )
+errand-outputs/runs/test_primes.py/gaps/latest/gaps.svg     <- stable path, reload the tab ( errand run -o test_primes.py::gaps )
 ```
 
-Without `-o`, the same tree is kept in `.errand/runs/` — the record the screen and the history read.
+The same tree is what the screen and the history read: every run is recorded there, with or
+without `-o`.
 
 Nothing here is a special directory that `errand` knew about in advance. Every component is computed
 from the entry, its parameters, where it ran and when — which is also how the same path can be
@@ -155,8 +155,8 @@ from the entry, its parameters, where it ran and when — which is also how the 
 Open one:
 
 ```bash
-cat runs/test_primes.py/sieve/latest/result.yaml
-cat runs/test_primes.py/sieve/summary.yaml
+cat errand-outputs/runs/test_primes.py/sieve/latest/result.yaml
+cat errand-outputs/runs/test_primes.py/sieve/summary.yaml
 ```
 
 ## The same thing, on a screen

@@ -53,7 +53,7 @@ if test( "`errand init` writes the suggestions down, in comments, and refuses to
     assert "# errand.default_run = [ 'tests/**::*' ]" in text
     compile( text, "errand-project.py", "exec" )
     ignored = ( root / ".gitignore" ).read_text()
-    assert ".errand/" in ignored and "runs/" in ignored
+    assert "errand-outputs/" in ignored and ".errand/" not in ignored
 
     rc, out = run_errand( root, "init" )
     assert rc == 1 and "already exists" in out, out

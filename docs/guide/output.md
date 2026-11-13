@@ -2,18 +2,19 @@
 
 Every run is **recorded**, whether anybody asked or not: command, environment, place, date, status,
 duration, output, results — what the history, [the screen](./tui), `errand status` and `--batch`
-read. That record is errand's own, in its state directory, `.errand/runs/…`.
+read. The record is in the project's tree, in `errand-outputs/runs/…`, where you can read it.
 
-A **visible** directory is made only on request: `-o` puts it in the project's tree, `runs/`, and
-`--out` somewhere else — another tree, or a pattern of your own with `{path}` `{name}` `{when}`
-`{place}` `{env}` `{params}`:
+`-o` gives each run an **output directory of its own** as well: the run's directory under
+`errand-outputs/runs/`, handed to the command as `$ERRAND_OUT_DIR`, and whatever is written into it
+is brought back. `--out` puts the runs somewhere else — another tree, or a pattern of your own with
+`{path}` `{name}` `{when}` `{place}` `{env}` `{params}`:
 
 ```bash
-errand run -o "bench/solvers.py::cost" --n=1000,5000   # runs/bench/solvers.py/cost/…
+errand run -o "bench/solvers.py::cost" --n=1000,5000   # errand-outputs/runs/bench/solvers.py/cost/…
 errand run --out "results/{env}/{when}" train.py       # results/gpu/2026-09-25_18h04m11/
 ```
 
-Either way it is laid out the same, and the rest of this page describes it.
+Either way it is laid out the same, and the rest of this page describes it, from `runs/` down.
 
 **The file's path and the case's name to find a case, then one flat list of its runs**, each cleared and recreated as it
 starts. Only the run directory is cleared; everything above it accumulates.
@@ -27,7 +28,7 @@ runs/bench/solvers.py/cost/2026-09-25_18h11m02-local@laptop-method=cg,n=5000/
 ```
 
 A plain command has no file and no case: it is `runs/{first word}/{when}-{place}[-{args}]/` —
-`errand run -o make -j16` lands in `runs/make/…-local@laptop--j16/`.
+`errand run make -j16` lands in `errand-outputs/runs/make/…-local@laptop--j16/`.
 
 The file's path — from the project root, extension included — and the name are how you *look* for
 work: they are what you typed to run it, so they are directories. Two `test_ot.py` in two
@@ -160,22 +161,37 @@ a machine got slower is a different question, and one that wants to know somethi
 
 ## What else is on disk
 
+Everything errand writes for a project is in one directory at its root, `errand-outputs/`:
+
+```text
+errand-outputs/
+  runs/       the record of every run, laid out as above
+  builds/     what errand built and its records of it: records/ ( one yaml per artefact, and the
+              build logs ), windows/ ( the Windows images )
+  state/      errand's bookkeeping: plans, the command history the screen reads, the handles of
+              detached submissions, the output kept for `errand attach`
+```
+
 | | |
 |---|---|
-| `.errand/` | the per-project state directory: the record of every run ( `runs/` ), environment records, the command history the screen reads, the handles of [detached](./detached) submissions. Untracked; moved by `errand.configure( state = … )`, or per machine by `ERRAND_STATE_DIR` |
+| `errand-outputs/` | the project's: every run, what was built, errand's bookkeeping. Untracked — `errand init` adds it to `.gitignore` |
 | the queue | a directory of claims, one per user per host, outside any project. `errand queue` reads it |
 
-Neither is anything you need to open — `-o` is how a run is put where you will look. The queue is
-state about *this machine right now*; `.errand/` holds every run's record, and what a tree cannot
-say — which runs belonged to one submission, and what was built from which declaration.
+`runs/` is what you open; `state/` is not meant to be read. The queue is state about *this machine
+right now*; `errand-outputs/` holds every run's record, and what a tree cannot say — which runs
+belonged to one submission, and what was built from which declaration.
 
 ## Where the tree goes
 
-The visible tree is `errand.configure( out = "runs" )`, the private record
-`errand.configure( state = ".errand" )` — overridden for one machine by `ERRAND_STATE_DIR`, a
-scratch disk or a shared filesystem. See [Configuration](./configuration). Those are the paths errand
-writes to, and they are the whole state: there is no database, no ledger and no daemon. Delete
-`runs/` and you have deleted the results you asked to see, nothing else.
+`errand-outputs/` is `errand.configure( outputs_directory = "errand-outputs" )`, relative to the
+project root or absolute — overridden for one machine by `ERRAND_OUTPUTS_DIR`, a scratch disk or a
+shared filesystem. `builds/` can go elsewhere on its own with `builds_directory`. See
+[Configuration](./configuration). Those are the paths errand writes to, and they are the whole
+state: there is no database, no ledger and no daemon. Delete `errand-outputs/runs/` and you have
+deleted the records of the runs, nothing else.
+
+A project that had a `.errand/` and a `runs/` from an older errand has them moved into
+`errand-outputs/` the first time errand runs there — and over there at the next push — once.
 
 ## Next
 

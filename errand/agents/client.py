@@ -188,18 +188,19 @@ def shell( conn: Connection, line: str, *, cwd = None, quiet = False, capture = 
                                         decode( out ) if capture else None, decode( err ) if capture else None )
 
 
-def start( conn: Connection, argv, *, cwd = None, env = None ) -> str:
-    """A process that outlives this connection: -> its id, to `attach` to later, from anywhere."""
-    call = conn.open( { "op": "spawn", "argv": list( argv ), "cwd": cwd, "env": env, "keep": True } )
+def start( conn: Connection, argv, *, cwd = None, env = None, store = None ) -> str:
+    """A process that outlives this connection: -> its id, to `attach` to later, from anywhere.
+    Its output is kept in `store` over there ( the project's ), not in the agent's directory."""
+    call = conn.open( { "op": "spawn", "argv": list( argv ), "cwd": cwd, "env": env, "keep": True, "store": store } )
     pid = call.reply()[ "id" ]
     call.send( F.EOF )
     call.close()
     return pid
 
 
-def attach( conn: Connection, pid: str, out = 0, err = 0 ) -> Call:
+def attach( conn: Connection, pid: str, out = 0, err = 0, store = None ) -> Call:
     """Follow a process from these offsets: its OUT / ERR frames, then EXIT."""
-    call = conn.open( { "op": "attach", "id": pid, "out": out, "err": err } )
+    call = conn.open( { "op": "attach", "id": pid, "out": out, "err": err, "store": store } )
     call.reply()
     return call
 

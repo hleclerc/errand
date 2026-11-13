@@ -7,8 +7,8 @@ Creating an environment, installing into it and rebuilding an image are one
 operation seen at three moments, which is why there is one command for all
 three and why it mostly runs by itself.
 
-The record of what was built lives with what was built: in the `.errand/` of the
-machine that holds it, one per artefact ( ADR 0004 ). It is state about that
+The record of what was built lives with what was built: in the `errand-outputs/builds/records/`
+of the machine that holds it, one per artefact ( ADR 0004 ). It is state about that
 place, not a result, and it describes both ends of the build -- the fingerprint
 of what it was built from, the stamp of what came out.
 """
@@ -37,7 +37,7 @@ MARK = "@errand-record@"
 def builds( root: Path ) -> str:
     """Where the records are, from the root of the machine that holds them."""
     from . import config
-    return f"{config.state_rel( root )}/builds"
+    return f"{config.builds_rel( root )}/records"
 
 
 def slug( layer ) -> str:

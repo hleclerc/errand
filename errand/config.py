@@ -163,7 +163,6 @@ def check_stack( stack, phase = "run" ):
 
 @dataclass
 class Settings:
-    out    : str = "runs"
     src    : list = field( default_factory = list )
     # Directories discovery must not walk into: vendored code, fixtures, a copy
     # of something that would be imported and should not be.
@@ -172,10 +171,17 @@ class Settings:
     # ( `build/<env>/` ): two environments never share a binary, so a number is
     # never measured on a binary built for somewhere else.
     build  : str = "build"
-    # errand's own record of what it did -- the runs nobody asked a directory
-    # for, the plans, the history, what was built. `ERRAND_STATE_DIR` overrides
-    # it for one machine ( a scratch disk, a shared filesystem ).
-    state  : str = ".errand"
+    # Everything errand writes for this project, in one visible directory:
+    #     runs/     the records of the runs, and what they brought back
+    #     builds/   what errand built ( Windows images ) and its records of it
+    #     state/    its own bookkeeping: plans, history, launches, output kept for attach
+    # Relative to the project's root, or absolute. `ERRAND_OUTPUTS_DIR` overrides
+    # it for one machine; over there, `Ssh( errand_outputs_directory = ... )`.
+    outputs_directory: str = "errand-outputs"
+    # What errand builds ( `builds/` above ) somewhere else: another disk, or one
+    # directory several projects share. Relative to the root, or absolute -- the
+    # same path on every machine.
+    builds_directory : str | None = None
 
 
 class Envs( dict ):
@@ -199,28 +205,142 @@ envs      = Envs()
 runners   = None            # a runner.Runners, filled below and by `reset`
 
 
-STATE_ENV = "ERRAND_STATE_DIR"
+OUTPUTS_ENV = "ERRAND_OUTPUTS_DIR"
+DEFAULT_OUTPUTS = "errand-outputs"
+LEGACY = ".errand"          # before errand-outputs/: moved on first sight ( `migrate` )
 
 
-def state( root: Path ) -> Path:
-    """errand's own record for this project: `.errand/` unless said otherwise."""
+def outputs( root: Path ) -> Path:
+    """Everything errand writes for the project at `root` ( `Settings.outputs_directory` )."""
     import os
-    where = Path( os.environ.get( STATE_ENV ) or settings.state ).expanduser()
+    where = Path( os.environ.get( OUTPUTS_ENV ) or settings.outputs_directory ).expanduser()
     return where if where.is_absolute() else Path( root ) / where
 
 
-def state_rel( root: Path ) -> str:
-    """The same, relative to the root when it is under it -- which is how it is
-    named on another machine, where the root is somewhere else."""
+def outputs_rel( root: Path ) -> str:
+    """The same, as the project's copy on another machine names it: relative to its root. Put
+    outside the project here, it is the default name over there."""
     import os
-    path = state( root )
-    rel = os.path.relpath( path, root )
-    return str( path ) if rel.startswith( ".." ) else rel
+    rel = os.path.relpath( outputs( root ), root )
+    return DEFAULT_OUTPUTS if rel.startswith( ".." ) or os.path.isabs( rel ) else rel
+
+
+def runs( root: Path ) -> Path:
+    return outputs( root ) / "runs"
+
+
+def state( root: Path ) -> Path:
+    """errand's own bookkeeping for this project: `errand-outputs/state/`."""
+    return outputs( root ) / "state"
+
+
+def state_rel( root: Path ) -> str:
+    """The same, relative to the root over there."""
+    return f"{outputs_rel( root )}/state"
+
+
+def builds_rel( root: Path ) -> str:
+    """What errand builds, from the root of any machine: `errand-outputs/builds`, or
+    `Settings.builds_directory`, which an absolute path names the same everywhere."""
+    if settings.builds_directory:
+        return str( Path( settings.builds_directory ).expanduser() )
+    return f"{outputs_rel( root )}/builds"
+
+
+def migrate( root: Path, echo = print ):
+    """`.errand/` ( and the visible `runs/` of errand's records ) as they were before
+    `errand-outputs/`: moved in, once, here. Over there, `MIGRATE_SH` does the same."""
+    import os
+    root = Path( root )
+    old, new = root / LEGACY, outputs( root )
+    if any( d.is_dir() and not ( d / "exit" ).exists() for d in ( old / "procs" ).glob( "*" ) ):
+        return                                  # a session still writes there: later
+    moves = [ ]
+    if old.is_dir():
+        for name, dest in ( ( "runs", "runs" ), ( "builds", "builds/records" ), ( "vm/windows", "builds/windows" ) ):
+            moves.append( ( old / name, new / dest ) )
+        for p in sorted( old.iterdir() ) if old.is_dir() else [ ]:
+            if p.name not in ( "runs", "builds", "vm" ):
+                moves.append( ( p, new / "state" / p.name ) )
+    visible = root / "runs"
+    if visible.is_dir() and not visible.is_symlink() and visible != new / "runs" and next( visible.rglob( "summary.yaml" ), None ) is not None:
+        moves.append( ( visible, new / "runs" ) )
+    moved = False
+    for src, dest in moves:
+        if src.exists() or src.is_symlink():
+            _merge( src, dest )
+            moved = True
+    if moved and ( new / "runs" ).is_dir():
+        from . import results
+        for entry in ( new / "runs" ).iterdir():
+            if entry.is_dir():
+                results.refresh( entry )
+    if old.is_dir():
+        try:
+            for d in sorted( old.rglob( "*" ), key = lambda p: -len( p.parts ) ):
+                if d.is_dir():
+                    d.rmdir()
+            old.rmdir()
+        except OSError:
+            pass
+    if moved:
+        echo( f"  errand's files moved to {os.path.relpath( new, Path.cwd() )}/ ( runs, builds, state )" )
+
+
+def _merge( src: Path, dest: Path ):
+    """`src` into `dest`: moved whole when `dest` is not there, merged entry by entry otherwise --
+    what is already at `dest` wins."""
+    import shutil
+    if not dest.exists() and not dest.is_symlink():
+        dest.parent.mkdir( parents = True, exist_ok = True )
+        shutil.move( str( src ), str( dest ) )
+        return
+    if src.is_dir() and not src.is_symlink() and dest.is_dir():
+        for p in list( src.iterdir() ):
+            _merge( p, dest / p.name )
+        try:
+            src.rmdir()
+        except OSError:
+            pass
+    elif src.name in ( "summary.yaml", "latest" ):
+        src.unlink()                    # made again from the runs: the summaries are rewritten
+
+
+# Over there, from the project's copy: the same moves, in POSIX sh, at each arrival.
+MIGRATE_SH = r"""
+o="$1"
+for p in .errand/procs/*/; do                   # a session still writes there: later
+    [ -d "$p" ] && [ ! -f "$p/exit" ] && exit 0
+done
+if [ -d .errand ]; then
+    mkdir -p "$o/state" "$o/builds"
+    m() { if [ -e "$1" ] && [ ! -e "$2" ]; then mkdir -p "$( dirname "$2" )" && mv "$1" "$2"; fi; }
+    m .errand/runs "$o/runs"
+    m .errand/builds "$o/builds/records"
+    m .errand/vm/windows "$o/builds/windows"
+    for p in .errand/* .errand/.[!.]*; do
+        [ -e "$p" ] || continue
+        case "$p" in .errand/runs|.errand/builds|.errand/vm) ;; *) m "$p" "$o/state/${p#.errand/}" ;; esac
+    done
+    rmdir .errand/vm 2>/dev/null; rmdir .errand 2>/dev/null
+fi
+true
+"""
+
+
+_SAID = set()
+RENAMED = { "out": "outputs_directory ( runs are in its runs/ )", "state": "outputs_directory" }
 
 
 def configure( **kw ):
     """Project-wide settings. See `Settings`."""
     for k, v in kw.items():
+        if k in RENAMED:
+            # Read, said once, and left: what it named is errand-outputs/ now.
+            if k not in _SAID:
+                _SAID.add( k )
+                print( f"  warning: configure( {k} = ... ) is ignored: see {RENAMED[ k ]}", file = sys.stderr )
+            continue
         if not hasattr( settings, k ):
             raise TypeError( f"configure(): unknown setting {k!r}; "
                              f"expected one of { ', '.join( vars( settings ) ) }" )

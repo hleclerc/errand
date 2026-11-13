@@ -1,10 +1,9 @@
-runs/
 __pycache__/
 *.pyc
 *.egg-info/
 dist/
 errand-envs.py
-.errand/
+errand-outputs/
 *.exe
 build/
 

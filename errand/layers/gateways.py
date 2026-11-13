@@ -17,7 +17,7 @@ from .hosts import Over
 
 
 RSYNC_EXCLUDES = [
-    ".git", "runs", "build", "dist", "__pycache__", "*.pyc", "*.so", "*.o",
+    ".git", "build", "dist", "__pycache__", "*.pyc", "*.so", "*.o",
     "node_modules", "target", ".venv", "*.egg-info", ".mypy_cache", ".pytest_cache",
 ]
 
@@ -50,6 +50,9 @@ class Ssh( Gateway ):
     options: list = field( default_factory = list )
     also   : list = field( default_factory = list )   # sibling checkouts the work needs, pushed with the project
     when   : str | None = None
+    # Where errand writes for the project over there ( runs, builds, state ): a scratch disk, say.
+    # The project's copy then holds a link to it, by its usual name ( `errand-outputs` ).
+    errand_outputs_directory: str | None = None
 
     def describe( self ):
         return f"ssh:{self.host}"
@@ -68,7 +71,8 @@ class Ssh( Gateway ):
                               needs = ctx.needs, batch = ctx.batch, phase = ctx.phase )
 
         echo( f"  rsync push -> {self.host}:{remote_ctx.root}" )
-        push( ctx.root, self.host, remote_ctx.root, self.options, echo = echo )
+        push( ctx.root, self.host, remote_ctx.root, self.options, echo = echo,
+              outputs = self.errand_outputs_directory )
         for other in self.also:
             # `../loom` lands at `<remote root>/../loom`: the same layout as here
             push( Path( os.path.normpath( ctx.root / other ) ), self.host,
@@ -115,15 +119,36 @@ def _remote( host, options, line: str, agent = True ):
                            stdin = subprocess.DEVNULL )
 
 
-def push( local_root: Path, host: str, remote_root: Path, options = ( ), echo = print ):
-    made = _remote( host, options, f"mkdir -p {shlex.quote( str( remote_root ) )}" )
+LINK_OUTPUTS = r"""
+o="$1"; d="$2"
+mkdir -p "$d" || exit 1
+if [ -d "$o" ] && [ ! -L "$o" ]; then           # what was written before: into the new place
+    for p in "$o"/* "$o"/.[!.]*; do [ -e "$p" ] && [ ! -e "$d/${p##*/}" ] && mv "$p" "$d/"; done
+    rmdir "$o" 2>/dev/null || { echo "errand: $o is not empty, $d not linked" >&2; exit 0; }
+fi
+ln -sfn "$d" "$o"
+"""
+
+
+def push( local_root: Path, host: str, remote_root: Path, options = ( ), echo = print, outputs = None ):
+    """The project to its copy over there, which errand's outputs there are not part of. On the way,
+    `outputs` ( `Ssh( errand_outputs_directory )` ) linked in, and a `.errand` of before moved."""
+    from .. import config
+    rel = config.outputs_rel( local_root )
+    q = shlex.quote
+    line = f"mkdir -p {q( str( remote_root ) )} && cd {q( str( remote_root ) )}"
+    if outputs:
+        line += f" && sh -c {q( LINK_OUTPUTS )} sh {q( rel )} {q( str( outputs ) )}"
+    line += f" && sh -c {q( config.MIGRATE_SH )} sh {q( rel )}"
+    made = _remote( host, options, line )
     if made.returncode:
         raise subprocess.CalledProcessError( made.returncode, f"mkdir -p {remote_root}", made.stdout, made.stderr )
-    # errand's own state is each side's: the records of the runs made over
-    # there, its plans, what it built. Excluded, so `--delete` leaves it be.
-    from .. import config
-    state = config.state_rel( local_root )
-    own = [ f"/{state}" ] if not os.path.isabs( state ) else [ ]
+    for said in ( made.stderr or "" ).splitlines():
+        if said.startswith( "errand:" ):
+            echo( f"  {said}" )
+    # errand's outputs are each side's: the records of the runs made over
+    # there, its plans, what it built. Excluded, so `--delete` leaves them be.
+    own = [ f"/{rel}", f"/{config.LEGACY}" ]
     done = subprocess.run( [ "rsync", "-a", "--delete", "-i", *_rsh( options, host ),
                              *[ f"--exclude={e}" for e in RSYNC_EXCLUDES + own + own_paths() ],
                              f"{local_root}/", f"{host}:{remote_root}/" ],

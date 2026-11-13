@@ -136,12 +136,12 @@ if test( "a Catch2 suite, compiled and run", tags = [ "cpp", "slow" ] ):
         assert code == 0, output
         assert "PASS adds" in output and "PASS multiplies" in output, output
 
-        results = [ yamlish.read( p ) for p in ( project / "runs" ).rglob( "result.yaml" ) ]
+        results = [ yamlish.read( p ) for p in ( project / "errand-outputs" / "runs" ).rglob( "result.yaml" ) ]
         assert len( results ) == 2, results
         assert all( r[ "results" ][ "assertions" ] == 1 for r in results ), results
         # the suite's own report stays where it landed, beside the result
         assert ( Path( results[ 0 ][ "file" ] ).parent if False else True )
-        assert list( ( project / "runs" ).rglob( "catch2.xml" ) ), "the report is part of the output"
+        assert list( ( project / "errand-outputs" / "runs" ).rglob( "catch2.xml" ) ), "the report is part of the output"
 
         # naming one case reaches one case: it is an entry like any other
         code, output = run_errand( project, "run", "cpp/test_math.cpp::multiplies", timeout = 900 )
@@ -196,10 +196,10 @@ if test( "a cargo crate, built and run", tags = [ "rust", "slow" ] ):
         assert code == 0, output
         assert "PASS demo" in output, output
 
-        results = [ yamlish.read( p ) for p in ( project / "runs" ).rglob( "result.yaml" ) ]
+        results = [ yamlish.read( p ) for p in ( project / "errand-outputs" / "runs" ).rglob( "result.yaml" ) ]
         assert len( results ) == 1, results
         assert results[ 0 ][ "results" ] == { "passed": 2, "failed": 0, "ignored": 1 }, results[ 0 ]
-        assert list( ( project / "runs" ).rglob( "cargo.txt" ) )
+        assert list( ( project / "errand-outputs" / "runs" ).rglob( "cargo.txt" ) )
 
 
 PYTEST_SUITE = '''
@@ -448,13 +448,13 @@ if test( "a script runs in the place, its exit code is its status, and it is one
         code, output = run_errand( root, "run", "-o", "--no-queue", "scripts/plot.py" )
         assert code == 0 and "plotted True" in output, output
         # No level named after the file a second time.
-        assert ( root / "runs" / "scripts" / "plot.py" / "latest" / "result.yaml" ).exists()
+        assert ( root / "errand-outputs" / "runs" / "scripts" / "plot.py" / "latest" / "result.yaml" ).exists()
         code, output = run_errand( root, "run", "-o", "--no-queue", "scripts/go.sh" )
         assert code == 1 and "went" in output and "exit 3" in output, output
         # With no directory asked for, none is handed over, and none is made in the project.
         code, output = run_errand( root, "run", "--no-queue", "scripts/plot.py" )
         assert code == 0 and "plotted False" in output, output
-        assert list( ( root / ".errand" / "runs" / "scripts" / "plot.py" ).glob( "*/result.yaml" ) )
+        assert list( ( root / "errand-outputs" / "runs" / "scripts" / "plot.py" ).glob( "*/result.yaml" ) )
 
 
 if test( "a build goes to the environment's own directory, and is told where" ):
@@ -514,7 +514,7 @@ if test( "a compiled suite is built where it runs, then asked for its cases" ):
         assert code == 0, output
         assert "PASS adds" in output and "PASS multiplies" in output, output
         # One entry per case, each with a directory of its own...
-        assert ( project / "runs" / "cpp" / "test_math.cpp" / "adds" / "latest" / "catch2.xml" ).exists()
+        assert ( project / "errand-outputs" / "runs" / "cpp" / "test_math.cpp" / "adds" / "latest" / "catch2.xml" ).exists()
         # ...and built once for the run, not once per case.
         assert ( project / "build.log" ).read_text().count( "built" ) == 2, "once for list, once for run"
 

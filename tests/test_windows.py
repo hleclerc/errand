@@ -67,7 +67,7 @@ if test( "the deciding is here: what it asks over there are lines, named from th
         "the image is named from the declaration as read HERE, wherever it is installed"
     line = vm.Windows().probe_shell( over )
     assert line.startswith( "sh -c " ), line
-    assert f"errand/windows/{vm.Windows().image_name( over )}/ready" in line, line
+    assert f"errand-outputs/builds/windows/{vm.Windows().image_name( over )}/ready" in line, line
     assert "-mtime" in line and "-mtime" not in vm.Windows( key = "K" ).probe_shell( over )
 
 
@@ -249,11 +249,26 @@ if test( "a provisioning script is fingerprinted by what it says" ):
         assert vm.Windows( provision = [ "tools.ps1" ] ).image( here ) != first
 
 
-if test( "the images live in the cache, shared between projects" ):
+if test( "the images are the project's, in its errand-outputs/builds: the per-user cache holds only what is live" ):
     with cache( "/c" ):
         a = vm.Windows().image( L.Context( root = Path( "/one" ) ) )
         b = vm.Windows().image( L.Context( root = Path( "/two" ) ) )
-        assert a == b and str( a ).startswith( "/c/errand/windows/" )
+        assert str( a ).startswith( "/one/errand-outputs/builds/windows/" ) and b.name == a.name, ( a, b )
+
+
+if test( "once an image is ready, the project's images nobody declares any more go, and the ISO" ):
+    from errand.vm.install import _prune
+    with tempfile.TemporaryDirectory() as tmp:
+        images = Path( tmp ) / "errand-outputs/builds/windows"
+        for n in ( "new", "old", "other", "booted" ):
+            ( images / n / "live" ).mkdir( parents = True )
+        ( images / "booted/live/qemu.log.pid" ).write_text( str( os.getpid() ) )
+        ( images.parent / "downloads" ).mkdir()
+        m = vm.Machine( L.Here( Path( tmp ) ), facts( root = tmp ), "new" )
+        said = [ ]
+        _prune( m, { "new", "other" }, said.append )
+        assert sorted( p.name for p in images.iterdir() ) == [ "booted", "new", "other" ], "booted: in use"
+        assert not ( images.parent / "downloads" ).exists() and len( said ) == 1, said
 
 
 if test( "setup says it would install, and installs nothing" ):
@@ -264,7 +279,7 @@ if test( "setup says it would install, and installs nothing" ):
                            echo = said.append, dry_run = True )
         assert rc == 0
         assert any( "would run: install windows" in s and s.endswith( "here" ) for s in said ), said
-        assert not vm.images_dir().exists()
+        assert not vm.images_dir( tmp ).exists()
 
 
 if test( "an evaluation is rebuilt before it runs out; a licensed install is not" ):
@@ -332,7 +347,7 @@ if test( "the project goes in by rsync, to the path the guest's rsync reads" ):
 if shutil.which( "rsync" ) and test( "what is copied in leaves out what an Ssh push would" ):
     with tempfile.TemporaryDirectory() as tmp:
         root, out = Path( tmp ) / "p", Path( tmp ) / "out"
-        for p in ( "src/a.cpp", "runs/x/result.yaml", ".git/HEAD", "build/a.o", ".errand/env-w.yaml" ):
+        for p in ( "src/a.cpp", "errand-outputs/runs/x/result.yaml", ".git/HEAD", "build/a.o", ".errand/env-w.yaml" ):
             ( root / p ).parent.mkdir( parents = True, exist_ok = True )
             ( root / p ).write_text( "x" )
         # The line as the machine that runs QEMU would run it, from its root,

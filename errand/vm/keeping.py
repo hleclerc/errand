@@ -79,8 +79,8 @@ class Keeping:
 
     def data_disk( self, size ) -> str | None:
         """The disk that is kept, made the first time -> its path over there.
-        One per image: every project booted from it has its folder on it, and
-        it outlives restarts and reinstalls of the same declaration alike."""
+        One per image, in the project: it outlives restarts and reinstalls of
+        the same declaration alike."""
         if not size:
             return None
         path = f"{self.image}/data.qcow2"

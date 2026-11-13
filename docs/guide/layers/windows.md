@@ -38,8 +38,11 @@ in it (cl, link, msbuild, cmake, ninja) and calls `vcvars64` before every comman
 What it costs, and when:
 
 - **The install** is a build like any other layer's: `errand setup` does it, a changed declaration redoes
-  it, `--dry-run` says it would. The disk image goes to `~/.cache/errand/windows/`, named by what it
-  was installed from, so projects declaring the same Windows share one.
+  it, `--dry-run` says it would. The disk image is the project's: it goes to `errand-outputs/builds/windows/`
+  in the project's copy over there ( or under `builds_directory` ), named by what it was installed
+  from. The ISO is downloaded to `builds/downloads/` and removed once the install is done. Once a new
+  image is ready, the images no environment of the project declares any more are removed. Projects
+  share one image by pointing [`builds_directory`](../configuration#configure) at a shared directory.
 - **A boot** starts from a fresh copy-on-write layer over that image — nothing a run left behind
   survives a restart — and the machine then stays up while an errand process that used it is
   alive, then `keep` more (none by default: a boot is about half a minute). All that time

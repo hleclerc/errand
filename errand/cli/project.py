@@ -71,14 +71,13 @@ def build_dir_for( root, env_name ) -> Path:
 
 
 def output_tree( root: Path, known ) -> Path:
-    """Where runs are recorded: a tree of the project's when `-o` or `--out`
-    asked for one, errand's own state otherwise."""
+    """Where runs are recorded: `errand-outputs/runs/`, or the tree `--out` names."""
     out = getattr( known, "out", None )
     R.pattern = out if out and "{" in out else None
-    if getattr( known, "keep_out", False ) or out:
-        tree = Path( out if out and not R.pattern else config.settings.out )
+    if out and not R.pattern:
+        tree = Path( out )
         return tree if tree.is_absolute() else root / tree
-    return config.state( root ) / "runs"
+    return config.runs( root )
 
 
 def _from_root( target: str, root: Path ) -> str:

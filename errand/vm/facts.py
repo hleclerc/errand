@@ -17,6 +17,7 @@ if [ -e /dev/kvm ]; then
     else f kvm no; f kvm_group "$( stat -c %G /dev/kvm 2>/dev/null || stat -f %Sg /dev/kvm )"; fi
 else f kvm absent; fi
 f cache "${XDG_CACHE_HOME:-$HOME/.cache}"
+f root "$( pwd )"
 ( . /etc/os-release 2>/dev/null && f os "$ID $ID_LIKE" )
 for t in qemu-system-x86_64 qemu-img ssh scp ssh-keygen tar rsync zstd curl wget; do
     command -v "$t" >/dev/null 2>&1 && f tool "$t"
@@ -36,6 +37,7 @@ class Facts:
     cache    : str                   # its ~/.cache, as an absolute path over there
     os_ids   : set                   # ID and ID_LIKE of /etc/os-release: ubuntu, debian
     tools    : set
+    root     : str = ""              # the project's copy over there, where the images are
 
     @classmethod
     def of( cls, host ) -> "Facts":
@@ -54,7 +56,7 @@ class Facts:
                            f"{( got.stderr or '' ).strip()[ -400 : ]}" )
         return cls( where = where( host ), arch = found[ "arch" ].lower(), system = found.get( "system", "" ),
                     user = found.get( "user", "" ), kvm = found.get( "kvm", "absent" ),
-                    kvm_group = found.get( "kvm_group", "kvm" ), cache = found.get( "cache", "" ),
+                    kvm_group = found.get( "kvm_group", "kvm" ), cache = found.get( "cache", "" ), root = found.get( "root", "" ),
                     os_ids = set( found.get( "os", "" ).split() ), tools = tools )
 
 

@@ -62,7 +62,7 @@ if p := bench( "sieve beats trial division", n = Param( 20_000 ) ):
 #
 # `p.out_dir` is this run's own directory. An experiment gets a stable
 # `latest/` symlink beside the stamped ones, so the tab you leave open on
-# runs/test_primes.py/gaps/latest/gaps.svg keeps working.
+# errand-outputs/runs/test_primes.py/gaps/latest/gaps.svg keeps working.
 
 if p := experiment( "gaps", n = Param( 100_000 ) ):
     ps   = sieve( p.n )

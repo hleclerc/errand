@@ -85,7 +85,7 @@ if test( "a round trip brings the results back", tags = [ "ssh", "slow" ] ):
 
         # The run happened over there -- and what it produced is HERE, at the
         # path this side worked out before the run existed.
-        leaves = sorted( ( project / "runs" ).rglob( "result.yaml" ) )
+        leaves = sorted( ( project / "errand-outputs" / "runs" ).rglob( "result.yaml" ) )
         assert len( leaves ) == 2, f"{[ str( p ) for p in leaves ]}\n{output}"
 
         for leaf in leaves:
@@ -97,7 +97,7 @@ if test( "a round trip brings the results back", tags = [ "ssh", "slow" ] ):
         assert { yamlish.read( p )[ "results" ][ "n" ] for p in leaves } == { 3, 4 }, \
             "the matrix must be expanded on this side, one plain run per combination"
 
-        summaries = sorted( ( project / "runs" ).rglob( "summary.yaml" ) )
+        summaries = sorted( ( project / "errand-outputs" / "runs" ).rglob( "summary.yaml" ) )
         assert summaries, "the summaries are part of what comes back"
 
     subprocess.run( [ "ssh", *options, host, f"rm -rf {remote_root}" ] )
@@ -116,14 +116,14 @@ if test( "only what this invocation asked for comes back", tags = [ "ssh", "slow
         # Something older, unrelated, sitting in the remote output tree. The
         # push does not clear it (the output tree is excluded), so the pull is
         # the only thing standing between it and this machine.
-        stale = f"{remote_root}/runs/someone_elses/run/2000-01-01_00h00m00-place"
+        stale = f"{remote_root}/errand-outputs/runs/someone_elses/run/2000-01-01_00h00m00-place"
         subprocess.run( [ "ssh", *options, host,
                           f"mkdir -p {stale} && echo 'name: old' > {stale}/result.yaml" ],
                         check = True )
 
         code, output = run_errand( project, "run", "-o", "-k", "bench", "--env", "over-there", "**::*" )
         assert code == 0, output
-        assert not ( project / "runs" / "someone_elses__run" ).exists(), \
+        assert not ( project / "errand-outputs" / "runs" / "someone_elses__run" ).exists(), \
             "the pull must name the paths it wants, not drag the whole tree home"
 
     subprocess.run( [ "ssh", *options, host, f"rm -rf {remote_root}" ] )

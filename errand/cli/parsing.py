@@ -67,7 +67,7 @@ def build_parser( tag_names = ( ) ):
                     help = "how many entries at once: a number, or `auto`" )
     p.add_argument( "--batch", action = "store_true", help = "launch it and give the shell back" )
     p.add_argument( "-o", dest = "keep_out", action = "store_true",
-                    help = "an output directory for each run, brought back: runs/… ( $ERRAND_OUT_DIR )" )
+                    help = "an output directory for each run, brought back: errand-outputs/runs/… ( $ERRAND_OUT_DIR )" )
     p.add_argument( "--out", default = None, metavar = "PATTERN",
                     help = "the same, under another tree, or as a pattern: "
                            "\"results/{env}/{when}\" ( {path} {name} {when} {place} {env} {params} )" )

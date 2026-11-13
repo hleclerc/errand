@@ -195,8 +195,7 @@ def init( root: Path, *, force: bool = False, echo = print ) -> int:
         ( root / ENVS_FILE ).write_text( render_envs() )
         echo( f"  wrote {ENVS_FILE}    ( where YOU run it; not versioned )" )
 
-    _ignore( root, ".errand/", echo )
-    _ignore( root, "runs/", echo )
+    _ignore( root, "errand-outputs/", echo )
     _ignore( root, ENVS_FILE, echo )
     _ignore( root, VARS_FILE, echo )
     return 0

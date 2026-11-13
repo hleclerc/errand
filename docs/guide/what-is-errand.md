@@ -54,9 +54,10 @@ Nothing to declare for any of it:
   `errand attach` picks it up. → [Fast, and nothing lost](./agents)
 - **Let it run.** `--batch` launches the work and gives the shell back; `errand status` and
   `errand watch` say how it is going. → [Detached runs](./detached)
-- **A record of every run** — what ran, where, when, how it ended, what it said — kept in errand's
-  own state, `.errand/`. With `-o`, a directory per run whose path is computed from the work, the
-  place and the date, so that comparison between dates and machines falls out of the tree.
+- **A record of every run** — what ran, where, when, how it ended, what it said — in
+  `errand-outputs/runs/`, a directory per run whose path is computed from the work, the place and
+  the date, so that comparison between dates and machines falls out of the tree. With `-o`, the run
+  writes its own files there too.
   → [Where the output goes](./output)
 - **One screen for all of it**: `errand tui`. → [The screen](./tui)
 
@@ -100,8 +101,7 @@ errand reads every `errand-*.py`:
 errand-envs.py         the environments — versioned when it names no machine   ← errand init
 errand-project.py      runners, what a bare `errand run` runs, settings        ← errand init
 errand-vars.py         what only this machine knows — never versioned
-.errand/               errand's own record of what it did
-runs/                  the output directories you asked for with -o
+errand-outputs/        what errand did: every run, what it built, its bookkeeping
 ```
 
 → [Configuration](./configuration)

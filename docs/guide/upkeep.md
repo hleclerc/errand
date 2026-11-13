@@ -43,7 +43,8 @@ the first time.
 
 ## What errand remembers
 
-A record lives on the machine that holds what was built, in its `.errand/builds/`: one yaml per
+A record lives on the machine that holds what was built, in its `errand-outputs/builds/records/`
+( or under `builds_directory` ): one yaml per
 artefact, and the output of the last attempt beside it. Both are rewritten every time, there is no
 history. The yaml holds the fingerprint of what was declared, and a stamp of what came out: an image's
 date and size, a Docker image's id, a conda prefix's `conda-meta/history`, a venv's `site-packages`. An

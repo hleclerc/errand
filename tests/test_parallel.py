@@ -74,12 +74,12 @@ if test( "the same results, whichever shape it ran in", tags = [ "slow" ] ):
         code, _ = run_errand( project, "run", "-o", "-k", "bench", "**::*", "--n=1,2,3" )
         assert code == 0
         serial = { str( p.relative_to( project ) ): yamlish.read( p )[ "results" ]
-                   for p in sorted( ( project / "runs" ).rglob( "result.yaml" ) ) }
+                   for p in sorted( ( project / "errand-outputs" / "runs" ).rglob( "result.yaml" ) ) }
 
         code, _ = run_errand( project, "run", "-o", "-k", "bench", "-j", "3", "**::*", "--n=1,2,3" )
         assert code == 0
         parallel = { str( p.relative_to( project ) ): yamlish.read( p )[ "results" ]
-                     for p in sorted( ( project / "runs" ).rglob( "result.yaml" ) ) }
+                     for p in sorted( ( project / "errand-outputs" / "runs" ).rglob( "result.yaml" ) ) }
 
         assert serial == parallel, ( serial, parallel )
         assert len( serial ) == 3
@@ -122,7 +122,7 @@ if test( "a value with a space survives the trip to the child", tags = [ "slow" 
         code, output = run_errand( project, "run", "-o", "-k", "bench", "-j", "2", "**::*", "--label", "two words" )
         assert code == 0, output
         got = [ yamlish.read( p )[ "results" ]
-                for p in ( project / "runs" ).rglob( "result.yaml" ) ]
+                for p in ( project / "errand-outputs" / "runs" ).rglob( "result.yaml" ) ]
         assert got and all( g[ "label" ] == "two words" for g in got ), got
 
 

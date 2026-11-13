@@ -105,7 +105,7 @@ class Cluster:
 
 def watched( cluster, printed ):
     submit = L.Command( [ "sbatch", "--parsable", "--wrap", "x" ], { } )
-    return L.watch_job( cluster, submit, "/r/.errand/batch", every = 0, first = 0, echo = printed.append )
+    return L.watch_job( cluster, submit, "/r/errand-outputs/state/batch", every = 0, first = 0, echo = printed.append )
 
 
 if test( "a watched job: its output as it comes, a lost connection skipped, its own return code", tags = [ "slurm" ] ):
@@ -241,7 +241,7 @@ if test( "a run goes through the queue and comes back", tags = [ "slurm", "slow"
                   "nothing to fix unless it never clears" )
         assert code == 0, output
 
-        leaves = sorted( ( project / "runs" ).rglob( "result.yaml" ) )
+        leaves = sorted( ( project / "errand-outputs" / "runs" ).rglob( "result.yaml" ) )
         assert len( leaves ) == 1, f"{[ str( p ) for p in leaves ]}\n{output}"
         got = yamlish.read( leaves[ 0 ] )
         assert got[ "status" ] == "PASS", got
@@ -303,13 +303,13 @@ if test( "--batch submits and comes straight back", tags = [ "slurm", "slow" ] )
 
         def collected( ):
             run_errand( project, "status" )
-            return list( ( project / "runs" ).rglob( "result.yaml" ) )
+            return list( ( project / "errand-outputs" / "runs" ).rglob( "result.yaml" ) )
 
         deadline = time.time() + 300
         while time.time() < deadline and not collected():
             time.sleep( 3 )
 
-        got = [ yamlish.read( p ) for p in ( project / "runs" ).rglob( "result.yaml" ) ]
+        got = [ yamlish.read( p ) for p in ( project / "errand-outputs" / "runs" ).rglob( "result.yaml" ) ]
         if not got:
             skip( "the queue did not run the job in time",
                   f"job {place[ 'handle' ]} was accepted; a busy cluster looks like this too" )

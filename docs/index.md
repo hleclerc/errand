@@ -123,12 +123,12 @@ if p := track( "cost", n = Param( 1000, help = "nb of points" ) ):
 
 :::
 
-Every run is recorded — what ran, where, when, how it ended, what it said — in `.errand/`, which is
-what `errand status`, `errand watch` and the screen read. Ask with `-o` and each run also gets a
-directory you can open, at a path you could have written down in advance:
+Every run is recorded — what ran, where, when, how it ended, what it said — in `errand-outputs/`,
+which is what `errand status`, `errand watch` and the screen read. Each run has a directory you can
+open, at a path you could have written down in advance, and `-o` lets it write its own files there:
 
 ```text
-runs/<file or command>/<case>/
+errand-outputs/runs/<file or command>/<case>/
   2026-09-25_18h04m11-cluster@gpu-box/result.yaml
   2026-09-25_18h04m11-local@laptop/result.yaml
   latest -> the newest of them

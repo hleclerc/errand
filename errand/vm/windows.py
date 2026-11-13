@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .. import layers as L
 from .common import _backslashed, _sh, VmError, where
-from .places import images_dir
+from .places import images_dir, images_rel
 from .facts import Facts, need, package_hint
 from .datadisk import DATA_DRIVE, FLUSH_SCRIPT, powershell
 from .machine import Machine
@@ -78,13 +78,13 @@ class Windows( L.Gateway, L.Artefact ):
         return _spec( self.declared(), ctx.origin )
 
     def image_name( self, ctx ) -> str:
-        """Named by what it was installed FROM, so two projects declaring the
-        same Windows share one image."""
+        """Named by what it was installed FROM: a declaration edited is a new
+        image, and the one before goes once it is ready ( `install` )."""
         return L.fingerprint( *self.spec( ctx ) )
 
     def image( self, ctx ) -> Path:
         """Where the installed disk lives when QEMU runs on this machine."""
-        return images_dir() / self.image_name( ctx )
+        return images_dir( ctx.root ) / self.image_name( ctx )
 
     def probe_shell( self, ctx ) -> str:
         return ready_line( self.image_name( ctx ), keyed = bool( self.key ) )
@@ -166,8 +166,11 @@ class Install:
         return f"install windows {self.layer.image_name( self.ctx )[ : 8 ]} {where( self.ctx.host )}"
 
     def __call__( self, echo = print ) -> int:
+        from .. import config
+        wanted = { layer.image_name( self.ctx ) for e in config.envs.values() for layer in e.stack
+                   if isinstance( layer, Windows ) }
         return install( self.ctx.host, self.layer.image_name( self.ctx ), self.layer.declared(),
-                        self.layer.booted(), echo )
+                        self.layer.booted(), echo, wanted )
 
 
 def _iso_identity( iso, root: Path ):
@@ -205,7 +208,7 @@ def _spec( declared: dict, root: Path ) -> list:
 def ready_line( name: str, keyed: bool ) -> str:
     """A line whose exit code says whether that image is installed -- and, for an
     evaluation, not about to run out -- on the machine that runs it."""
-    script = f'r="${{XDG_CACHE_HOME:-$HOME/.cache}}/errand/windows/{name}/ready"; test -f "$r"'
+    script = f'r="{images_rel()}/{name}/ready"; test -f "$r"'
     if not keyed:
         # An evaluation counts down from the day it was installed, and shuts
         # itself down every hour once it has run out -- which would look like a

@@ -90,9 +90,9 @@ errand run --fp 32,64 ./bench          # an environment that does not say fp cov
   errand does not queue — the scheduler already decided.
 - **Let it run.** `errand run --batch …` gives the shell back — a detached session here, a released
   ssh command there, an `sbatch` on a cluster — and `errand status` / `errand watch` say how it goes.
-- **A record of every run**, in `.errand/`: what ran, where, when, how it ended, what it printed.
-  With `-o`, a directory per run under `runs/`, whose path is computed from the work, the place and
-  the date, so that two machines or two days sit side by side.
+- **A record of every run**, in `errand-outputs/runs/`: what ran, where, when, how it ended, what it
+  printed, in a directory per run whose path is computed from the work, the place and the date, so
+  that two machines or two days sit side by side. With `-o`, the run writes its own files there too.
 - **One screen for all of it**: `errand tui`, drawn with the standard library's curses.
 
 ## Files, suites and entries

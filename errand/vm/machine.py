@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import posixpath
 import random
 import re
 import signal
@@ -12,8 +13,8 @@ import subprocess
 import time
 
 from .. import layers as L
-from .common import _alive, _backslashed, _read, _sh, GUEST_OPTIONS, USER, VmError
-from .places import live_dir
+from .common import _alive, _backslashed, _lock, _read, _sh, GUEST_OPTIONS, USER, VmError
+from .places import images_rel, live_dir
 from .facts import accel, Facts
 from .qemu import qemu_argv
 from .transfer import rsync_failed, rsync_line
@@ -41,10 +42,11 @@ class Machine( Caller, Keeping, Supplies ):
 
     def __init__( self, host, facts: Facts, name: str ):
         self.host, self.facts, self.name = host, facts, name
-        self.image = f"{facts.cache}/errand/windows/{name}"     # over there
+        self.image = posixpath.join( facts.root, images_rel(), name )   # over there, the project's
         self.spot  = f"{self.image}/live"                        # over there: overlay, tars, log
         self.live  = live_dir() / f"{re.sub( r'[^A-Za-z0-9._-]', '_', host.describe() )}-{name}"
         self._port = None
+        sweep( keep = self.live )
 
     # -- doing things over there ----------------------------------------------
 
@@ -167,6 +169,29 @@ class Machine( Caller, Keeping, Supplies ):
             if made.returncode or self.scp( f"{USER}@127.0.0.1:{there}.out.tar", archive ):
                 continue
             self.host.shell( L.sh( [ "tar", "-x", "-f", archive ] ) + " && " + L.sh( [ "rm", "-f", archive ] ) )
+
+
+def sweep( keep = None, older = 86400.0 ):
+    """The live directories of machines nobody used for a day: no keeper, no lock held -- they go.
+    The per-user cache holds only what is live; the images are the projects'."""
+    import shutil
+    now = time.time()
+    for d in live_dir().iterdir() if live_dir().is_dir() else [ ]:
+        if d == keep or not d.is_dir() or _alive( _read( d / "keeper.pid" ) ):
+            continue
+        try:
+            if now - max( p.stat().st_mtime for p in [ d, *d.iterdir() ] ) < older:
+                continue
+        except ( OSError, ValueError ):
+            continue
+        held = [ _lock( d / n, block = False ) for n in ( "start.lock", "use.lock" ) ]
+        try:
+            if all( h is not None for h in held ):
+                shutil.rmtree( d, ignore_errors = True )
+        finally:
+            for h in held:
+                if h is not None:
+                    h.close()
 
 
 def running( ) -> list:

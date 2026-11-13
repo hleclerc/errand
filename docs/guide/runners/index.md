@@ -39,7 +39,7 @@ took each entry.
 **One entry or several is the runner's to say**, since only it knows whether its ecosystem can list
 what is in a file without running it: pytest and cargo can, a script cannot, and a compiled suite
 can once it is built — which is why it is built during the preparation, where it runs. A file run
-as a whole is one case, `runs/scripts/plot.py/` [with `-o`](../output), with no level named after it
+as a whole is one case, [`runs/scripts/plot.py/`](../output), with no level named after it
 a second time. A `::name` on it is handed to the file as its own filter when its runner takes one
 (Catch2, cargo), and refused otherwise.
 

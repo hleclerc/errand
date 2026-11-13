@@ -10,6 +10,7 @@ One agent per directory: a lock held for its whole life says so.
 from __future__ import annotations
 
 import os
+import shutil
 import socket
 import sys
 import threading
@@ -17,7 +18,7 @@ import time
 from pathlib import Path
 
 from . import endpoint, frames as F
-from .procs import finished, Proc, sweep
+from .procs import finished, locate, Proc, sweep
 
 
 class Agent:
@@ -76,7 +77,7 @@ class Agent:
                 # what it starts knows which agent started it: where a zygote beside it lives ( `warm` )
                 env = { **( req.get( "env" ) or { } ), "ERRAND_AGENT_DIR": str( self.root ) }
                 proc = Proc( self.root, req[ "argv" ], env, req.get( "cwd" ), bool( req.get( "keep" ) ),
-                             tty = req.get( "tty" ) )
+                             tty = req.get( "tty" ), store = req.get( "store" ) )
                 with self.lock:
                     self.procs[ proc.id ] = proc
                 channels[ channel ] = proc
@@ -84,7 +85,9 @@ class Agent:
                 proc.attach( writer, channel )
             elif op == "attach":
                 proc = self.procs.get( req[ "id" ] )
-                if proc is None:
+                if proc is None or proc.code is not None:
+                    with self.lock:
+                        self.procs.pop( req[ "id" ], None )
                     self.replay( writer, channel, req )
                 else:
                     channels[ channel ] = proc
@@ -100,16 +103,17 @@ class Agent:
                     self.stopping = True
                     writer.send( channel, F.REPLY, { "ok": True, "running": running } )
             elif op == "list":
-                writer.send( channel, F.REPLY, { "ok": True, "procs": finished( self.root ) } )
+                writer.send( channel, F.REPLY, { "ok": True, "procs": finished( self.root, req.get( "store" ),
+                                                                                req.get( "ids" ) ) } )
             else:
                 writer.send( channel, F.REPLY, { "error": f"unknown request {op!r}" } )
         except Exception as err:          # said to the client, not fatal to the agent
             writer.send( channel, F.REPLY, { "error": f"{type( err ).__name__}: {err}" } )
 
     def replay( self, writer, channel, req ):
-        """A process of an earlier life of this agent: what it left on disk."""
-        d = self.root / "proc" / str( req[ "id" ] )
-        if not ( d / "meta.json" ).exists():
+        """A process no longer running here: what it left on disk, then that goes -- delivered."""
+        d = locate( self.root, req[ "id" ], req.get( "store" ) )
+        if d is None:
             writer.send( channel, F.REPLY, { "error": f"no process {req[ 'id' ]} here" } )
             return
         writer.send( channel, F.REPLY, { "ok": True, "id": req[ "id" ] } )
@@ -121,6 +125,8 @@ class Agent:
         code = ( d / "exit" ).read_text().strip() if ( d / "exit" ).exists() else ""
         # Started by an agent that is gone, and not finished: nobody can say how it ends.
         writer.send( channel, F.EXIT, { "code": int( code ) if code else -1, "lost": not code } )
+        shutil.rmtree( d, ignore_errors = True )
+        shutil.rmtree( self.root / "proc" / str( req[ "id" ] ), ignore_errors = True )
 
     # -- the life of it -------------------------------------------------------
 

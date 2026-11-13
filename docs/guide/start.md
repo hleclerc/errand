@@ -14,8 +14,8 @@ errand run -x ./bench              # the machine to itself while it runs
 
 Nothing is guessed: the first word after errand's options is a `.py`, a file to execute, or a
 command of the place — and everything after it is that command's own. Each run is recorded in
-`.errand/` (what ran, how it ended, what it printed); `-o` gives it a directory of its own as well,
-under `runs/`, handed to the command as `$ERRAND_OUT_DIR`.
+`errand-outputs/runs/` (what ran, how it ended, what it printed); `-o` hands the run's directory
+there to the command as `$ERRAND_OUT_DIR`, for files of its own.
 
 ## Then: somewhere else
 

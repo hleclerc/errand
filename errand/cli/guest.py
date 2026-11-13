@@ -22,7 +22,7 @@ import json
 import posixpath
 from pathlib import Path
 
-from .. import agents, bootstrap, layers as L
+from .. import agents, bootstrap, config, layers as L
 from ..agents import upstream as U
 from .sessions import Session
 
@@ -123,7 +123,7 @@ class Guest:
         conn = agents.open( self.target_ )
         python = conn.ping()[ "python" ]
         return Session.start( conn, [ python, self.boot, "-m", "errand.agents.ops", "session", json.dumps( request ) ],
-                              cwd = self.there, env = child )
+                              cwd = self.there, env = child, store = f"{self.there}/{config.state_rel( Path( self.there ) )}/procs" )
 
     def fetch( self, paths ):
         if paths:

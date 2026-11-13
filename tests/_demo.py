@@ -51,7 +51,7 @@ def a_session( project ):
     """
     from errand import session as S
     kept = ( config.settings, dict( config.envs ), dict( config.runners ) )
-    return S.Session( project, project / "runs" ).discover(), kept
+    return S.Session( project, project / "errand-outputs" / "runs" ).discover(), kept
 
 
 def put_back( kept ):

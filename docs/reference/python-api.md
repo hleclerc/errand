@@ -186,16 +186,23 @@ project does, `errand-envs.py` for where it runs.
 ### configure
 
 ```python
-errand.configure( out = "runs", src = [ ], exclude = [ ] )
+errand.configure( outputs_directory = "errand-outputs", builds_directory = None, src = [ ], exclude = [ ] )
 ```
 
 | | |
 |---|---|
-| `out` | where the output tree goes |
+| `outputs_directory` | where errand writes everything for the project: `runs/`, `builds/`, `state/` — see [the output tree](/guide/output). Relative to the project root, or absolute; `ERRAND_OUTPUTS_DIR` overrides it for one machine |
+| `builds_directory` | what errand builds and its records of it, elsewhere than `errand-outputs/builds/`. Relative to the root, or absolute: the same path on every machine |
 | `src` | paths prepended to every child's `PYTHONPATH` |
 | `exclude` | directories discovery must not walk into |
 
-An unknown setting is a `TypeError` listing the ones that exist.
+An unknown setting is a `TypeError` listing the ones that exist. `out` and `state`, from an older
+errand, are ignored with a warning.
+
+Over ssh, the layer says where errand writes over there:
+`errand.Ssh( host = …, errand_outputs_directory = "/scratch/me/proj-out" )`, and the project's copy
+holds a symlink `errand-outputs` to it. Without it, it is the copy's own `errand-outputs/` — see
+[Ssh](/guide/layers/ssh).
 
 ### envs and Env
 

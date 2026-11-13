@@ -103,7 +103,7 @@ if test( "a failed build leaves the image, stops the run, and is tried again" ):
         assert any( "--no-setup" in s and "untouched" in s for s in said ), said
         record = setup.look( root, layer, ctx )[ 0 ]
         assert record[ "last_attempt" ][ "code" ] == 3, record
-        logs = list( ( root / ".errand" / "builds" ).glob( "*.log" ) )
+        logs = list( ( root / "errand-outputs" / "builds" / "records" ).glob( "*.log" ) )
         assert len( logs ) == 1 and "no space left" in logs[ 0 ].read_text()
         assert "last build failed" in setup.status( root, env, ctx )
 
@@ -111,7 +111,7 @@ if test( "a failed build leaves the image, stops the run, and is tried again" ):
         assert ensure( root, env, ctx ) == 0
         assert "last_attempt" not in setup.look( root, layer, ctx )[ 0 ]
         assert "no space left" not in logs[ 0 ].read_text(), "only the last attempt"
-        assert len( list( ( root / ".errand" / "builds" ).iterdir() ) ) == 2
+        assert len( list( ( root / "errand-outputs" / "builds" / "records" ).iterdir() ) ) == 2
 
 
 if test( "an image replaced by hand is not what the record describes" ):
