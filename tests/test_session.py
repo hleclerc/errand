@@ -88,15 +88,23 @@ if test( "what was ticked becomes a command line" ):
             assert session.command( entries = [ named( session, "slow" ) ] ) == \
                    [ "run", "test_demo.py::slow" ]
 
-            # A comma is a matrix, and a second tick is a comma: two
-            # environments, two values of a tag and two of a parameter are
-            # eight runs, said the way they would be said by hand.
+            # A second tick is a matrix, said by --grid: two environments, two values of a tag
+            # and two of a parameter are eight runs, said the way they would
+            # be said by hand -- the parameter's grid asked for by `--grid`.
             argv = session.command(
                 entries = [ named( session, "slow" ) ], envs = [ "plain", "other" ],
                 tags = { "fp": [ "32", "64" ] }, params = { "method": [ "cg", "direct" ] },
                 jobs = 4 )
-            assert argv == [ "run", "--env", "plain,other", "--fp", "32,64", "-j", "4",
+            assert argv == [ "run", "--grid=,", "--env", "plain,other", "--fp", "32,64", "-j", "4",
                              "test_demo.py::slow", "--method", "cg,direct" ], argv
+            # One value of everything is no grid at all.
+            assert session.command( entries = [ named( session, "slow" ) ], envs = [ "plain" ],
+                                    tags = { "fp": [ "32" ] } ) == \
+                   [ "run", "--env", "plain", "--fp", "32", "test_demo.py::slow" ]
+            # A value that holds a comma gets another separator.
+            argv = session.command( entries = [ named( session, "slow" ) ],
+                                    params = { "shape": [ "1,2", "3,4" ] } )
+            assert argv == [ "run", "--grid=+", "test_demo.py::slow", "--shape", "1,2+3,4" ], argv
             # Parameters with no case ticked still need a target to belong to.
             assert session.command( params = { "n": [ "3" ] } ) == [ "run", "**::*", "--n", "3" ]
         finally:
@@ -133,7 +141,7 @@ if test( "the session watches what each place said it would write" ):
         try:
             # Nothing is predicted here: the command writes its plan wherever it
             # runs, before running anything, and that is what is watched.
-            assert session.launch( [ "run", "--env", "plain,other", "test_demo.py::slow",
+            assert session.launch( [ "run", "--env", "plain,other", "--grid=,", "test_demo.py::slow",
                                      "--n", "1,2" ] ) is None
             while session.running:
                 time.sleep( 0.1 )

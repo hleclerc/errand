@@ -10,7 +10,7 @@ is brought back. `--out` puts the runs somewhere else — another tree, or a pat
 `{path}` `{name}` `{when}` `{place}` `{env}` `{params}`:
 
 ```bash
-errand run -o "bench/solvers.py::cost" --n=1000,5000   # errand-outputs/runs/bench/solvers.py/cost/…
+errand run -o --grid=, "bench/solvers.py::cost" --n=1000,5000   # errand-outputs/runs/bench/solvers.py/cost/…
 errand run --out "results/{env}/{when}" train.py       # results/gpu/2026-09-25_18h04m11/
 ```
 

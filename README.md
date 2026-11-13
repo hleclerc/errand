@@ -21,7 +21,7 @@ errand.envs[ "cluster" ] = errand.Env( [ errand.Ssh( host = "gpu-box", root = "~
 errand run --env local pytest                       # created and installed on first use
 errand run --env cluster python train.py --lr 1e-3  # rsync, srun, apptainer, and back
 errand run --env cluster --pull out make results    # ...and out/ comes back here
-errand run --env local,cluster ./bench              # in both places, one after the other
+errand run --grid=, --env local,cluster ./bench              # in both places, one after the other
 errand shell --env cluster                          # be let in, to look around
 errand attach                                       # the laptop closed: pick the run up again
 ```
@@ -77,9 +77,9 @@ the command as `$ERRAND_OUT_DIR`, and fetched back here.
 **Several places at once.** A comma is several environments, and environments carry tags:
 
 ```bash
-errand run --env local,cluster ./bench
+errand run --grid=, --env local,cluster ./bench
 errand run -t cuda ./bench             # every environment tagged cuda
-errand run --fp 32,64 ./bench          # an environment that does not say fp covers both
+errand run --grid=, --fp 32,64 ./bench          # an environment that does not say fp covers both
 ```
 
 ## What you get on top

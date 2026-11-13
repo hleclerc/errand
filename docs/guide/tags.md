@@ -18,7 +18,7 @@ errand run -t 'jax & fp=64 & !remote'  # --env-tags, the expression form
 
 ## Saying nothing means every value
 
-An environment that does not mention `fp` covers every precision, so `--fp 32,64` is **two runs in
+An environment that does not mention `fp` covers every precision, so `--grid=, --fp 32,64` is **two runs in
 it**. One that says `fp = "64"` is only ever selected for that one. A comma on a tag flag always
 means several values, so a tag value cannot hold one.
 
@@ -53,11 +53,11 @@ FTYPE = os.environ.get( "MYPROJ_FTYPE", "FP64" )
 
 ## A tag can select several environments
 
-…and that is the point. A comma is a matrix here exactly as it is on a parameter:
+…and that is the point. Under `--grid`, several values are a matrix here exactly as on a parameter:
 
 ```bash
-errand run -k bench --fp 32,64 "bench/solvers.py::*"         # both precisions
-errand run -k bench --env gpu,cluster "bench/solvers.py::*"  # both machines
+errand run --grid=, -k bench --fp 32,64 "bench/solvers.py::*"         # both precisions
+errand run --grid=, -k bench --env gpu,cluster "bench/solvers.py::*"  # both machines
 errand run -t 'cuda=True'                                    # every cuda environment there is
 ```
 

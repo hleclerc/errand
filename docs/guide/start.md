@@ -41,7 +41,7 @@ errand.envs[ "cluster" ] = errand.Env( [ errand.Ssh( host = "gpu-box", root = "~
 errand envs                                  # what is declared, and in what state
 errand run --env local make check            # the micromamba environment is made first
 errand run --env cluster python train.py     # pushed, allocated, contained, run
-errand run --env local,cluster ./bench       # in both places
+errand run --grid=, --env local,cluster ./bench       # in both places
 errand shell --env cluster                   # be let in, to look
 ```
 

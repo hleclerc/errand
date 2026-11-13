@@ -102,11 +102,13 @@ def _tags_from_env( ) -> dict:
 
 def _targets( args, tag_names ):
     """The environments to run in, one entry per combination of tag values."""
-    names = [ n.strip() for n in args.env.split( "," ) ] if args.env else None
+    sep = getattr( args, "grid", None )
+    names = split_values( args.env, sep, what = "--env" ) if args.env else None
 
     axes = { }
     for name in tag_names:
-        values = split_values( getattr( args, f"tag_{name}", None ) )
+        values = split_values( getattr( args, f"tag_{name}", None ), sep,
+                               what = f"--{name.replace( '_', '-' )}" )
         if values != [ None ]:
             axes[ name ] = values
 

@@ -73,7 +73,7 @@ if test( "the shell comes straight back, and the work carries on", tags = [ "slo
         project = write_project( Path( tmp ) / "proj", "", { "bench_slow.py": SLOW } )
 
         started = time.perf_counter()
-        code, output = run_errand( project, "run", "-o", "--batch", "-k", "bench", "**::*", "--n=1,2" )
+        code, output = run_errand( project, "run", "-o", "--batch", "-k", "bench", "--grid=,", "**::*", "--n=1,2" )
         handed_back = time.perf_counter() - started
 
         assert code == 0, output

@@ -35,23 +35,54 @@ if test( "declared parameters are read anywhere among them; the rest passes thro
     assert raw == [ "--size", "4", "-v", "--", "--n", "9" ], "after `--`, everything is the target's"
 
 
-if test( "a comma is a grid on a declared parameter; the target's own arguments pass as written" ):
-    assert cli.alternatives( "a,b" ) == [ "a", "b" ]
-    assert cli.alternatives( "a,,b" ) == [ "a", "", "b" ]
-    assert cli.alternatives( "x\\,y" ) == [ "x,y" ]
-    assert cli.alternatives( "c:\\dir" ) == [ "c:\\dir" ], "no other backslash means anything"
+if test( "a grid is asked for with --grid=SEP; without it a value is one value" ):
+    assert cli.alternatives( "a,b" ) == [ "a,b" ], "no --grid, no grid"
+    assert cli.alternatives( "a+b", "+" ) == [ "a", "b" ]
+    assert cli.alternatives( "a++b", "+" ) == [ "a", "", "b" ]
+    assert cli.alternatives( "1,2+3,4", "+" ) == [ "1,2", "3,4" ]
+
+    from errand import Param
+    # Without --grid, a comma is part of the value.
+    combos = cli.expand( { "shape": "1,2" }, { "shape": Param( "x" ) } )
+    assert len( combos ) == 1 and combos[ 0 ][ 1 ][ "shape" ] == "1,2"
+    # ... and a number that holds one says how to ask for a grid.
+    try:
+        cli.expand( { "n": "1,2" }, { "n": Param( 1 ) } )
+        raise AssertionError( "1,2 was read as an int" )
+    except ValueError as err:
+        assert "--grid=," in str( err ), err
 
     # A command's words are never rewritten: `-Wl,-rpath` is one argument.
-    combos = cli.expand( { }, { }, [ "--size", "1,2", "-Wl,-rpath", "--mode=a,b" ] )
+    combos = cli.expand( { }, { }, [ "--size", "1+2", "-Wl,-rpath", "--mode=a,b" ], sep = "+" )
     assert len( combos ) == 1
-    assert combos[ 0 ][ 1 ][ cli.ARGS ] == [ "--size", "1,2", "-Wl,-rpath", "--mode=a,b" ]
+    assert combos[ 0 ][ 1 ][ cli.ARGS ] == [ "--size", "1+2", "-Wl,-rpath", "--mode=a,b" ]
 
-    # A declared parameter is the runner's to read, and its comma is an axis.
-    from errand import Param
-    combos = cli.expand( { "n": "1,2" }, { "n": Param( 1 ) }, [ "--tol", "1e-3,1e-6" ] )
+    # A declared parameter is an axis.
+    combos = cli.expand( { "n": "1+2" }, { "n": Param( 1 ) }, [ "--tol", "1e-3,1e-6" ], sep = "+" )
     assert len( combos ) == 2 and combos[ 0 ][ 0 ] == { "n": 1 }
     assert combos[ 0 ][ 1 ][ cli.ARGS ] == [ "--tol", "1e-3,1e-6" ]
     assert "2 runs" in cli.describe_grid( combos )
+
+
+if test( "environments and tags are several only under --grid too" ):
+    from errand.cli.grid import split_values
+    assert split_values( None ) == [ None ]
+    assert split_values( "gpu" ) == [ "gpu" ]
+    assert split_values( "gpu,cluster", "," ) == [ "gpu", "cluster" ]
+    assert split_values( "gpu+cluster", "+" ) == [ "gpu", "cluster" ]
+    assert split_values( [ "gpu+a", "b" ], "+" ) == [ "gpu", "a", "b" ], "setup's words, each split"
+    try:
+        split_values( "gpu,cluster", what = "--env" )
+        raise AssertionError( "a comma without --grid was taken as a name" )
+    except ValueError as err:
+        assert "--env" in str( err ) and "--grid=," in str( err ), err
+
+
+if test( "--grid is errand's: it goes before the target" ):
+    before, target, after = cli.split_target( parser(), [ "--grid=+", "t.py", "--n=1+2" ] )
+    assert before == [ "--grid=+" ] and target == "t.py" and after == [ "--n=1+2" ]
+    known, _ = parser().parse_known_args( before )
+    assert known.grid == "+"
 
 
 WORK = '''
@@ -68,7 +99,7 @@ if test( "a file of errand's gets them as its sys.argv, and a script as its own"
             "test_p.py"      : WORK,
             "scripts/show.py": "import sys\nprint( 'script got', sys.argv[ 1 : ] )\n" } )
 
-        code, output = run_errand( project, "run", "--no-queue", "test_p.py::*", "--n=2,3", "--verbose" )
+        code, output = run_errand( project, "run", "--no-queue", "--grid=+", "test_p.py::*", "--n=2+3", "--verbose" )
         assert code == 0, output
         assert "n is 2 argv ['--n=2', '--verbose']" in output, output
         assert "n is 3 argv ['--n=3', '--verbose']" in output, output
@@ -82,7 +113,7 @@ if test( "a file of errand's gets them as its sys.argv, and a script as its own"
         assert any( "args=--size_4096_--env_gpu" in name for name in leaves ), leaves
 
         # Under -j, each child gets them too.
-        code, output = run_errand( project, "run", "--no-queue", "-j", "2", "test_p.py::*", "--n=4,5", "-x" )
+        code, output = run_errand( project, "run", "--no-queue", "-j", "2", "--grid=,", "test_p.py::*", "--n=4,5", "-x" )
         assert code == 0 and "argv ['--n=4', '-x']" in output and "argv ['--n=5', '-x']" in output, output
 
         # A comma among the script's own arguments is the script's: passed as it was written.

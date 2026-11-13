@@ -181,8 +181,8 @@ def _main( argv = None ):
 
     if verb == "setup":
         if words:
-            # `errand setup gpu,cluster` reads as well as `--env gpu,cluster`.
-            known.env = ",".join( ( [ known.env ] if known.env else [ ] ) + words )
+            # `errand setup gpu cluster` reads as well as `--grid=, --env gpu,cluster`.
+            known.env = ( [ known.env ] if known.env else [ ] ) + words
         try:
             targets = _targets( known, config.tag_names() )
         except ValueError as err:

@@ -46,8 +46,8 @@ command line alone**, never from what the directory looks like.
 **What follows the target is the target's.** errand's options go before it; everything after it —
 `--env` included — is handed to what runs: the `sys.argv` of an errand file, the command line of a
 script, an executable, pytest or Catch2, what follows `--` for `cargo test`. Declared `Param`s are
-read out of it, and there a comma is a [matrix](./matrices): `--n=1,2` is two runs. The rest passes
-through **as written** — `--size 1,2` is one run, given `1,2` — and is part of the run's name, since
+read out of it, and with `--grid=SEP` they make a [matrix](./matrices): `--grid=, … --n=1,2` is two
+runs; without it, `--n=1,2` is one value. The rest passes through **as written** — `--size 1,2` is one run, given `1,2` — and is part of the run's name, since
 `--size 4096` and `--size 8192` are two runs. With no target there is nothing to hand arguments to.
 
 A target that designates nothing is an **error**, not an empty run: a path with no glob must exist,

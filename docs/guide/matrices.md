@@ -27,38 +27,45 @@ A keyword on an entry that is **not** a `Param` has to be a trait or a resource,
 is a `TypeError` saying so — which is what catches `n = 1000` written where
 `n = Param( 1000 )` was meant.
 
-## A comma is a matrix
+## A grid is asked for
 
 ```bash
-errand run bench/solvers.py::cost --n=1000,5000 --method=newton,lbfgs    # 4 runs, 4 directories
+errand run --grid=, bench/solvers.py::cost --n=1000,5000 --method=newton,lbfgs    # 4 runs, 4 directories
 ```
 
-**A comma means a matrix** wherever errand is the one reading — on a declared parameter, on a tag,
-on an environment, on the targets themselves:
+**Several values make a matrix only under `--grid=SEP`**, and SEP is what splits them — on a
+declared parameter, on `--env`, on a tag. Without `--grid`, a value is one value, whatever it holds:
+`--shape=1,2` is the string `1,2`, given to one run. A comma was too common to mean a grid on its
+own -- a tuple, a list, a range, a `1e-3,1e-6` written as one thing -- so the grid is said, and its
+separator chosen to fit the values:
 
 ```bash
-errand run bench/solvers.py::cost --n=1000,5000                             # two parameter values
-errand run --fp 32,64 bench/solvers.py::cost                                # two values of a tag
-errand run --env local,gpu bench/solvers.py::cost                           # two environments
-errand run --env local,gpu train.py,eval.py                                 # two targets, two environments
-errand run --env local,gpu --fp 32,64 bench/solvers.py::cost --n=1000,5000  # eight runs
+errand run --grid=, bench/solvers.py::cost --n=1000,5000                             # two parameter values
+errand run --grid=+ bench/shapes.py::grid --shape=1,2+3,4                            # two values, each with a comma
+errand run --grid=, --fp 32,64 bench/solvers.py::cost                                # two values of a tag
+errand run --grid=, --env local,gpu bench/solvers.py::cost                           # two environments
+errand run --grid=, --env local,gpu --fp 32,64 bench/solvers.py::cost --n=1000,5000  # eight runs
 ```
+
+`--grid` is errand's: it goes **before** the target, like `--env`, and one separator serves the
+whole command. A value without the separator is one value: `--grid=, … --n=1000,5000 --tol=1e-6`
+is two runs. SEP twice is an empty value: `--grid=, … --suffix=,_fast` is two runs, one with an
+empty suffix. There is no escape -- a value that holds the separator asks for another separator.
+A comma without `--grid` where it cannot be one value -- a number, an environment name, a tag
+value -- is an error that says how to ask for the grid, rather than a surprise.
+
+The targets keep their own commas: `train.py,eval.py` is two targets, `--grid` or not, since a
+target word is a pattern ( `{a,b}` included ) and not a value.
 
 Each value is an axis, the cartesian product is run, and every combination gets its own record, in
 [its own directory](./output), so the results sit side by side. When there is more than
 one run, the grid is said once before anything starts — `4 runs: n = 1000 | 5000, method = newton |
-lbfgs` — so a comma that was not meant as one is seen in time.
+lbfgs` — so a grid that was not meant as one is seen in time.
 
-**An argument nobody declared is not a matrix.** What follows a script or a command is its own, and
-passes through as written: `errand run scripts/sweep.sh --size 1024,4096` is one run, given
-`1024,4096`, and `-Wl,-rpath` or `python -c "f( 1, 2 )"` mean what they say. To sweep a script, loop
-in the shell, or declare the parameter on an [entry](./declaring-work). For the same reason a comma
-cannot appear in an environment name or a tag value.
-
-On a declared parameter, **`\,` is a comma**, and only a comma: `--tol 1e-3\,1e-6` is one value with a
-comma in it ( quote it, or write `\\,`, so the shell leaves the backslash ). **`,,` is an empty
-value**: `--suffix=,_fast` is two runs, one with an empty suffix. No other backslash means anything.
-On an `--option=value`, the comma is in the value: `--mode=a,b` is `--mode=a`, then `--mode=b`.
+**An argument nobody declared is not a matrix**, `--grid` or not. What follows a script or a command
+is its own, and passes through as written: `errand run scripts/sweep.sh --size 1024,4096` is one
+run, given `1024,4096`, and `-Wl,-rpath` or `python -c "f( 1, 2 )"` mean what they say. To sweep a
+script, loop in the shell, or declare the parameter on an [entry](./declaring-work).
 
 This works on **any** entry, tests included: sweeping a test across four environments is a perfectly
 good thing to want, and often the thing you most want.
@@ -92,9 +99,9 @@ Three things cross, and they cross together:
 
 | axis | spelled | lands in the name as |
 |---|---|---|
-| a parameter | `--n=1000,5000` | `n=1000` |
-| a [tag](./tags) | `--fp 32,64` | part of the environment's identity |
-| an [environment](./environments) | `--env local,gpu` | `{env}@{host}` |
+| a parameter | `--grid=, … --n=1000,5000` | `n=1000` |
+| a [tag](./tags) | `--grid=, --fp 32,64` | part of the environment's identity |
+| an [environment](./environments) | `--grid=, --env local,gpu` | `{env}@{host}` |
 
 Crossing a tag with an environment does *not* multiply blindly: an environment that pins
 `fp = "64"` is simply not selected by `--fp 32`, and one that says nothing about `fp` covers every
@@ -109,9 +116,10 @@ ssh](/guide/layers/ssh) and a [detached](./detached) one alike.
 
 ## On a screen
 
-[`errand tui`](./tui) builds the same comma. Enter on a case opens a window with every dimension
+[`errand tui`](./tui) builds the same command. Enter on a case opens a window with every dimension
 in it — environments, tags, parameters, how many at once — and ticking two of anything is a matrix,
-for exactly the reason a comma is. Below the rule the window shows the command it is about to run,
+written as a `--grid` whose separator no ticked value holds. In a typed field, a comma is several
+values, as two ticks are. Below the rule the window shows the command it is about to run,
 so the day you want it in a script you already know what to write.
 
 ## Next

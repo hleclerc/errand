@@ -36,7 +36,7 @@ FTYPE = [ errand.Vars( lambda t: { "DEMO_FTYPE": f"FP{ t.get( 'fp', '64' ) }" } 
 # --cuda, --fp), and an environment that omits one matches any value of it.
 #
 # Nothing says `fp` below: an environment that does not mention a dimension
-# covers every value of it, so `--fp 32,64` is two runs in ONE environment.
+# covers every value of it, so `--grid=, --fp 32,64` is two runs in ONE environment.
 # `cluster` pins it, and is therefore not selected by `--fp 32`.
 
 errand.envs[ "local" ] = errand.Env(

@@ -79,7 +79,8 @@ def prepare_here( env, tags, verb, known, *, root, out_root, report, kinds ):
         return ( 1 if discovery.broken else 0 ), None
 
     try:
-        combos = expand( { n: raw_values.get( n ) for n in declared }, declared, raw )
+        combos = expand( { n: raw_values.get( n ) for n in declared }, declared, raw,
+                         sep = getattr( known, "grid", None ) )
         how_many = job_count( known.jobs )
     except ValueError as err:
         print( bad( str( err ) ) )

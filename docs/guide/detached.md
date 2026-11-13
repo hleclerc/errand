@@ -4,7 +4,7 @@
 the same thing in every context, and what changes is only how each one lets go.
 
 ```bash
-errand run --batch -k bench --env gpu,cluster --fp 32,64
+errand run --grid=, --batch -k bench --env gpu,cluster --fp 32,64
   submitted b7f3 - 8 run(s) - 4 on login.hpc (batch 918273), 4 on this machine (local 41288)
   errand status    errand watch
 ```
@@ -50,7 +50,7 @@ errand forget b7f3  # drop a submission from the list, keeping its results
 ```
 
 ```text
-b7f3  -k bench --fp 32,64 --env gpu,cluster   2026-09-24 12:04   6/8 [######  ]
+b7f3  --grid=, -k bench --fp 32,64 --env gpu,cluster   2026-09-24 12:04   6/8 [######  ]
     gpu: local 41288 on this machine - finished
     cluster: batch 918273 on login.hpc - running
                         gpu@thishost            cluster@node15

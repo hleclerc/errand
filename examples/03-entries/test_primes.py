@@ -30,9 +30,9 @@ if test( "the two agree", tags = [ "slow" ] ):
 # runs -- so nothing else that errand launched is competing for the cache.
 #
 #   errand run -k bench
-#   errand run test_primes.py::sieve --n=100000,1000000        <- two runs, two directories
+#   errand run --grid=, test_primes.py::sieve --n=100000,1000000        <- two runs, two directories
 #
-# A comma is a matrix. Here it gives one row per size in the summary that sits
+# `--grid=,` makes the comma a matrix. Here it gives one row per size in the summary that sits
 # at the entry's root.
 
 if p := bench( "sieve", n = Param( 100_000, help = "upper bound" ) ):

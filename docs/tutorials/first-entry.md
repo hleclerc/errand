@@ -121,10 +121,10 @@ this directory declares nothing, so it only prints the help.
 are not `bulk`, so you name them, or ask for `-k bench`. The experiment likewise. Numbers worth
 keeping are not something you want produced by accident.
 
-A comma on a parameter is a matrix:
+With `--grid`, several values of a parameter are a matrix:
 
 ```bash
-errand run -o -k bench '**::*' --n=100000,1000000,10000000
+errand run -o -k bench --grid=, '**::*' --n=100000,1000000,10000000
 ```
 
 Three runs, three directories under `errand-outputs/runs/` — `-o` lets each write its own files

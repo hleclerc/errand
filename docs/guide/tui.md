@@ -124,7 +124,7 @@ Enter on a case asks the only question left: where, with which tags, with which 
  │   -j       1                                             how many at once     │
  │   --batch  [ ] detach                                 outlives this window    │
  │   ─────────────────────────────────────────────────────────────────────────   │
- │   errand run --env local,gpu --fp 32,64 bench/shapes.py::solve --n 1000,5000        │
+ │ errand run --grid=, --env local,gpu --fp 32,64 shapes.py::solve --n 1000,5000│
  ╰───────────────────────────────────────────────────────────────────────────────╯
    space ticks · ←→ picks · type into a field · enter runs · esc gives up
 ```

@@ -59,6 +59,8 @@ runner's business: a runner may read a comma as an axis (errand's `Param`, a run
 is a grid everywhere", whose cost (`-Wl,-rpath`, `python -c "f(1,2)"`) fell on exactly the commands
 errand now puts first.
 
+Narrowed again by [ADR 0007](./0007-a-grid-is-asked-for): a grid, on environments, tags and parameters, needs `--grid=SEP`.
+
 ## What is written
 
 **Always**, a light private record — command, environment, place, date, status, duration, output,

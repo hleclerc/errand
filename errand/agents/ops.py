@@ -28,7 +28,8 @@ MARK = "\x1eerrand-op "
 
 # What a session is told of the command line: everything that decides what runs and how.
 KNOWN = ( "pattern", "entry_tags", "from_default", "runner", "target_args", "jobs", "no_queue", "cpus", "ram",
-          "gpus", "ranks", "exclusive", "label", "log", "quiet", "keep_out", "out", "mem", "from_plan", "phase" )
+          "gpus", "ranks", "exclusive", "label", "log", "quiet", "keep_out", "out", "mem", "from_plan", "phase",
+          "grid" )
 
 
 def say( what: dict ):

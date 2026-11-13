@@ -23,10 +23,10 @@ errand list '**::*'                    # what matched, with the parameters it ta
 `'**::*'` is every entry under here. There is no `errand-project.py`, so no `errand.default_run`, and
 a bare `errand run` only prints the help.
 
-A comma on a parameter is a matrix:
+With `--grid`, several values of a parameter are a matrix:
 
 ```bash
-errand run -o -k bench '**::*' --n=100000,1000000,10000000
+errand run -o -k bench --grid=, '**::*' --n=100000,1000000,10000000
 ```
 
 Three runs, three directories under `errand-outputs/runs/` — `-o` lets each write its own files there —

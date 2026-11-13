@@ -95,9 +95,9 @@ if test( "an override that cannot be read says so" ):
         assert False, "a bad value must not silently become the default"
 
 
-if test( "a comma is a matrix" ):
+if test( "with a separator, several values are a matrix" ):
     params = { "n": Param( 1 ), "m": Param( "a" ) }
-    combos = expand( { "n": "1,2", "m": "x,y" }, params )
+    combos = expand( { "n": "1,2", "m": "x,y" }, params, sep = "," )
     assert len( combos ) == 4
     assert { tuple( sorted( ( k, v ) for k, v in values.items() if k != "args" ) ) for _, values in combos } == {
         ( ( "m", "x" ), ( "n", 1 ) ), ( ( "m", "y" ), ( "n", 1 ) ),
@@ -107,7 +107,7 @@ if test( "a comma is a matrix" ):
 
 if test( "only what actually varied is called out" ):
     params = { "n": Param( 1 ), "m": Param( "a" ) }
-    combos = expand( { "n": "1,2", "m": "x" }, params )
+    combos = expand( { "n": "1,2", "m": "x" }, params, sep = "," )
     assert [ sorted( varied ) for varied, _ in combos ] == [ [ "n" ], [ "n" ] ]
 
 
@@ -118,7 +118,7 @@ if test( "no override at all is one silent combination" ):
 if test( "choices are checked before anything runs" ):
     params = { "m": Param( "cg", choices = [ "cg", "direct" ] ) }
     try:
-        expand( { "m": "cg,newton" }, params )
+        expand( { "m": "cg,newton" }, params, sep = "," )
     except ValueError as err:
         assert "newton" in str( err )
     else:

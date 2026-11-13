@@ -144,7 +144,9 @@ class Dialog:
             elif option.name == "jobs":
                 jobs = int( typed ) if typed.isdigit() else 1
             elif typed:
-                params[ option.name[ 1 ] ] = [ typed ]
+                # In a field, a comma is several values, as two ticks are: the
+                # command it becomes says so with a `--grid`.
+                params[ option.name[ 1 ] ] = [ v.strip() for v in typed.split( "," ) if v.strip() ]
         return self.session.command( entries = self.cases, envs = envs, tags = tags,
                                      params = params, jobs = jobs, batch = detach )
 

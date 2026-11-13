@@ -145,15 +145,28 @@ class Session:
                  jobs = 1, batch = False ):
         """-> the argv of the errand command those choices mean.
 
-        A comma is a matrix, and a second tick is a comma: this is where the
-        one becomes the other, and it is the whole of what a dialog does.
+        A second tick is a matrix, and a matrix is a `--grid`: this is where
+        the one becomes the other, and it is the whole of what a dialog does.
         """
-        out = [ "run" ]
-        if envs:
-            out += [ "--env", ",".join( envs ) ]
-        for name, values in sorted( ( tags or { } ).items() ):
+        # Two ticks of anything is a grid, which `--grid` asks for, with a
+        # separator none of the values holds -- one for the whole command.
+        chosen = { }
+        for name, values in sorted( ( params or { } ).items() ):
+            values = values if isinstance( values, ( list, tuple ) ) else [ values ]
+            values = [ str( v ).strip() for v in values if str( v ).strip() ]
             if values:
-                out += [ f"--{name.replace( '_', '-' )}", ",".join( str( v ) for v in values ) ]
+                chosen[ name ] = values
+        tags = { n: [ str( v ) for v in vs ] for n, vs in sorted( ( tags or { } ).items() ) if vs }
+        envs = [ str( e ) for e in envs ]
+        axes = [ envs, *tags.values(), *chosen.values() ]
+        sep = None
+        if any( len( a ) > 1 for a in axes ):
+            sep = cli.separator_for( [ x for a in axes for x in a ] )
+        out = [ "run" ] + ( [ f"--grid={sep}" ] if sep else [ ] )
+        if envs:
+            out += [ "--env", ( sep or "" ).join( envs ) ]
+        for name, values in tags.items():
+            out += [ f"--{name.replace( '_', '-' )}", ( sep or "" ).join( values ) ]
         if jobs and int( jobs ) > 1:
             out += [ "-j", str( int( jobs ) ) ]
         if batch:
@@ -162,11 +175,8 @@ class Session:
         # the parameters are its arguments. Parameters with no case ticked are
         # for everything here, which `**::*` says.
         given = [ ]
-        for name, values in sorted( ( params or { } ).items() ):
-            values = values if isinstance( values, ( list, tuple ) ) else [ values ]
-            joined = ",".join( str( v ).strip() for v in values if str( v ).strip() )
-            if joined:
-                given += [ f"--{name.replace( '_', '-' )}", joined ]
+        for name, values in chosen.items():
+            given += [ f"--{name.replace( '_', '-' )}", ( sep or "" ).join( values ) ]
         pattern = self.pattern_for( list( entries ) )
         if pattern or given:
             out.append( pattern or "**::*" )
@@ -257,7 +267,7 @@ class Session:
             for e in entries:
                 declared.update( e.params )
             raw_values, raw = cli.split_args( after, declared )
-            combos = cli.expand( { n: raw_values.get( n ) for n in declared }, declared, raw )
+            combos = cli.expand( { n: raw_values.get( n ) for n in declared }, declared, raw, sep = known.grid )
             parsed = known
             targets = cli._targets( parsed, config.tag_names() )
             return cli.plan_of( targets, entries, combos,

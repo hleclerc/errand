@@ -81,7 +81,7 @@ if test( "a round trip brings the results back", tags = [ "ssh", "slow" ] ):
             PROJECT.format( host = host, root = remote_root, options = options ),
             { "bench_work.py": WORK }, vendor = True,
         )
-        code, output = run_errand( project, "run", "-o", "-k", "bench", "--env", "over-there", "**::*", "--n", "3,4" )
+        code, output = run_errand( project, "run", "-o", "-k", "bench", "--env", "over-there", "--grid=,", "**::*", "--n", "3,4" )
         assert code == 0, output
 
         # The run happened over there -- and what it produced is HERE, at the

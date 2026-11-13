@@ -71,12 +71,12 @@ if test( "the same results, whichever shape it ran in", tags = [ "slow" ] ):
     with tempfile.TemporaryDirectory() as tmp:
         project = write_project( Path( tmp ) / "proj", "", { "bench_p.py": PARAMETRIZED } )
 
-        code, _ = run_errand( project, "run", "-o", "-k", "bench", "**::*", "--n=1,2,3" )
+        code, _ = run_errand( project, "run", "-o", "-k", "bench", "--grid=,", "**::*", "--n=1,2,3" )
         assert code == 0
         serial = { str( p.relative_to( project ) ): yamlish.read( p )[ "results" ]
                    for p in sorted( ( project / "errand-outputs" / "runs" ).rglob( "result.yaml" ) ) }
 
-        code, _ = run_errand( project, "run", "-o", "-k", "bench", "-j", "3", "**::*", "--n=1,2,3" )
+        code, _ = run_errand( project, "run", "-o", "-k", "bench", "-j", "3", "--grid=,", "**::*", "--n=1,2,3" )
         assert code == 0
         parallel = { str( p.relative_to( project ) ): yamlish.read( p )[ "results" ]
                      for p in sorted( ( project / "errand-outputs" / "runs" ).rglob( "result.yaml" ) ) }

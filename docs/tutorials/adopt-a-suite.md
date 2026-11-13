@@ -43,7 +43,7 @@ errand run '**::*'                      # all three suites
 errand run "tests/test_api.py::*"       # the python ones
 errand run cpp/test_geometry.cpp::area  # one Catch2 case, by name
 errand run -e '!slow' '**::*'           # pytest marks are entry tags
-errand run --env local,old '**::*'      # every suite, both python versions
+errand run --grid=, --env local,old '**::*'      # every suite, both python versions
 errand run pytest tests/                # the pytest command itself, in the place, recorded
 ```
 

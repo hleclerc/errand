@@ -170,7 +170,7 @@ if test( "a run inside a container comes back out", tags = [ "container", "slow"
             files = { "bench_work.py": WORK }
 
         project = write_project( root, config, files, vendor = True )
-        code, output = run_errand( project, "run", "-o", "-k", "bench", "--env", "boxed", "**::*", "--n=2,3" )
+        code, output = run_errand( project, "run", "-o", "-k", "bench", "--env", "boxed", "--grid=,", "**::*", "--n=2,3" )
         assert code == 0, output
 
         leaves = sorted( ( project / "errand-outputs" / "runs" ).rglob( "result.yaml" ) )

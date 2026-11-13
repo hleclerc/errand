@@ -35,7 +35,7 @@ than a way in:
 - **Files cross with the work.** Over `Ssh` the project is rsynced there before the command runs;
   `--pull DIR` brings a directory back afterwards, `-o` gives each run an output directory over
   there and fetches it, and `also` pushes the sibling checkouts the work needs.
-- **Several at once.** `--env local,cluster` is two runs; a tag picks every environment that has
+- **Several at once.** `--grid=, --env local,cluster` is two runs; a tag picks every environment that has
   it, and one environment can cover several values of a tag.
 
 → [Environments](./environments), [Keeping them current](./upkeep), [Tags](./tags),

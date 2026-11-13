@@ -96,7 +96,7 @@ reported back — and the environment is prepared first, by the same rules as a 
 ## Take the number, in both places
 
 ```bash
-errand run -o --env here,there bench/solvers.py::cost --n=100000
+errand run --grid=, -o --env here,there bench/solvers.py::cost --n=100000
 ```
 
 ```text
@@ -128,7 +128,7 @@ One row per run, with the extents across them. That file is recomputed from the 
 ## Make it a sweep, and let go of it
 
 ```bash
-errand run --batch --env here,there bench/solvers.py::cost --n=100000,1000000 --method=newton,lbfgs
+errand run --grid=, --batch --env here,there bench/solvers.py::cost --n=100000,1000000 --method=newton,lbfgs
   submitted 4c1e - 8 run(s) - 4 on bigbox.lab.example, 4 on this machine
   errand status    errand watch
 ```
@@ -141,7 +141,7 @@ errand watch
 ```
 
 ```text
-4c1e  "solvers::cost" --env here,there --n=1e5,1e6 --method=newton,lbfgs   6/8 [######  ]
+4c1e  "solvers::cost" --grid=, --env here,there --n=1e5,1e6 --method=newton,lbfgs   6/8 [######  ]
     here:  local 41288 on this machine - finished
     there: ssh 20114 on bigbox.lab.example - running
                                    here@laptop         there@bigbox
@@ -162,7 +162,7 @@ sync.
 ## A month later
 
 ```bash
-errand run -o --env here,there bench/solvers.py::cost --n=100000
+errand run --grid=, -o --env here,there bench/solvers.py::cost --n=100000
 cat errand-outputs/runs/bench/solvers.py/cost/summary.yaml
 ```
 

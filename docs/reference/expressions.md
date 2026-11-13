@@ -70,5 +70,5 @@ It **selects**; it does not configure. An environment that satisfies `fp=32` is 
 what the child process then *sees* is a [`Vars` layer's](/guide/tags#tags-only-select) business.
 
 And remember that **saying nothing means every value**: an environment that never mentions `fp` is
-selected by `--fp 32` and by `--fp 64` alike, so `--fp 32,64` is two runs in it. An environment that
+selected by `--fp 32` and by `--fp 64` alike, so `--grid=, --fp 32,64` is two runs in it. An environment that
 pins `fp = "64"` is only ever selected for that one.

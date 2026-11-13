@@ -12,7 +12,7 @@ A layer may do three things, and only the first is required:
 
 `Vars` and the tags of an environment are deliberately different things: a tag
 SELECTS an environment, a layer ACTS once it is chosen. Keeping them apart is
-what lets `--fp 32,64` mean two runs rather than one variable written twice.
+what lets `--grid=, --fp 32,64` mean two runs rather than one variable written twice.
 
 One file per family:
 

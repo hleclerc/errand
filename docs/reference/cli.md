@@ -31,9 +31,9 @@ target is the target's: `errand --env gpu run t.py` and `errand run --env gpu t.
 
 | flag | |
 |---|---|
-| `--env NAME[,NAME…]` | environment(s) by name. A comma is a matrix, which is why a name cannot hold one |
+| `--env NAME` | the environment by name; several under `--grid` ( `--grid=, --env a,b` ), which is why a name cannot hold a comma |
 | `-t`, `--env-tags` | an [expression](./expressions) over environment tags |
-| `--<tag> VALUE` | one flag per tag name used anywhere in the `errand-*.py` files. A comma is a matrix |
+| `--<tag> VALUE` | one flag per tag name used anywhere in the `errand-*.py` files. Several values under `--grid` |
 | `--root PATH` | the project root. Default: found by walking up from the cwd for an `errand-*.py` |
 | `-h`, `--help` | the help; after a verb, that verb's |
 | `-V`, `--version` | which errand this is |
@@ -72,6 +72,7 @@ none declared it prints this help.
 | flag | |
 |---|---|
 | `-j N`, `--jobs N` | N entries at a time, one process each. `auto` means as many as the machine has cores. Default 1 |
+| `--grid SEP` | several values, split on SEP, make a [matrix](/guide/matrices) — of environments, tags and declared parameters: `--grid=+ --env a+b t.py::x --n=1+2` is four runs. Without it a value is one value, commas included. `run`, `list`, `setup`, `shell` |
 | `--batch` | launch and give the shell back — [detached](/guide/detached) |
 | `-o` | an output directory of its own for each run — the run's directory under `errand-outputs/runs/` — exported as `$ERRAND_OUT_DIR`, and what it holds brought back |
 | `--out PATTERN` | the same under another tree, or a pattern: `"results/{env}/{when}"`, with `{path}` `{name}` `{when}` `{place}` `{env}` `{params}` |
@@ -122,7 +123,7 @@ errand shell --env gpu
 
 | flag | |
 |---|---|
-| `setup NAME,…` | the same as `--env NAME,…`; with neither, the default environment |
+| `setup NAME …` | the same as `--grid=, --env NAME,…`; with neither, the default environment |
 | `--force` | `setup`: rebuild from scratch. `init`: replace an existing `errand-project.py` |
 | `--dry-run` | `setup`: say what it would run, and run nothing |
 
@@ -136,9 +137,9 @@ active until you uncomment it; `run` itself never guesses. It never overwrites w
 ```bash
 errand run                         # errand.default_run, default environment
 errand list "bench/solvers.py::*"  # what would run, and with which parameters
-errand run -k bench --env gpu,cluster --fp 32,64 --batch '**::*'
+errand run --grid=, -k bench --env gpu,cluster --fp 32,64 --batch '**::*'
 errand watch
-errand run -j 4 bench/solvers.py::cost --n=1000,5000
+errand run -j 4 --grid=, bench/solvers.py::cost --n=1000,5000
 errand run -e 'slow & !gpu' -t 'cuda & !remote' '**::*'
 errand run --env cluster nvidia-smi
 errand run -o --env gpu train.py --epochs 3

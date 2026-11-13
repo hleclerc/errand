@@ -141,9 +141,9 @@ that omits a name matches **any** value of it.
 ## Running in several places at once
 
 ```bash
-errand run --env local,gpu "bench_solver.py::*"
-errand run --fp 32,64 "bench_solver.py::*"
-errand run -o --env local,gpu "bench_solver.py::*" --n=10000,100000  # 4 runs, side by side
+errand run --grid=, --env local,gpu "bench_solver.py::*"
+errand run --grid=, --fp 32,64 "bench_solver.py::*"
+errand run --grid=, -o --env local,gpu "bench_solver.py::*" --n=10000,100000  # 4 runs, side by side
 errand run -t 'cuda=True' "bench_solver.py::*"                       # every cuda environment there is
 ```
 
@@ -168,7 +168,7 @@ which is the whole reason you declared two.
 ## Leaving it to run
 
 ```bash
-errand run --batch --env gpu,cluster --fp 32,64 "bench_solver.py::*"
+errand run --grid=, --batch --env gpu,cluster --fp 32,64 "bench_solver.py::*"
   submitted b7f3 · 8 runs · 4 on login.hpc (slurm 918273…918276), 4 local
 
 errand watch
@@ -184,7 +184,7 @@ else about the run changes — same paths, same queue, same output.
   mentions `fp`, so every one covers every precision;
   `Vars( lambda t: { "DEMO_FTYPE": f"FP{ t.get( 'fp', '64' ) }" } )` is what the child then sees.
   Without the callable form there would be a `local32` beside every `local` and a `gpu32` beside
-  every `gpu`, with the precision written twice in each. `--fp 32,64` is two runs *in one
+  every `gpu`, with the precision written twice in each. `--grid=, --fp 32,64` is two runs *in one
   environment*.
 - **`cluster` pins `fp = "64"`**, so `--fp 32` simply does not select it. Saying nothing means every
   value; saying one means only that one.

@@ -39,8 +39,9 @@ if test( "it converges" ):
 #
 #   errand run -k bench                                     the default environment
 #   errand run --env gpu bench_solver.py                    one, by name
-#   errand run --fp 32,64 bench_solver.py                   a matrix over a tag
-#   errand run --env local,gpu bench_solver.py --n=1e4,1e5  two axes, four runs
+#   errand run --grid=, --fp 32,64 bench_solver.py          a matrix over a tag
+#   errand run --grid=, --env local,gpu bench_solver.py --n=1e4,1e5
+#                                                           two axes, four runs
 #   errand run -t 'cuda=True' bench_solver.py               every cuda environment
 #
 # `bench` takes the machine to itself while it runs. Other errands on this host
@@ -65,7 +66,7 @@ if p := bench( "warm cache probe", exclusive = False, cpus = 2, ram = "1G" ):
 
 # --- something to look at ---------------------------------------------------
 #
-#   errand run -k exp --env local,gpu
+#   errand run --grid=, -k exp --env local,gpu
 #
 # Two environments, two directories, two pictures to put side by side -- and a
 # `latest/` symlink in each, so the tabs stay valid.

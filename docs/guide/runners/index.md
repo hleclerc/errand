@@ -11,7 +11,7 @@ errand run '**::*'                      # every suite found under here
 errand run "tests/test_api.py::*"       # the tests of that file
 errand run cpp/test_geometry.cpp::area  # one Catch2 case, by name
 errand run -e '!slow' '**::*'           # pytest marks are entry tags
-errand run --env local,old '**::*'      # every suite, both python versions
+errand run --grid=, --env local,old '**::*'      # every suite, both python versions
 errand run scripts/plot.py              # a script, recorded like the rest
 ```
 

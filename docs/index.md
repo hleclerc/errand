@@ -71,7 +71,7 @@ Then go there:
 errand run --env local pytest                    # micromamba env created and installed first
 errand run --env cluster python train.py         # pushed, allocated, contained, run
 errand run --env cluster --pull out make results # ...and out/ comes back
-errand run --env local,cluster ./bench           # in both places
+errand run --grid=, --env local,cluster ./bench           # in both places
 errand run --batch --env cluster train.py        # and give me the shell back
 errand shell --env cluster                       # be let in, to look around
 errand attach                                    # the laptop closed: pick the run up again
@@ -97,7 +97,7 @@ errand run -o --env cluster ./simulate   # a directory per run, $ERRAND_OUT_DIR,
 ```
 
 ```bash [pytest]
-errand run --env local,cluster 'tests/**::*'   # one entry per test, in both places
+errand run --grid=, --env local,cluster 'tests/**::*'   # one entry per test, in both places
 errand run tests/test_api.py::test_ok          # one of them
 errand run -e '!slow' 'tests/**::*'            # @pytest.mark.slow is an entry tag
 ```

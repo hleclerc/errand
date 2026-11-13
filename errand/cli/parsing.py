@@ -19,13 +19,13 @@ KINDS = { "test": "test", "bench": "bench", "experiment": "experiment", "exp": "
 VERBS = {
     "run"   : ( "run a file, a command or entries, in one or several environments",
                 [ "runner", "kind", "entry_tags", "jobs", "no_queue", "no_setup", "batch", "keep_out",
-                  "out", "pull", "exclusive", "cpus", "ram", "gpus", "ranks", "time", "mem", "label", "quiet", "log",
+                  "out", "grid", "pull", "exclusive", "cpus", "ram", "gpus", "ranks", "time", "mem", "label", "quiet", "log",
                   "at" ] ),
     "list"  : ( "what a target designates, with its parameters",
-                [ "runner", "kind", "entry_tags", "no_setup" ] ),
-    "shell" : ( "an interactive shell in an environment", [ "pull", "no_setup" ] ),
+                [ "runner", "kind", "entry_tags", "grid", "no_setup" ] ),
+    "shell" : ( "an interactive shell in an environment", [ "grid", "pull", "no_setup" ] ),
     "envs"  : ( "the declared environments, and the state they are in", [ ] ),
-    "setup" : ( "build or update environments now, and nothing else", [ "force", "dry_run" ] ),
+    "setup" : ( "build or update environments now, and nothing else", [ "grid", "force", "dry_run" ] ),
     "init"  : ( "write a starting errand-envs.py, and suggest runners for what is here", [ "force" ] ),
     "tui"   : ( "the screen: tick what to run, watch each case as it talks", [ ] ),
     "queue" : ( "what this machine has, and what is holding it", [ ] ),
@@ -49,7 +49,7 @@ def build_parser( tag_names = ( ) ):
     p.add_argument( "pattern", nargs = "?", help = "what to run: a file, a command, or path::entry ( globs on both sides ), comma-separated" )
 
     # everybody's
-    p.add_argument( "--env", default = None, help = "environment(s) by name, comma-separated" )
+    p.add_argument( "--env", default = None, help = "the environment by name; several under --grid=SEP" )
     p.add_argument( "-t", "--env-tags", default = None, help = "choose environments by tag expression" )
     p.add_argument( "--root", default = None, help = "project root (default: found from the cwd)" )
     p.add_argument( "-h", "--help", action = "store_true", help = "this help; after a verb, that verb's" )
@@ -65,6 +65,9 @@ def build_parser( tag_names = ( ) ):
     p.add_argument( "-e", "--entry-tags", default = None, help = "filter entries by tag expression" )
     p.add_argument( "-j", "--jobs", default = "1",
                     help = "how many entries at once: a number, or `auto`" )
+    p.add_argument( "--grid", default = None, metavar = "SEP",
+                    help = "several values make a matrix, split on SEP -- environments, tags, parameters: "
+                           "--grid=+ --env a+b t.py::x --n=1+2 is four runs ( without it, a value is one value )" )
     p.add_argument( "--batch", action = "store_true", help = "launch it and give the shell back" )
     p.add_argument( "-o", dest = "keep_out", action = "store_true",
                     help = "an output directory for each run, brought back: errand-outputs/runs/… ( $ERRAND_OUT_DIR )" )
@@ -105,7 +108,7 @@ def build_parser( tag_names = ( ) ):
 
     for name in tag_names:
         p.add_argument( f"--{name.replace( '_', '-' )}", dest = f"tag_{name}", default = None,
-                        help = f"environments whose {name} tag matches (comma = matrix)" )
+                        help = f"environments whose {name} tag matches ( several under --grid=SEP )" )
     return p
 
 
