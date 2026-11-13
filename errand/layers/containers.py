@@ -44,6 +44,11 @@ class Apptainer( Container, Artefact ):
     exe        : str = "apptainer"
     when       : str | None = None
 
+    # `apptainer exec` mounts the image ( squashfuse ) for as long as the process it
+    # started runs: an agent detached from it would keep running on an unmounted image
+    # ( `Transport endpoint is not connected` on its own interpreter ).
+    agent_may_detach = False
+
     @property
     def container( self ):
         return Path( self.image ).name

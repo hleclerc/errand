@@ -164,6 +164,46 @@ if test( "an agent with nothing to do goes, and takes its socket with it" ):
         assert not ( Path( d ) / "sock" ).exists(), "the agent stayed"
 
 
+def attached( d ):
+    """An environment agent behind a layer it may not outlive ( apptainer ): a child of its bridge."""
+    argv = [ sys.executable, "-m", "errand.agents", "connect", str( d ), "5", "attached" ]
+    return { "kind": "cmd", "id": f"here:attached:{d}", "argv": argv, "keep_alive": 5 }
+
+
+def gone( pid, within = 10 ):
+    deadline = time.monotonic() + within
+    while time.monotonic() < deadline:
+        try:
+            os.kill( pid, 0 )
+        except OSError:
+            return True
+        time.sleep( 0.1 )
+    return False
+
+
+if test( "an attached agent is its bridge's own, and goes with it, what it started too" ):
+    agents = fresh()
+    with scratch() as d:
+        os.environ[ "PYTHONPATH" ] = os.pathsep.join( p for p in ( str( ROOT ), os.environ.get( "PYTHONPATH" ) ) if p )
+        conn = agents.open( attached( d ) )
+        pid = conn.ping()[ "pid" ]
+        assert agents.shell( conn, "echo inside", capture = True ).stdout.strip() == "inside"
+        agents.start( conn, [ "sh", "-c", f"echo $$ > {d}/kept; exec sleep 60" ] )
+        deadline = time.monotonic() + 10
+        while not ( Path( d ) / "kept" ).exists() and time.monotonic() < deadline:
+            time.sleep( 0.05 )
+        time.sleep( 0.1 )
+        kept = int( ( Path( d ) / "kept" ).read_text() )
+        agents._open.clear()
+        other = agents.open( attached( d ) )
+        assert other.ping()[ "pid" ] != pid, "another bridge reached the first one's agent: it would lose it"
+        other.close()
+        conn.close()
+        assert gone( pid ), "the agent outlived its bridge"
+        assert not list( Path( d ).glob( "attached-*" ) ), "an attached agent left its directory"
+        assert gone( kept ), "what it started outlived it"
+
+
 HUB = """
 import os, sys
 sys.path.insert( 0, {root!r} )

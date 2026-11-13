@@ -382,14 +382,29 @@ def load( root: Path, warn = None ) -> bool:
     if not files:
         _root_runners( root )
         return False
+    package = _root_package( root )
     for path in files:
         spec = importlib.util.spec_from_file_location(
-            "_errand_" + re.sub( r"\W", "_", path.stem ), path )
+            f"{package}._errand_" + re.sub( r"\W", "_", path.stem ), path )
         module = importlib.util.module_from_spec( spec )
         spec.loader.exec_module( module )
         local.offer( module )
     _root_runners( root )
     return True
+
+
+def _root_package( root: Path ) -> str:
+    """A private package whose directory is the root, freshly made: the project files are its
+    modules, so that `from .helpers import X` reads `helpers.py` beside them ( nothing put on
+    `sys.path`, where it could shadow a module of the same name )."""
+    import hashlib, types
+    name = "_errand_root_" + hashlib.sha1( str( Path( root ).resolve() ).encode() ).hexdigest()[ :12 ]
+    for key in [ k for k in sys.modules if k == name or k.startswith( name + "." ) ]:
+        del sys.modules[ key ]           # read again at each load, like the project files
+    package = types.ModuleType( name )
+    package.__path__ = [ str( root ) ]
+    sys.modules[ name ] = package
+    return name
 
 
 def _root_runners( root: Path ):

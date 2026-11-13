@@ -173,6 +173,21 @@ if test( "a config file is loaded by path, never as a module named errand" ):
         assert "errand" not in [ m for m in sys.modules if m == "_errand_errand_exec" ]
 
 
+if test( "a config file imports a module beside it, relatively, read again at each load" ):
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path( tmp )
+        ( root / C.CONFIG_FILE ).write_text(
+            "import errand\n"
+            "from .helpers import NAME\n"
+            "errand.envs[ NAME ] = errand.Env( [ errand.Vars( { 'A': '1' } ) ], driver = 'cpu' )\n" )
+        for name in [ "one", "two" ]:
+            ( root / "helpers.py" ).write_text( f"NAME = { name!r }\n" )
+            assert C.load( root )
+            assert list( C.envs ) == [ name ]
+        C.reset()
+
+
 if test( "`errand run --env x cmd` runs that command in that environment", tags = [ "slow" ] ):
     import sys
     import tempfile

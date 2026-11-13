@@ -9,6 +9,11 @@ one ssh without a hub ): no new login per command, no new `micromamba run`.
 The agent's directory is named by what errand's sources are and by the
 command that reaches it -- which holds every layer's declaration -- so a
 changed stack is another agent, as an edit to errand is.
+
+An agent detaches from the bridge that started it, unless a layer says the
+surroundings it gives end with the command that entered it ( `apptainer exec`
+unmounts its image ): it is then a child of its bridge, kept as long as the
+stream is ( a hub's ), gone with it ( `daemon._attached` ).
 """
 from __future__ import annotations
 
@@ -28,9 +33,12 @@ def target( env, stack, tags, phase, *, root, ssh = None, cache = None, keep_ali
     cache = cache or str( bootstrap.local_cache() )      # errand's per-user directory where the agent runs
     ctx = L.Context( root = Path( root ), tags = tags, remote = ssh is not None, phase = phase )
     boot = None if ssh is not None else str( bootstrap.PACKAGE / "_boot.py" )
+    # a layer whose surroundings end with the command that entered them: the agent goes with its bridge
+    detach = all( getattr( l, "agent_may_detach", True ) for l in inner )
 
     def line_for( where: str ) -> str:
-        cmd = L.Command( [ "python", "-m", "errand.agents", "connect", where, str( keep ) ] )
+        cmd = L.Command( [ "python", "-m", "errand.agents", "connect", where, str( keep ),
+                           *( [ ] if detach else [ "attached" ] ) ] )
         sent = bootstrap.command( cmd, inner, cache, ssh.python if ssh is not None else "python", boot = boot )
         return f"cd {shlex.quote( str( root ) )} && {L.compose( inner, sent, ctx ).shell()}"
 

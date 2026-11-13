@@ -30,6 +30,14 @@ def folded( layer ):
 
 # --- the shape of the command ----------------------------------------------
 
+if test( "an agent detaches from its bridge, except behind an image mounted only while its command runs" ):
+    from errand.agents import envs
+    import errand
+    line = lambda layers: " ".join( envs.target( errand.Env( layers ), layers, { }, "run", root = ROOT )[ "argv" ] )
+    assert "connect" in line( [ errand.Vars( { "A": "1" } ) ] ) and " attached" not in line( [ errand.Vars( { "A": "1" } ) ] )
+    assert line( [ L.Apptainer( image = "c.sif" ) ] ).rstrip( "'\" " ).endswith( "attached" ), line( [ L.Apptainer( image = "c.sif" ) ] )
+
+
 if test( "docker mounts the project and works there" ):
     argv = folded( L.Docker( image = "img:1" ) ).argv
     assert argv[ : 3 ] == [ "docker", "run", "--rm" ]

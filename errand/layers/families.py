@@ -24,6 +24,11 @@ from .base import Command, Context
 
 class Layer( abc.ABC ):
     when = None                    # a condition: an expression over the tags and `phase`
+    # Whether an agent started through this layer may detach from the command that entered it
+    # and live on, reached again by the next command ( `daemon.py` ). Not where the layer's
+    # surroundings end with that command -- an image mounted for as long as `apptainer exec`
+    # runs: the agent is then a child of its bridge, and goes with it ( `envs.py` ).
+    agent_may_detach = True
 
     @abc.abstractmethod
     def describe( self ) -> str:

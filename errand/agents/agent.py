@@ -165,6 +165,17 @@ class Agent:
             except OSError:
                 pass
 
+    def terminate( self ):
+        """Everything it started, told to go ( an attached agent, its bridge gone: `daemon._attached` )."""
+        import signal
+        with self.lock:
+            procs = [ p for p in self.procs.values() if p.code is None ]
+        for p in procs:
+            try:
+                p.signal( signal.SIGTERM )
+            except OSError:
+                pass
+
     def run( self ) -> int:
         def client( conn, threading ):
             with self.lock:
