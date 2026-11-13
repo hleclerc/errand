@@ -19,10 +19,28 @@ def where( ):
 if test( "a scheduler held warm is reached through an agent in its allocation, not by srun each time" ):
     from errand.cli.drive import Reach
     warm = errand.Env( [ errand.Ssh( host = "cluster" ), errand.Slurm( keep_alive = "30m" ) ] )
-    cold = errand.Env( [ errand.Ssh( host = "cluster" ), errand.Slurm() ] )
+    cold = errand.Env( [ errand.Ssh( host = "cluster" ), errand.Slurm( keep_alive = 0 ) ] )
+    short = errand.Env( [ errand.Ssh( host = "cluster" ), errand.Slurm() ] )
     assert Reach( warm, { }, "run", where() ).kind == "alive"
     assert Reach( cold, { }, "run", where() ).kind == "command"
+    assert Reach( short, { }, "run", where() ).kind == "alive" and Reach( short, { }, "prepare", where() ).kind == "alive"
+    from errand.cli import alive
+    assert alive.seconds( short.stack[ 1 ] ) == 60 and alive.seconds( warm.stack[ 1 ] ) == 1800
     assert Reach( warm, { }, "run", where(), batch = True ).kind == "command", "--batch lets go: nothing to keep"
+
+
+if test( "the preparation and the run find the same allocation, and so does another environment through it" ):
+    from errand.cli.alive import Allocation
+    slurm = errand.Slurm( cpus = 10, time = "0:10:00", extra = [ "--gres=gpu:1" ] )
+    a = errand.Env( [ errand.Ssh( host = "cluster" ), slurm, errand.Venv( python = "/a/bin/python" ) ] )
+    a.name = "a"
+    b = errand.Env( [ errand.Ssh( host = "cluster" ), slurm, errand.Venv( python = "/b/bin/python" ) ] )
+    b.name = "b"
+    prepare, run = Allocation( a, { }, where(), "prepare" ), Allocation( a, { }, where(), "run" )
+    assert prepare.name == run.name and "--gres=gpu:1" in prepare.flags, "sized from the declaration in both phases"
+    other = Allocation( b, { }, where() )
+    assert other.name == run.name, "A -> B -> C and A -> B -> D share A -> B"
+    assert other.env_target()[ "id" ] != run.env_target()[ "id" ], "each with an environment agent of its own"
 
 
 if test( "the allocation is an sbatch whose batch step is an agent, reached by srun --overlap" ):

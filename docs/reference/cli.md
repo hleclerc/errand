@@ -159,4 +159,6 @@ failure, but it is never silent either.
 |---|---|
 | `ERRAND_AGENT` | `hub` (default on a terminal), `direct` (default without one), `off` — [agents](/guide/agents#when-you-want-it-otherwise) |
 | `ERRAND_HUB_KEEP_ALIVE` | seconds the hub stays up with nothing to do. Default 900 |
+| `ERRAND_CACHE_DIR` | errand's per-user directory on this machine, instead of `~/.cache/errand`. Over ssh, set it in your shell profile there — [where errand writes](/guide/storage#the-per-user-directory-cache-errand) |
+| `ERRAND_OUTPUTS_DIR` | the project's `errand-outputs/` elsewhere, on this machine — [where errand writes](/guide/storage#the-project-errand-outputs) |
 | `ERRAND_WARM` | `0`: every session a Python started anew, even with a [`Preload`](/guide/layers/preload) |

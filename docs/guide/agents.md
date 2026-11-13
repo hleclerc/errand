@@ -55,7 +55,7 @@ Each layer that costs something to start says how long it stays up once nobody u
 | what | stays up | declared by |
 |---|---|---|
 | the hub, a host agent, an environment agent | 15 minutes with nothing to do | `ERRAND_HUB_KEEP_ALIVE` for the hub (seconds) |
-| a Slurm allocation | `keep_alive`, if given; otherwise one job per command | [`Slurm( keep_alive = "30m" )`](./layers/slurm#held-warm-keep-alive) |
+| a Slurm allocation | `keep_alive`, if given; otherwise 1 minute, so that a run finds its preparation's allocation; `0`: one job per command | [`Slurm( keep_alive = "30m" )`](./layers/slurm#held-warm-keep-alive) |
 | a Windows virtual machine | 5 minutes | [`Windows( keep = "5m" )`](./layers/windows#with-a-python-errand-runs-in-it) |
 
 "Nothing to do" means no request and nothing running. A connection held open does not count, which
@@ -110,7 +110,7 @@ errand shell --env win          # cmd.exe in the Windows guest, as at its consol
 
 ## Leaving nothing behind
 
-What errand keeps per user, here and over there, under `~/.cache/errand`, is only what is live:
+What errand keeps per user, here and over there, under `~/.cache/errand` ( or `$ERRAND_CACHE_DIR` ), is only what is live:
 sockets, locks, pids, and a word per running command saying where its output goes. What piles up
 is the project's, in its `errand-outputs/` (over there, in the project's copy):
 

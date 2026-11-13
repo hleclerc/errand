@@ -7,7 +7,6 @@ per-user cache, which holds only what is live.
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 

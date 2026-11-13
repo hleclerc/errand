@@ -135,7 +135,7 @@ def alive( place: dict ) -> bool | None:
 
 
 def _remote( place: dict, line: str ):
-    return subprocess.run( [ "ssh", *( place.get( "options" ) or [ ] ), place[ "host" ], line ],
+    return subprocess.run( [ "ssh", *L.ssh_options( place.get( "options" ) ), place[ "host" ], line ],
                            capture_output = True, text = True, timeout = 60 )
 
 

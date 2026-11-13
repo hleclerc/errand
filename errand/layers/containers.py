@@ -11,7 +11,7 @@ from pathlib import Path
 
 from .base import _quiet, Command, Context, file_stamp, sh, under
 from .families import Artefact, Container
-from .gateways import push, Ssh
+from .gateways import push, Ssh, ssh_options
 from .hosts import Over
 
 
@@ -181,10 +181,10 @@ def relay( source: "Over", path, dest, rel ) -> int:
     def on_dest( line, **how ):
         if dest.remote:
             root = f"cd {shlex.quote( str( dest.root ) )} && " if dest.root is not None else ""
-            return subprocess.run( [ "ssh", *dest.ssh.options, dest.ssh.host, root + line ], **how ).returncode
+            return subprocess.run( [ "ssh", *ssh_options( dest.ssh.options ), dest.ssh.host, root + line ], **how ).returncode
         return subprocess.run( [ "sh", "-c", line ], cwd = str( dest.root ), **how ).returncode
 
-    src = subprocess.Popen( [ "ssh", *source.ssh.options, source.ssh.host, f"cat {shlex.quote( str( path ) )}" ],
+    src = subprocess.Popen( [ "ssh", *ssh_options( source.ssh.options ), source.ssh.host, f"cat {shlex.quote( str( path ) )}" ],
                             stdout = subprocess.PIPE )
     code = on_dest( f"mkdir -p \"$( dirname {q} )\" && cat > {q}.part", stdin = src.stdout )
     src.stdout.close()

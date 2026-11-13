@@ -409,7 +409,7 @@ if test( "the built image is streamed from the builder, never left half-copied" 
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path( tmp )
         bin_ = tmp / "bin"; bin_.mkdir()
-        ( bin_ / "ssh" ).write_text( '#!/bin/sh\nshift\nexec sh -c "$1"\n' )
+        ( bin_ / "ssh" ).write_text( '#!/bin/sh\nfor a; do line=$a; done\nexec sh -c "$line"\n' )   # the last argument
         ( bin_ / "ssh" ).chmod( 0o755 )
         builder = tmp / "builder"; ( builder / "c" ).mkdir( parents = True )
         ( builder / "c" / "i.sif" ).write_bytes( b"\0image" * 1000 )

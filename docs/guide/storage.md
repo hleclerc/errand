@@ -5,7 +5,7 @@ errand writes in three kinds of places, on every machine it works on:
 | place | what | size |
 |---|---|---|
 | **the project**: `errand-outputs/` at its root ( over there, in the project's copy ) | every run's record, what was built, errand's bookkeeping | grows with use |
-| **per user**: `~/.cache/errand/` | errand's own sources and, if needed, a Python for itself; sockets, locks and pids of what is running | a few MB, plus a Python if errand made one |
+| **per user**: `~/.cache/errand/`, or `$ERRAND_CACHE_DIR` | errand's own sources and, if needed, a Python for itself; sockets, locks and pids of what is running | a few MB, plus a Python if errand made one |
 | **per machine**: a directory in `$XDG_RUNTIME_DIR`, else the temporary directory | the claims of [machine sharing](./machine) | a few files |
 
 Then come the environments your layers build: a micromamba environment, a venv, a container
@@ -76,18 +76,24 @@ the machine has no usable Python, it also makes one here for itself, with `uv` a
 fetched first. That is tens of MB, once. The rest is live: the directories of the agents and of the
 hub, a warm Slurm allocation, the virtual machines that are booted. These go away by themselves.
 
-It is in the home directory on purpose: on a cluster, the home is what the login node and the compute
-nodes share, so what errand finds or makes on the login node is what a job uses on a node. There is
-no setting to move it. If your home really has no room, replace it by a symlink to a disk that the
-nodes also see:
+By default it is in the home directory, on purpose: on a cluster, the home is what the login node
+and the compute nodes share, so what errand finds or makes on the login node is what a job uses on
+a node. `ERRAND_CACHE_DIR` puts it elsewhere on a machine. Set it in your shell profile on that
+machine ( `~/.bashrc`, `~/.zshrc` ):
 
 ```bash
-mv ~/.cache/errand /work/me/errand-cache    # or rm -rf it: errand remakes what it needs
-ln -s /work/me/errand-cache ~/.cache/errand
+export ERRAND_CACHE_DIR=/work/me/errand-cache
 ```
 
-Removing `~/.cache/errand` is always safe when nothing is running: it undoes everything errand made
-for itself.
+It is a setting of the machine, not of a project: the agents on a machine serve every project that
+reaches it. errand reads it over there through the same interactive shell it runs every remote
+command in, so the profile is enough, even if it stops early for non-interactive shells. On a
+cluster, pick a directory that the compute nodes also see. Sockets in a deep directory are fine:
+when their path is too long for the system, errand reaches them through a short link in
+`/tmp/errand-<uid>/`.
+
+Removing this directory is always safe when nothing is running: it undoes everything errand made
+for itself. Moving it is the same: errand remakes what it needs at the new place.
 
 ## The tools' own caches
 
@@ -113,5 +119,9 @@ errand.Micromamba( "proj", root_prefix = "/scratch/me/mamba" )  # environments
 errand.Apptainer( "proj.sif", recipe = "proj.def", scratch = "/scratch/me/tmp" )
 ```
 
-Plus, if even a few MB are too many, the symlink for `~/.cache/errand`, and the tools' cache
-variables.
+And in your shell profile over there, `ERRAND_CACHE_DIR` and the tools' cache variables:
+
+```bash
+export ERRAND_CACHE_DIR=/scratch/me/errand-cache
+export PIP_CACHE_DIR=/scratch/me/cache/pip UV_CACHE_DIR=/scratch/me/cache/uv
+```

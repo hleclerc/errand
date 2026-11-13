@@ -76,7 +76,8 @@ def _lines( sock ):
 def _reach( where: Path ):
     s = socket.socket( socket.AF_UNIX, socket.SOCK_STREAM )
     try:
-        s.connect( str( where / "sock" ) )
+        from .endpoint import address
+        s.connect( address( where / "sock" ) )
         return s
     except OSError:
         s.close()
@@ -340,7 +341,8 @@ class Zygote:
         if path.exists():
             path.unlink()
         self.server = socket.socket( socket.AF_UNIX, socket.SOCK_STREAM )
-        self.server.bind( str( path ) )
+        from .endpoint import address
+        self.server.bind( address( path ) )
         os.chmod( path, 0o600 )
         self.server.listen( 16 )
         # A child that ends wakes the loop at once: its code is somebody's command waiting to end.

@@ -114,7 +114,7 @@ class Guest:
         elif agents.mode() == "hub":
             argv = [ *U.rsh_argv( ssh.host, ssh.options ), ssh.host, on_host ]
         else:
-            argv = [ "ssh", "-T", *ssh.options, ssh.host, on_host ]
+            argv = [ "ssh", "-T", *L.ssh_options( ssh.options ), ssh.host, on_host ]
         return { "kind": "cmd", "id": f"{self.said_where}:{name}:{self.m.port}", "argv": argv, "keep_alive": keep }
 
     def start( self, request: dict, child: dict ):

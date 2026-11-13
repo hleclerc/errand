@@ -71,9 +71,11 @@ errand.envs[ "cluster" ] = errand.Env( [
 ], driver = "jax", cuda = True )
 ```
 
-At most one scheduler is active per phase, and errand checks it. In preparation a scheduler starts
-**one task**, whatever `nodes` says, and is not sized from entries nobody knows yet; in the run phase
-it is sized from the plan. When both phases go through the same layers and none of them is a
+At most one scheduler is active per phase, and errand checks it. A `Slurm` is
+[held warm](./layers/slurm#held-warm-keep-alive) for a minute at least, sized from its declaration:
+the preparation and the run go into the same allocation, one job. With `keep_alive = 0`, the
+preparation is **one task**, whatever `nodes` says, and the run a job of its own, sized from the
+plan. When both phases go through the same layers and none of them is a
 scheduler — a container, another machine — preparing and running are **one pass**, one process. A
 condition can read the tags too: `when = "fp=64"`, `when = "phase=run & cuda"`.
 

@@ -100,12 +100,43 @@ class Ssh( Gateway ):
         return code
 
 
+CONNECT_TIMEOUT = 10     # seconds per address: a host that does not answer is said so, not waited for
+
+# What ssh says, exit code 255, when it never got to run anything over there.
+NOT_REACHED = ( "connect to host", "could not resolve hostname", "timed out", "no route to host",
+                "connection refused", "connection closed by", "permission denied", "host key verification failed" )
+
+
+class Unreachable( RuntimeError ):
+    """ssh could not log in: nothing errand does on that host can work, so it stops, once."""
+
+
+def unreachable( host: str, got ) -> "Unreachable | None":
+    """The error to stop with when `got` ( a finished ssh ) never reached `host`."""
+    said = ( getattr( got, "stderr", "" ) or "" ).strip()
+    if getattr( got, "returncode", 0 ) != 255 or not any( s in said.lower() for s in NOT_REACHED ):
+        return None
+    last = [ l for l in said.splitlines() if l.strip() ][ -1 : ]
+    return Unreachable( f"cannot reach {host}: {last[ 0 ] if last else 'ssh failed'}\n"
+                        f"  `ssh {host} true` must work from this terminal. A cluster that only lets some\n"
+                        f"  addresses in needs the name your ~/.ssh/config routes through a jump host ( ProxyJump )" )
+
+
+def ssh_options( options ) -> list:
+    """`options`, and a connect timeout unless they set one: a host behind a filter
+    ( a cluster that only lets some addresses in ) otherwise hangs ssh without a word."""
+    options = list( options or [ ] )
+    if any( "connecttimeout" in str( o ).lower() for o in options ):
+        return options
+    return [ *options, "-o", f"ConnectTimeout={CONNECT_TIMEOUT}" ]
+
+
 def _rsh( options, host = None, agent = True ):
     """rsync must reach the machine ssh reaches, so it gets the same options -- or, with a
     hub to go through, the agent over there is its remote shell, and nothing logs in again."""
     if host and agent and agents.mode() == "hub":
         return [ "-e", agents.upstream.rsh( host, options ) ]
-    return [ "-e", "ssh " + " ".join( shlex.quote( o ) for o in options ) ] if options else [ ]
+    return [ "-e", "ssh " + " ".join( shlex.quote( o ) for o in ssh_options( options ) ) ]
 
 
 def _remote( host, options, line: str, agent = True, interactive = False ):
@@ -115,11 +146,12 @@ def _remote( host, options, line: str, agent = True, interactive = False ):
     if agent and agents.mode() == "hub":
         try:
             return agents.shell( agents.open( agents.upstream.of_host( host, options ) ), line, capture = True )
-        except Exception:
-            pass
+        except Exception as err:
+            if "the agent: cannot reach " in str( err ):
+                raise Unreachable( str( err ).split( "the agent: ", 1 )[ -1 ] ) from None
     if interactive:
         line = f"$SHELL -ic {shlex.quote( line )}"
-    return subprocess.run( [ "ssh", *options, host, line ], capture_output = True, text = True,
+    return subprocess.run( [ "ssh", *ssh_options( options ), host, line ], capture_output = True, text = True,
                            stdin = subprocess.DEVNULL )
 
 
@@ -145,6 +177,9 @@ def push( local_root: Path, host: str, remote_root: Path, options = ( ), echo = 
         line += f" && sh -c {q( LINK_OUTPUTS )} sh {q( rel )} {q( str( outputs ) )}"
     line += f" && sh -c {q( config.MIGRATE_SH )} sh {q( rel )}"
     made = _remote( host, options, line )
+    stop = unreachable( host, made )
+    if stop is not None:
+        raise stop
     if made.returncode:
         raise subprocess.CalledProcessError( made.returncode, f"mkdir -p {remote_root}", made.stdout, made.stderr )
     for said in ( made.stderr or "" ).splitlines():

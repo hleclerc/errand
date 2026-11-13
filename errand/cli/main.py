@@ -21,6 +21,14 @@ from .inside import here
 
 
 def main( argv = None ):
+    try:
+        return _main( argv )
+    except L.Unreachable as err:
+        print( bad( f"  {err}" ), file = sys.stderr, flush = True )
+        return 255
+
+
+def _main( argv = None ):
     from .. import __version__
 
     argv = list( sys.argv[ 1 : ] if argv is None else argv )

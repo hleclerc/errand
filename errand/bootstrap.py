@@ -113,6 +113,10 @@ def ship( host: str, options = ( ), agent = True ) -> str:
     key = sources_key()
     got = _remote( host, options, f'b={SH_BASE}; mkdir -p "$b"/{sub} && echo "ERRAND_CACHE=$b" && '
                                   f'cat "$b"/{sub}/errand/.sources 2>/dev/null; true', agent = agent, interactive = True )
+    from .layers.gateways import unreachable
+    stop = unreachable( host, got )
+    if stop is not None:
+        raise stop
     cache = _said( "ERRAND_CACHE", got.stdout )
     if got.returncode or not cache:
         raise subprocess.CalledProcessError( got.returncode or 1, "mkdir", got.stdout, got.stderr )

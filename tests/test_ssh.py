@@ -58,9 +58,10 @@ if test( "a stack is folded against the REMOTE root", tags = [ "ssh" ] ):
 
 if test( "rsync is given the same options as ssh", tags = [ "ssh" ] ):
     # Reaching a different machine than ssh does would be a very quiet bug.
-    assert L._rsh( [ ] ) == [ ]
+    from errand.layers.gateways import CONNECT_TIMEOUT
+    assert L._rsh( [ ] ) == [ "-e", f"ssh -o ConnectTimeout={CONNECT_TIMEOUT}" ]
     flag, command = L._rsh( [ "-p", "2222" ] )
-    assert flag == "-e" and command == "ssh -p 2222"
+    assert flag == "-e" and command == f"ssh -p 2222 -o ConnectTimeout={CONNECT_TIMEOUT}"
 
 
 if test( "it reaches the machine at all", tags = [ "ssh" ] ):
@@ -135,3 +136,22 @@ if test( "the local file says what it has" ):
     print( local.status() )
     for key in ( "ssh_host", "ssh_root", "ssh_options", "slurm_host", "slurm_partition" ):
         print( f"  {key}: {'yes' if have( key ) else 'no'}" )
+
+
+if test( "every ssh errand starts gives up on a host that does not answer, unless told otherwise" ):
+    from errand.layers.gateways import ssh_options, CONNECT_TIMEOUT
+    assert ssh_options( [ ] ) == [ "-o", f"ConnectTimeout={CONNECT_TIMEOUT}" ]
+    assert ssh_options( [ "-p", "2222" ] )[ : 2 ] == [ "-p", "2222" ]
+    assert ssh_options( [ "-o", "ConnectTimeout=60" ] ) == [ "-o", "ConnectTimeout=60" ], "theirs wins"
+
+
+if test( "a host ssh cannot log in to stops the command, said once and plainly" ):
+    import subprocess as sp
+    from errand.layers.gateways import unreachable, Unreachable
+    timed = sp.CompletedProcess( "ssh", 255, "", "ssh: connect to host jz.example port 22: Operation timed out\n" )
+    err = unreachable( "me@jz.example", timed )
+    assert isinstance( err, Unreachable ) and "cannot reach me@jz.example" in str( err ) and "Operation timed out" in str( err )
+    assert "ProxyJump" in str( err )
+    assert unreachable( "h", sp.CompletedProcess( "ssh", 255, "", "make: *** [all] Error 255\n" ) ) is None, \
+        "a command over there that exits 255 is not an unreachable host"
+    assert unreachable( "h", sp.CompletedProcess( "ssh", 1, "", "Connection refused\n" ) ) is None

@@ -91,7 +91,8 @@ def argv_of( target: dict ) -> list:
     line = " ".join( shlex.quote( a ) for a in ( "sh", "-c", bootstrap._script( then, target.get( "python" ) or "python3" ) ) )
     # Through the user's interactive shell, as every remote command is: it is what puts
     # micromamba or a module system on the PATH the agent, and all it starts, will have.
-    return [ "ssh", "-T", *target.get( "options", [ ] ), target[ "host" ], f"$SHELL -ic {shlex.quote( line )}" ]
+    from ..layers.gateways import ssh_options
+    return [ "ssh", "-T", *ssh_options( target.get( "options" ) ), target[ "host" ], f"$SHELL -ic {shlex.quote( line )}" ]
 
 
 def env_of( target: dict ) -> dict:

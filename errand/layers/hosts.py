@@ -42,9 +42,25 @@ class Over:
         # one, through the user's own $SHELL rather than a hard-coded bash.
         # `-t` when somebody watches: a build can ask for a password, and draws
         # a progress bar nobody sees without a terminal.
-        return subprocess.run( [ "ssh", *( [ "-t" ] if tty else [ ] ), *self.ssh.options, self.ssh.host,
+        from .gateways import ssh_options
+        self._reached()
+        return subprocess.run( [ "ssh", *( [ "-t" ] if tty else [ ] ), *ssh_options( self.ssh.options ), self.ssh.host,
                                  f"$SHELL -ic {shlex.quote( line )}" ], timeout = timeout,
                                **_how( quiet, capture, input ) )
+
+    def _reached( self ):
+        """Once per host, before its first ssh of its own: a host ssh cannot log in to stops
+        everything at once, rather than each probe failing on its own, silently, in turn."""
+        key = ( self.ssh.host, tuple( self.ssh.options ) )
+        if key in _REACHED:
+            return
+        from .gateways import ssh_options, unreachable
+        got = subprocess.run( [ "ssh", *ssh_options( self.ssh.options ), self.ssh.host, "true" ],
+                              capture_output = True, text = True, stdin = subprocess.DEVNULL )
+        stop = unreachable( self.ssh.host, got )
+        if stop is not None:
+            raise stop
+        _REACHED.add( key )
 
     def _agent( self ):
         """The connection to the host agent, or None: agents switched off, or not to be had --
@@ -54,6 +70,9 @@ class Over:
         try:
             return agents.open( agents.upstream.ssh_target( self.ssh ) )
         except Exception as err:
+            if "the agent: cannot reach " in str( err ):          # ssh itself fails: so would one per command
+                from .gateways import Unreachable
+                raise Unreachable( str( err ).split( "the agent: ", 1 )[ -1 ] ) from None
             if self.ssh.host not in _NO_AGENT:
                 _NO_AGENT.add( self.ssh.host )
                 print( f"  warning: no agent on {self.ssh.host} ( {err} ): one ssh per command",
@@ -70,6 +89,7 @@ class Over:
 
 
 _NO_AGENT : set = set()          # hosts where reaching an agent failed, said once each
+_REACHED  : set = set()          # ( host, options ) ssh logged in to, in this process
 
 
 def host_of( spec: dict ):

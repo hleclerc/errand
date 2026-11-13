@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import hashlib
 import shlex
-from pathlib import Path
 
 from .. import agents, bootstrap, layers as L
 from ..agents import upstream as U
@@ -31,30 +30,37 @@ ALLOC = "alloc"                   # in errand's per-user directory
 
 
 def scheduler( stack ):
-    """The scheduler of `stack` when it is held warm."""
+    """The scheduler of `stack` when it is held warm: always, for a short while at least
+    ( `Slurm.KEEP_WARM` ), unless it says `keep_alive = 0` or is watched ( `watch`: one job of its own )."""
     s = L.batch_of( stack )
-    return s if s is not None and getattr( s, "keep_alive", None ) else None
+    if s is None or getattr( s, "watch", None ) or not hasattr( s, "keep_alive" ):
+        return None
+    return s if s.keep_alive is None or seconds( s ) > 0 else None
 
 
 def seconds( sched ) -> int:
     from ..vm.common import _seconds
-    return int( _seconds( sched.keep_alive ) )
+    keep = sched.keep_alive if sched.keep_alive is not None else getattr( sched, "KEEP_WARM", "1m" )
+    return int( _seconds( keep or 0 ) )
 
 
 class Allocation:
-    def __init__( self, env, tags, where ):
+    def __init__( self, env, tags, where, phase = "run" ):
         self.env, self.tags, self.where = env, tags, where
-        stack = env.stack_for( "run", tags )
+        stack = env.stack_for( phase, tags )
         self.sched = scheduler( stack )
         self.after = stack[ stack.index( self.sched ) + 1 : ]
         self.keep = seconds( self.sched )
-        # Sized from the declaration alone: it outlives the command that started it. Ranks fit when
+        # Sized from the declaration alone, in either phase: it outlives the command that started it,
+        # and the run must find the allocation its preparation had. Ranks fit when
         # it says how many tasks: `nodes` times `ntasks_per_node`.
         n = ( self.sched.nodes or 0 ) * ( self.sched.ntasks_per_node or 0 )
         ctx = L.Context( root = where.there, tags = tags, remote = where.ssh is not None, phase = "run",
                          needs = { "ranks": n } if n > 1 else { } )
         self.flags = self.sched.flags( ctx )
-        shape = f"{env.name}\0{' '.join( self.flags )}\0{bootstrap.sources_key()}"
+        # Named from what it is, not from the environment: another environment through the same
+        # machine and the same declaration finds it, with an environment agent of its own in it.
+        shape = f"{' '.join( self.flags )}\0{bootstrap.sources_key()}"
         self.name = f"{L.fingerprint( shape )}"
         self.cache = where.cache or str( bootstrap.local_cache() )
         self.dir = f"{self.cache}/{ALLOC}/{self.name}"
@@ -109,7 +115,7 @@ exec srun -u --jobid="$j" --overlap -N1 -n1 -w "$node" {connect} sh "$d/$j" {sel
         elif agents.mode() == "hub":
             argv = [ *U.rsh_argv( ssh.host, ssh.options ), ssh.host, line ]
         else:
-            argv = [ "ssh", "-T", *ssh.options, ssh.host, line ]
+            argv = [ "ssh", "-T", *L.ssh_options( ssh.options ), ssh.host, line ]
         return { "kind": "cmd", "id": f"{ssh.host if ssh else 'here'}:alloc-{self.name}", "argv": argv,
                  "keep_alive": self.keep }
 

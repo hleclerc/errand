@@ -311,3 +311,25 @@ if test( "a server that starts takes away what nobody serves any more beside it,
         finally:
             held.close()
         assert sorted( p.name for p in base.iterdir() ) == [ "me", "not-ours", "recent", "served", "session" ]
+
+
+if test( "a socket whose path is too long for the platform is reached through a short link" ):
+    import threading
+    from errand.agents import endpoint
+    if endpoint.UNIX:
+        with tempfile.TemporaryDirectory() as tmp:
+            deep = Path( tmp ) / ( "a-directory-with-a-long-name-" * 4 ) / "hub"
+            deep.mkdir( parents = True )
+            assert len( str( deep / "sock" ) ) > 110
+            server, accept = endpoint.listen( deep )
+            try:
+                assert ( deep / "sock" ).exists(), "the socket is in its directory, not in the link's"
+                t = threading.Thread( target = lambda: accept().sendall( b"hi" ) )
+                t.start()
+                s = endpoint.reach( deep )
+                assert s is not None
+                assert s.recv( 2 ) == b"hi"
+                s.close()
+                t.join()
+            finally:
+                server.close()

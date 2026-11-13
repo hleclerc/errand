@@ -6,6 +6,11 @@ both and says the token first, so another user's process on the same machine
 cannot speak to the agent by guessing its port.
 
 And the lock that makes an agent the only one of its directory, both ways.
+
+A unix socket's path has a limit ( 104 bytes on macOS, 108 on Linux ), which a
+per-user directory put deep in a scratch disk ( `ERRAND_CACHE_DIR` ) can exceed:
+such a socket is then bound and reached through `address`, a short symlink to
+its directory in `/tmp/errand-<uid>/`.
 """
 from __future__ import annotations
 
@@ -19,6 +24,47 @@ WINDOWS = sys.platform == "win32"
 UNIX = hasattr( socket, "AF_UNIX" ) and not WINDOWS
 
 
+SHORT = 100        # below every platform's limit, with room for the NUL
+
+
+def address( path: Path ) -> str:
+    """The path a unix socket at `path` is bound and reached by: itself, or the same file
+    through a short symlink to its directory when the path is too long."""
+    text = str( path )
+    if len( os.fsencode( text ) ) < SHORT:
+        return text
+    import hashlib
+    base = Path( "/tmp" if os.path.isdir( "/tmp" ) else __import__( "tempfile" ).gettempdir() ) / f"errand-{os.getuid()}"
+    try:
+        base.mkdir( mode = 0o700 )
+    except FileExistsError:
+        pass
+    st = base.lstat()
+    if not base.is_dir() or base.is_symlink() or st.st_uid != os.getuid():
+        raise OSError( f"{base} is not this user's directory: cannot shorten {text}" )
+    target = str( path.parent )
+    link = base / hashlib.sha1( target.encode() ).hexdigest()[ : 12 ]
+    try:
+        current = os.readlink( link )
+    except OSError:
+        current = None
+    if current != target:
+        tmp = base / f".{link.name}.{os.getpid()}"
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        os.symlink( target, tmp )
+        os.replace( tmp, link )
+        for old in base.iterdir():                  # the links of directories that are gone
+            if old.is_symlink() and not old.exists():
+                try:
+                    old.unlink()
+                except OSError:
+                    pass
+    return str( link / path.name )
+
+
 def listen( root: Path ):
     """-> ( server socket, accept( ) -> connection or None ), the socket's file written."""
     path = root / "sock"
@@ -26,7 +72,7 @@ def listen( root: Path ):
         path.unlink()
     if UNIX:
         server = socket.socket( socket.AF_UNIX, socket.SOCK_STREAM )
-        server.bind( str( path ) )
+        server.bind( address( path ) )
         os.chmod( path, 0o600 )
         server.listen( 16 )
         return server, lambda: server.accept()[ 0 ]
@@ -63,7 +109,7 @@ def reach( root: Path ) -> socket.socket | None:
         if UNIX:
             s = socket.socket( socket.AF_UNIX, socket.SOCK_STREAM )
             try:
-                s.connect( str( path ) )
+                s.connect( address( path ) )
             except OSError:
                 s.close()
                 raise

@@ -46,7 +46,7 @@ def target( env, stack, tags, phase, *, root, ssh = None, cache = None, keep_ali
         # Through the host agent: its interactive shell, as every remote line is.
         argv = [ *U.rsh_argv( ssh.host, ssh.options ), ssh.host, f"$SHELL -ic {shlex.quote( line )}" ]
     else:
-        argv = [ "ssh", "-T", *ssh.options, ssh.host, f"$SHELL -ic {shlex.quote( line )}" ]
+        argv = [ "ssh", "-T", *L.ssh_options( ssh.options ), ssh.host, f"$SHELL -ic {shlex.quote( line )}" ]
     where = ssh.host if ssh is not None else "here"
     return { "kind": "cmd", "id": f"{where}:{name}", "argv": argv, "keep_alive": keep }
 

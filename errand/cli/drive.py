@@ -103,11 +103,11 @@ class Reach:
             line = self.line( request, child )
             if w.ssh is None:
                 return LocalSession( [ "sh", "-c", line ], cwd = str( w.root ) )
-            return LocalSession( [ "ssh", "-T", *w.ssh.options, w.ssh.host, f"$SHELL -ic {shlex.quote( line )}" ] )
+            return LocalSession( [ "ssh", "-T", *L.ssh_options( w.ssh.options ), w.ssh.host, f"$SHELL -ic {shlex.quote( line )}" ] )
         if self.kind in ( "agent", "alive" ):
             self.target = ( envs.target( self.env, self.stack, self.tags, self.phase, root = w.there, ssh = w.ssh,
                                          cache = w.cache ) if self.kind == "agent"
-                            else alive.Allocation( self.env, self.tags, w ).env_target() )
+                            else alive.Allocation( self.env, self.tags, w, self.phase ).env_target() )
             conn = agents.open( self.target )
             return Session.start( conn, envs.ops_argv( envs.python_of( conn ), w.boot, request,
                                                        L.preload_of( self.inner ) ),
@@ -126,7 +126,7 @@ class Reach:
         """The allocation held warm, if this command fits in it; else a job of its own ( `srun` ),
         after giving the warm one back if nothing runs in it -- it may hold the very nodes."""
         w = self.where
-        alloc = alive.Allocation( self.env, self.tags, w )
+        alloc = alive.Allocation( self.env, self.tags, w, self.phase )
         host = L.Over( w.ssh, w.there ) if w.ssh is not None else L.Here( w.root )
         needs = { k: v for k, v in ( self.ctx.needs or { } ).items() if k != "time" }
         ok, why = alive.fits( alloc, needs, ( self.ctx.needs or { } ).get( "time" ), host )

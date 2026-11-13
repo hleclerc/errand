@@ -62,7 +62,8 @@ nothing installed on the other side:
 Under a scheduler, the command starts on a compute node that may have no network: the search is
 then made once on the machine ssh reaches, before submitting, and `~/.cache` — in the home directory
 the nodes share — is where the job finds it. Everything errand made for itself is in
-`~/.cache/errand`; removing that directory undoes it.
+`~/.cache/errand`; removing that directory undoes it. `ERRAND_CACHE_DIR`, in your shell profile
+over there, puts it elsewhere: see [Where errand writes](../storage#the-per-user-directory-cache-errand).
 
 A Docker or Podman container does not see that home directory: there, errand must be installed in
 the image, as before.

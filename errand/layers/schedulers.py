@@ -52,8 +52,10 @@ class Slurm( Scheduler ):
     when     : str | None = None
     # Held warm between commands ( "30m" ): one allocation, an agent on its first node, and every command
     # of that time runs in it -- no queue, no new job ( ADR 0005, step 6 ). Released once nothing used it
-    # for that long, or at its `time`.
+    # for that long, or at its `time`. Not given: `KEEP_WARM`, just long enough for the run to find the
+    # allocation its preparation had, and the next command typed right after. `0`: one job per command.
     keep_alive: str | float | None = None
+    KEEP_WARM = "1m"
 
     # The flags that say how many processes the job starts: errand runs once in the allocation, and
     # starts the ranks itself. `-n4` and `--ntasks=4` are the same flag.

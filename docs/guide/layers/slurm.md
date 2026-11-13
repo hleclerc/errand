@@ -3,7 +3,7 @@
 ```python
 Slurm( partition = None, nodes = None, cpus = None, gpus = None,
        time = None, account = None, nodelist = None, qos = None, watch = None,
-       ntasks_per_node = None, mpi = None, extra = [ ] )
+       ntasks_per_node = None, mpi = None, extra = [ ], keep_alive = None )
 ```
 
 `srun` while you wait, `sbatch` under [`--batch`](../detached) — which *is* the detachment: it
@@ -119,9 +119,18 @@ errand.Slurm( nodelist = [ "node15", "node17" ], nodes = 2, ntasks_per_node = 4,
               time = "4:00:00", keep_alive = "30m" )
 ```
 
-Without it, every command waits in the queue for an allocation of its own. With it, the first one
-submits a job that holds the allocation, and the commands that follow within `keep_alive` run in it
-at once: no queue, no new job. A run that took the queue's minutes takes a second.
+The first command submits a job that holds the allocation, and the commands that follow within
+`keep_alive` run in it at once: no queue, no new job. A run that took the queue's minutes takes a
+second.
+
+Without `keep_alive`, the allocation is held for **one minute**: long enough for the run to find the
+allocation its preparation had, and for the next command typed right after. One `errand run` is then
+one job, not one for the preparation and one for the run. `keep_alive = 0` asks for a job per
+command, as `srun` alone would; `watch` is one job of its own, and is never held.
+
+The allocation is named after the machine and the declaration, not after the environment. Two
+environments that go through the same `Ssh` and the same `Slurm` and then differ ( a venv, a
+container ) share it, each with an environment agent of its own in it.
 
 The job's batch step is an agent, on the first node. The layers after `Slurm` are entered once, by an
 environment agent it starts, and are built there too. A venv or an environment in a node's local
@@ -138,15 +147,16 @@ allocated.
 Once nothing has used it for `keep_alive`, the agent goes, the job ends, and the allocation is
 released; at the latest, its `time` releases it. On a cluster other people share, a short
 `keep_alive` is the polite one. Nothing has to be remembered, and nothing stays
-held by mistake. Its job and its directory are in `~/.cache/errand/alloc/` on the cluster, and go
+held by mistake. Its job and its directory are in `~/.cache/errand/alloc/` ( or `$ERRAND_CACHE_DIR/alloc/` ) on the cluster, and go
 with the job.
 → [Fast, and nothing lost](../agents)
 
 ## Preparing and running: two allocations
 
-The preparation — resolving targets, building, collecting — is one task, and is not sized from
-entries nobody knows yet; the run is sized from the plan. When they want different allocations, they
-are two `Slurm` layers with a [`when`](./index#when) each — see
+The preparation — resolving targets, building, collecting — runs in the allocation held warm, as the
+run does: one job for both. When they want different allocations, they are two `Slurm` layers with a
+[`when`](./index#when) each, each held warm on its own; `when = "phase=run"` alone prepares on the
+machine `Ssh` leads to, with no allocation at all. See
 [Preparing, then running](../environments#preparing-then-running).
 
 ## Inside an allocation, errand does not queue
