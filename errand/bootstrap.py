@@ -31,7 +31,11 @@ business:
 
 `~/.cache/errand` is in the home directory on purpose: on a cluster it is the
 directory the login node and the compute nodes share, so what the login node
-found or made is what the job running errand on a node uses.
+found or made is what the job running errand on a node uses. `ERRAND_CACHE_DIR`,
+set in the account's shell profile on a machine, puts it elsewhere on that
+machine: a home with little room. It is the machine's, not a project's -- the
+agents there serve every project -- so it is read over there, through the same
+interactive shell every remote command goes through, never sent from here.
 """
 from __future__ import annotations
 
@@ -45,7 +49,16 @@ from pathlib import Path
 MIN = ( 3, 8 )
 # What a Python made for errand is.
 MADE = "3.12"
-BASE = ".cache/errand"                          # relative to $HOME over there
+BASE = ".cache/errand"                          # relative to $HOME, unless ERRAND_CACHE_DIR says otherwise
+ENV = "ERRAND_CACHE_DIR"
+# The same, as the shell over there computes it: quoted, ready to be followed by `/<sub>`.
+SH_BASE = '"${ERRAND_CACHE_DIR:-$HOME/.cache/errand}"'
+
+
+def local_cache( ) -> Path:
+    """errand's per-user directory on this machine."""
+    import os
+    return Path( os.environ.get( ENV ) or Path.home() / BASE ).expanduser()
 
 PACKAGE = Path( __file__ ).resolve().parent
 
@@ -85,27 +98,31 @@ def sources_key( fresh = False ) -> str:
 
 
 def src_rel() -> str:
-    return f"{BASE}/src/{key()}"
+    """Where the copy of these sources is, relative to errand's per-user directory."""
+    return f"src/{key()}"
 
 
 def ship( host: str, options = ( ), agent = True ) -> str:
-    """The package, to `~/<src_rel>/errand/` on `host`: -> $HOME over there.
+    """The package, to `<cache>/<src_rel>/errand/` on `host`: -> `<cache>`, errand's per-user
+    directory over there ( `ERRAND_CACHE_DIR`, else `~/.cache/errand` ).
 
     Skipped when what is there says it is these sources already ( `.sources` ),
     which costs one line through the agent rather than an rsync."""
     from .layers import _remote, _rsh
-    dest = src_rel()
+    sub = shlex.quote( src_rel() )
     key = sources_key()
-    got = _remote( host, options, f'mkdir -p {shlex.quote( dest )} && echo "ERRAND_HOME=$HOME" && '
-                                  f'cat {shlex.quote( dest )}/errand/.sources 2>/dev/null; true', agent = agent )
-    if got.returncode:
-        raise subprocess.CalledProcessError( got.returncode, "mkdir", got.stdout, got.stderr )
+    got = _remote( host, options, f'b={SH_BASE}; mkdir -p "$b"/{sub} && echo "ERRAND_CACHE=$b" && '
+                                  f'cat "$b"/{sub}/errand/.sources 2>/dev/null; true', agent = agent, interactive = True )
+    cache = _said( "ERRAND_CACHE", got.stdout )
+    if got.returncode or not cache:
+        raise subprocess.CalledProcessError( got.returncode or 1, "mkdir", got.stdout, got.stderr )
+    dest = f"{cache}/{src_rel()}"
     if key not in ( got.stdout or "" ).split():
         subprocess.run( [ "rsync", "-a", "--delete", *_rsh( options, host, agent ), "--exclude=__pycache__",
                           "--exclude=.sources", f"{PACKAGE}/", f"{host}:{dest}/errand/" ],
                         check = True, stdin = subprocess.DEVNULL )
         _remote( host, options, f"echo {key} > {shlex.quote( dest )}/errand/.sources", agent = agent )
-    return _said( "ERRAND_HOME", got.stdout )
+    return cache
 
 
 def _said( name, out ):
@@ -116,7 +133,7 @@ def _said( name, out ):
 # POSIX sh: `pick_python` looks for a Python errand runs on, `make_python` makes one; both set
 # `$py`. What they do is said on stderr, prefixed `errand:`.
 FUNCTIONS = r"""
-base="$HOME/""" + BASE + r""""
+base=""" + SH_BASE + r"""
 say() { echo "errand: $*" >&2; }
 ok() { "$1" -c "import sys; sys.exit( sys.version_info < ( $major, $minor ) )" >/dev/null 2>&1; }
 pick_python() {
@@ -196,20 +213,20 @@ def find( host, preferred = "python3", echo = print ) -> str:
 
 
 def boot_rel() -> str:
-    """The file a shipped errand is started from, relative to $HOME over there."""
+    """The file a shipped errand is started from, relative to errand's per-user directory over there."""
     return f"{src_rel()}/errand/_boot.py"
 
 
 def prepare( ssh, inner, there, echo = print ) -> str:
-    """What must be over there before errand can start there: -> $HOME over there."""
+    """What must be over there before errand can start there: -> errand's per-user directory there."""
     from . import layers as L
-    home = ship( ssh.host, ssh.options )
+    cache = ship( ssh.host, ssh.options )
     if not L.chooses_python( inner ) and L.batch_of( inner ) is not None:
         find( there, ssh.python, echo )
-    return home
+    return cache
 
 
-def command( cmd, inner, home: str, preferred: str = "python3", boot: str | None = None ):
+def command( cmd, inner, cache: str, preferred: str = "python3", boot: str | None = None ):
     """`cmd`, errand itself ( `python -m errand…`, or one of its modules ), as it must cross to
     start over there.
 
@@ -227,7 +244,7 @@ def command( cmd, inner, home: str, preferred: str = "python3", boot: str | None
     module = str( argv[ 2 ] )
     rest = ( [ ] if module == "errand" else [ "-m", module ] ) + [ str( a ) for a in argv[ 3 : ] ]
     if L.chooses_python( inner ):
-        return L.Command( [ "python", boot or f"{home}/{boot_rel()}", *rest ], cmd.env )
-    where = shlex.quote( boot ) if boot else f'"$HOME"/{shlex.quote( boot_rel() )}'
+        return L.Command( [ "python", boot or f"{cache}/{boot_rel()}", *rest ], cmd.env )
+    where = shlex.quote( boot ) if boot else f'"$base"/{shlex.quote( boot_rel() )}'
     then = f'exec "$py" {where} "$@"\n'
     return L.Command( [ "sh", "-c", _script( then, preferred ), "sh", *rest ], cmd.env )

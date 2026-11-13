@@ -23,15 +23,15 @@ def ctx( ):
 @contextlib.contextmanager
 def cache( where ):
     """The image cache moved to `where` for the duration: nothing real is touched."""
-    old = os.environ.get( "XDG_CACHE_HOME" )
-    os.environ[ "XDG_CACHE_HOME" ] = str( where )
+    old = os.environ.get( "ERRAND_CACHE_DIR" )
+    os.environ[ "ERRAND_CACHE_DIR" ] = str( Path( where ) / "errand" )
     try:
         yield
     finally:
         if old is None:
-            os.environ.pop( "XDG_CACHE_HOME" )
+            os.environ.pop( "ERRAND_CACHE_DIR" )
         else:
-            os.environ[ "XDG_CACHE_HOME" ] = old
+            os.environ[ "ERRAND_CACHE_DIR" ] = old
 
 
 if test( "windows is first, like ssh" ):
@@ -99,14 +99,14 @@ if test( "ssh hands a machine to boot its own host, and brings back what it fetc
 if test( "what the machine is, asked through its host and read back" ):
     with tempfile.TemporaryDirectory() as tmp, cache( tmp ):
         facts = vm.Facts.of( L.Here( Path( tmp ) ) )
-        assert facts.where == "here" and facts.cache == tmp, facts
+        assert facts.where == "here" and facts.cache == f"{tmp}/errand", facts
         assert { "ssh", "tar" } <= facts.tools, facts.tools
         assert facts.arch and facts.system and facts.user, facts
 
 
 def facts( **kw ):
     return vm.Facts( **{ **dict( where = "on lmo", arch = "x86_64", system = "Linux", user = "me", kvm = "rw",
-                                 kvm_group = "kvm", cache = "/home/me/.cache", os_ids = { "ubuntu", "debian" },
+                                 kvm_group = "kvm", cache = "/home/me/.cache/errand", os_ids = { "ubuntu", "debian" },
                                  tools = { "ssh", "tar" } ), **kw } )
 
 

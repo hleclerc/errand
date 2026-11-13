@@ -7,7 +7,7 @@ The allocation is an `sbatch` job whose batch step IS an agent -- a bare one,
 on the Python `bootstrap` finds there -- so it holds the allocation for as long
 as it serves, and goes once nothing used it for `keep_alive`: the job ends,
 the allocation is released, nobody has to remember to. The job and the agent's
-directory are written under `~/.cache/errand/alloc/<name>/` on the cluster, and
+directory are written under `~/.cache/errand/alloc/<name>/` ( or `$ERRAND_CACHE_DIR` ) on the cluster, and
 go with the job: what sessions write is kept in the project ( `errand-outputs/state/procs/` ).
 
 A command reaches that agent through the host agent of the login node: a
@@ -27,7 +27,7 @@ from pathlib import Path
 from .. import agents, bootstrap, layers as L
 from ..agents import upstream as U
 
-ALLOC = f"{bootstrap.BASE}/alloc"
+ALLOC = "alloc"                   # in errand's per-user directory
 
 
 def scheduler( stack ):
@@ -56,9 +56,9 @@ class Allocation:
         self.flags = self.sched.flags( ctx )
         shape = f"{env.name}\0{' '.join( self.flags )}\0{bootstrap.sources_key()}"
         self.name = f"{L.fingerprint( shape )}"
-        self.home = where.home or str( Path.home() )
-        self.dir = f"{self.home}/{ALLOC}/{self.name}"
-        self.boot = f"{self.home}/{bootstrap.boot_rel()}" if where.ssh is not None else str( bootstrap.PACKAGE / "_boot.py" )
+        self.cache = where.cache or str( bootstrap.local_cache() )
+        self.dir = f"{self.cache}/{ALLOC}/{self.name}"
+        self.boot = f"{self.cache}/{bootstrap.boot_rel()}" if where.ssh is not None else str( bootstrap.PACKAGE / "_boot.py" )
 
     def _python( self, then: str ) -> str:
         """`sh -c '<find a python>; <then>'`: a bare python of the node, as a host agent's."""
@@ -120,7 +120,7 @@ exec srun -u --jobid="$j" --overlap -N1 -n1 -w "$node" {connect} sh "$d/$j" {sel
 
         def line_for( where_ ):
             cmd = L.Command( [ "python", "-m", "errand.agents", "connect", where_, str( self.keep ) ] )
-            sent = bootstrap.command( cmd, self.after, self.home, "python3", boot = self.boot )
+            sent = bootstrap.command( cmd, self.after, self.cache, "python3", boot = self.boot )
             return f"cd {shlex.quote( str( self.where.there ) )} && {L.compose( self.after, sent, ctx ).shell()}"
 
         digest = hashlib.sha1( line_for( "@" ).encode() ).hexdigest()[ : 10 ]

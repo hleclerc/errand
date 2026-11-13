@@ -23,7 +23,7 @@ def _ago( seconds: float ) -> str:
 
 def hubs( ) -> list:
     """The directories of the hubs here, the current one first."""
-    base = Path.home() / bootstrap.BASE
+    base = bootstrap.local_cache()
     current = U.hub_dir()
     others = sorted( d for d in base.glob( "hub-*" ) if d.is_dir() and d != current )
     return [ current, *others ]

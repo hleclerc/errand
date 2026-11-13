@@ -24,7 +24,7 @@ from .client import Connection
 
 
 KEEP_ALIVE = 900.0          # seconds an agent with no client and nothing running stays
-AGENTS = f"{bootstrap.BASE}/agents"
+AGENTS = "agents"                 # in errand's per-user directory
 
 
 def ssh_target( ssh ) -> dict:
@@ -86,8 +86,8 @@ def argv_of( target: dict ) -> list:
         return list( target[ "argv" ] )          # a command whose stdio reaches a bridge ( `envs.py` )
     if target[ "kind" ] == "local":
         return [ sys.executable, "-m", "errand.agents", "connect", str( target[ "dir" ] ), str( keep ) ]
-    where = f'"$HOME"/{shlex.quote( AGENTS + "/" + name_of( target ) )}'
-    then = f'exec "$py" "$HOME"/{shlex.quote( bootstrap.boot_rel() )} -m errand.agents connect {where} {keep}\n'
+    where = f'"$base"/{shlex.quote( AGENTS + "/" + name_of( target ) )}'
+    then = f'exec "$py" "$base"/{shlex.quote( bootstrap.boot_rel() )} -m errand.agents connect {where} {keep}\n'
     line = " ".join( shlex.quote( a ) for a in ( "sh", "-c", bootstrap._script( then, target.get( "python" ) or "python3" ) ) )
     # Through the user's interactive shell, as every remote command is: it is what puts
     # micromamba or a module system on the PATH the agent, and all it starts, will have.
@@ -135,4 +135,4 @@ def direct( target: dict ) -> Connection:
 
 
 def hub_dir( fresh = False ) -> Path:
-    return Path.home() / bootstrap.BASE / f"hub-{bootstrap.sources_key( fresh )}"
+    return bootstrap.local_cache() / f"hub-{bootstrap.sources_key( fresh )}"

@@ -17,7 +17,7 @@ from errand import bootstrap as B, layers as L
 
 
 def run_sh( line, home, path = None ):
-    env = { **os.environ, "HOME": str( home ) }
+    env = { **{ k: v for k, v in os.environ.items() if k != B.ENV }, "HOME": str( home ) }
     if path is not None:
         env[ "PATH" ] = path
     return subprocess.run( [ "/bin/sh", "-c", line ], capture_output = True, text = True, env = env, timeout = 120 )
@@ -73,16 +73,45 @@ if test( "nothing to be found and nothing to make one with: it says so, and fail
         assert not ( Path( home ) / B.BASE / "python.lock" ).exists(), "the lock is let go"
 
 
-if test( "the shipped copy starts the way it starts over there" ):
+def started_copy( cache_env = None ):
+    """The shipped copy, put where errand's per-user directory is, started as over there."""
     with tempfile.TemporaryDirectory() as home:
-        copy = Path( home ) / B.src_rel() / "errand"
+        cache = Path( cache_env ) if cache_env else Path( home ) / B.BASE
+        copy = cache / B.src_rel() / "errand"
         shutil.copytree( B.PACKAGE, copy, ignore = shutil.ignore_patterns( "__pycache__" ) )
-        cmd = B.command( L.Command( [ "python", "-m", "errand", "--version" ], { } ), [ ], home )
-        env = { k: v for k, v in os.environ.items() if k != "PYTHONPATH" }
-        got = subprocess.run( cmd.argv, capture_output = True, text = True, cwd = home,
-                              env = { **env, "HOME": home }, timeout = 120 )
+        cmd = B.command( L.Command( [ "python", "-m", "errand", "--version" ], { } ), [ ], str( cache ) )
+        env = { k: v for k, v in os.environ.items() if k not in ( "PYTHONPATH", B.ENV ) }
+        got = subprocess.run( cmd.argv, capture_output = True, text = True, cwd = home, timeout = 120,
+                              env = { **env, "HOME": home, **( { B.ENV: cache_env } if cache_env else { } ) } )
         assert got.returncode == 0, got.stderr
         assert str( copy ) in got.stdout, got.stdout
+
+
+if test( "the shipped copy starts the way it starts over there" ):
+    started_copy()
+
+
+if test( "ERRAND_CACHE_DIR moves errand's per-user directory" ):
+    with tempfile.TemporaryDirectory() as elsewhere:
+        started_copy( elsewhere )
+        old = os.environ.get( B.ENV )
+        os.environ[ B.ENV ] = elsewhere
+        try:
+            assert B.local_cache() == Path( elsewhere )
+            from errand.vm import places
+            from errand.agents import upstream
+            assert places.live_dir() == Path( elsewhere ) / "vm"
+            assert upstream.hub_dir().parent == Path( elsewhere )
+        finally:
+            if old is None:
+                os.environ.pop( B.ENV )
+            else:
+                os.environ[ B.ENV ] = old
+    with tempfile.TemporaryDirectory() as home:
+        got = run_sh( f'HOME={home}; ERRAND_CACHE_DIR={home}/c; echo {B.SH_BASE}', home )
+        assert got.stdout.strip() == f"{home}/c", got.stdout
+        got = run_sh( f'HOME={home}; unset ERRAND_CACHE_DIR; echo {B.SH_BASE}', home )
+        assert got.stdout.strip() == f"{home}/.cache/errand", got.stdout
 
 
 if test( "the oldest Python errand runs on is said once, and pyproject agrees" ):

@@ -53,16 +53,16 @@ def arrive( env, tags, root ):
     there = ssh.remote_root( L.Context( root = root ) ) if ssh is not None else root
     for message in L.warnings_for( env.stack_for( "run", tags ), there ):
         print( warn( f"  warning: {message}" ), flush = True )
-    home = None
+    cache = None
     if ssh is not None:
         say( f"  rsync push -> {ssh.host}:{there}" )
         L.push( root, ssh.host, there, ssh.options, echo = say, outputs = ssh.errand_outputs_directory )
         for other in ssh.also:
             L.push( Path( os.path.normpath( root / other ) ), ssh.host,
                     Path( os.path.normpath( there / other ) ), ssh.options )
-        home = bootstrap.ship( ssh.host, ssh.options )
-    return SimpleNamespace( root = root, ssh = ssh, there = Path( there ), home = home,
-                            boot = envs.boot_of( ssh, home ) )
+        cache = bootstrap.ship( ssh.host, ssh.options )
+    return SimpleNamespace( root = root, ssh = ssh, there = Path( there ), cache = cache,
+                            boot = envs.boot_of( ssh, cache ) )
 
 
 class Reach:
@@ -85,7 +85,7 @@ class Reach:
         """The session as one shell line, through the layers, from the project's root over there."""
         ssh = self.where.ssh
         cmd = L.Command( [ "python", "-m", "errand.agents.ops", "session", json.dumps( request ) ], child )
-        sent = bootstrap.command( cmd, self.inner, self.where.home or str( Path.home() ),
+        sent = bootstrap.command( cmd, self.inner, self.where.cache or str( bootstrap.local_cache() ),
                                   ssh.python if ssh is not None else "python",
                                   boot = None if ssh is not None else self.where.boot )
         self.wrapped = L.compose( self.inner, sent, self.ctx )
@@ -106,7 +106,7 @@ class Reach:
             return LocalSession( [ "ssh", "-T", *w.ssh.options, w.ssh.host, f"$SHELL -ic {shlex.quote( line )}" ] )
         if self.kind in ( "agent", "alive" ):
             self.target = ( envs.target( self.env, self.stack, self.tags, self.phase, root = w.there, ssh = w.ssh,
-                                         home = w.home ) if self.kind == "agent"
+                                         cache = w.cache ) if self.kind == "agent"
                             else alive.Allocation( self.env, self.tags, w ).env_target() )
             conn = agents.open( self.target )
             return Session.start( conn, envs.ops_argv( envs.python_of( conn ), w.boot, request,

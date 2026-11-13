@@ -69,7 +69,7 @@ if test( "setup keeps every layer of either phase current" ):
 
 def _where( ):
     from types import SimpleNamespace
-    return SimpleNamespace( root = Path( "/proj" ), ssh = None, there = Path( "/proj" ), home = None,
+    return SimpleNamespace( root = Path( "/proj" ), ssh = None, there = Path( "/proj" ), cache = None,
                             boot = "/errand/_boot.py" )
 
 

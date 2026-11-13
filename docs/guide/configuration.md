@@ -69,7 +69,8 @@ errand.configure(
 | `exclude` | vendored code, fixtures, a copy of something that would be imported and should not be |
 
 The `out` and `state` of an older errand are ignored, with a warning: what they named is in
-`errand-outputs/` now. `builds_directory` is not `build`, the directory where a runner's build goes
+`errand-outputs/` now. [Where errand writes](./storage) gathers every place, for a home with
+little room say. `builds_directory` is not `build`, the directory where a runner's build goes
 ( `build/<env>/` ), which is unchanged.
 
 `--out` puts one invocation's runs somewhere else, and `--root` overrides the project root, which is

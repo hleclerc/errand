@@ -72,7 +72,8 @@ class Agent:
         try:
             if op == "ping":
                 writer.send( channel, F.REPLY, { "ok": True, "pid": os.getpid(), "root": str( self.root ),
-                                                 "python": sys.executable, "home": os.path.expanduser( "~" ) } )
+                                                 "python": sys.executable, "home": os.path.expanduser( "~" ),
+                                                 "cache": _cache() } )
             elif op == "spawn":
                 # what it starts knows which agent started it: where a zygote beside it lives ( `warm` )
                 env = { **( req.get( "env" ) or { } ), "ERRAND_AGENT_DIR": str( self.root ) }
@@ -173,3 +174,9 @@ class Agent:
         self.root.mkdir( parents = True, exist_ok = True )
         sweep( self.root )
         return endpoint.serve( self.root, self.idle, client )
+
+
+def _cache( ) -> str:
+    """errand's per-user directory on this machine, as `ping` reports it."""
+    from .. import bootstrap
+    return str( bootstrap.local_cache() )

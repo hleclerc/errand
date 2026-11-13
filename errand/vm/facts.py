@@ -16,7 +16,7 @@ if [ -e /dev/kvm ]; then
     if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then f kvm rw
     else f kvm no; f kvm_group "$( stat -c %G /dev/kvm 2>/dev/null || stat -f %Sg /dev/kvm )"; fi
 else f kvm absent; fi
-f cache "${XDG_CACHE_HOME:-$HOME/.cache}"
+f cache "${ERRAND_CACHE_DIR:-$HOME/.cache/errand}"
 f root "$( pwd )"
 ( . /etc/os-release 2>/dev/null && f os "$ID $ID_LIKE" )
 for t in qemu-system-x86_64 qemu-img ssh scp ssh-keygen tar rsync zstd curl wget; do
@@ -34,7 +34,7 @@ class Facts:
     user     : str
     kvm      : str                   # rw, no ( there but not ours ), absent
     kvm_group: str
-    cache    : str                   # its ~/.cache, as an absolute path over there
+    cache    : str                   # errand's per-user directory over there, absolute
     os_ids   : set                   # ID and ID_LIKE of /etc/os-release: ubuntu, debian
     tools    : set
     root     : str = ""              # the project's copy over there, where the images are

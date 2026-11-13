@@ -36,7 +36,7 @@ errand run -k bench --env box "bench/**::*"
 | `python` | the interpreter to try first over there when no later layer chooses one ( [below](#nothing-to-install-over-there) ) |
 | `options` | passed to ssh **and** to rsync — a port, an identity, a jump host |
 | `also` | sibling checkouts the work needs ( `[ "../loom" ]` ), pushed to the same relative place over there |
-| `errand_outputs_directory` | where errand writes for the project over there — runs, builds, state — say `/scratch/me/proj-out`. The project's copy then holds a symlink `errand-outputs` to it. Default: the copy's own `errand-outputs/` |
+| `errand_outputs_directory` | where errand writes for the project over there — runs, builds, state — say `/scratch/me/proj-out`. The project's copy then holds a symlink `errand-outputs` to it. Default: the copy's own `errand-outputs/`. See [Where errand writes](../storage) for a small home |
 
 ## Nothing to install over there
 

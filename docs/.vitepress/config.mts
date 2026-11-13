@@ -94,6 +94,7 @@ export default defineConfig( {
         items: [
           { text: 'Configuration',   link: '/guide/configuration' },
           { text: 'Writing entries', link: '/guide/declaring-work' },
+          { text: 'Where errand writes', link: '/guide/storage' },
         ]
       },
       {

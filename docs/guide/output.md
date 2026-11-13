@@ -188,7 +188,8 @@ project root or absolute — overridden for one machine by `ERRAND_OUTPUTS_DIR`,
 shared filesystem. `builds/` can go elsewhere on its own with `builds_directory`. See
 [Configuration](./configuration). Those are the paths errand writes to, and they are the whole
 state: there is no database, no ledger and no daemon. Delete `errand-outputs/runs/` and you have
-deleted the records of the runs, nothing else.
+deleted the records of the runs, nothing else. For everything errand writes, in the project and
+out of it, and how to put it on another disk, see [Where errand writes](./storage).
 
 A project that had a `.errand/` and a `runs/` from an older errand has them moved into
 `errand-outputs/` the first time errand runs there — and over there at the next push — once.

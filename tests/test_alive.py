@@ -13,7 +13,7 @@ from errand import test
 
 def where( ):
     return SimpleNamespace( root = Path( "/proj" ), ssh = errand.Ssh( host = "cluster", root = "/scratch/proj" ),
-                            there = Path( "/scratch/proj" ), home = "/home/me", boot = "/home/me/_boot.py" )
+                            there = Path( "/scratch/proj" ), cache = "/home/me/.cache/errand", boot = "/home/me/_boot.py" )
 
 
 if test( "a scheduler held warm is reached through an agent in its allocation, not by srun each time" ):

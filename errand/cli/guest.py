@@ -85,7 +85,7 @@ class Guest:
         from ..vm.common import VmError
         from ..vm.transfer import rsync_failed, rsync_line
         if self.where.ssh is not None:          # ~/.cache/errand/src/<key>/ holds `errand/`
-            source, dest = f"{self.where.home}/{bootstrap.src_rel()}/", self.src
+            source, dest = f"{self.where.cache}/{bootstrap.src_rel()}/", self.src
         else:                                   # this checkout's own package
             source, dest = f"{bootstrap.PACKAGE}/", f"{self.src}/errand"
         win = dest.replace( "/", "\\" )

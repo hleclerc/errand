@@ -87,8 +87,8 @@ class Ssh( Gateway ):
         elif bootstrap.is_errand( cmd.argv ):
             # errand itself: its sources go over there, and it starts on a
             # Python that is there -- found, or made for it ( `bootstrap` ).
-            home = bootstrap.prepare( self, inner, there, echo = echo )
-            sent = bootstrap.command( cmd, inner, home, self.python )
+            cache = bootstrap.prepare( self, inner, there, echo = echo )
+            sent = bootstrap.command( cmd, inner, cache, self.python )
             code = run_on( there, inner, sent, remote_ctx, echo = echo )
         else:
             code = run_on( there, inner, Command( under( cmd.argv, self.python ), cmd.env ),
@@ -108,13 +108,17 @@ def _rsh( options, host = None, agent = True ):
     return [ "-e", "ssh " + " ".join( shlex.quote( o ) for o in options ) ] if options else [ ]
 
 
-def _remote( host, options, line: str, agent = True ):
-    """A shell line on `host`: through its agent when there is a hub, else one ssh."""
+def _remote( host, options, line: str, agent = True, interactive = False ):
+    """A shell line on `host`: through its agent when there is a hub, else one ssh. `interactive`:
+    in the user's interactive shell, as the agent's own is, for a line that needs what the
+    profile sets ( `ERRAND_CACHE_DIR` )."""
     if agent and agents.mode() == "hub":
         try:
             return agents.shell( agents.open( agents.upstream.of_host( host, options ) ), line, capture = True )
         except Exception:
             pass
+    if interactive:
+        line = f"$SHELL -ic {shlex.quote( line )}"
     return subprocess.run( [ "ssh", *options, host, line ], capture_output = True, text = True,
                            stdin = subprocess.DEVNULL )
 

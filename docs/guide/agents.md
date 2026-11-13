@@ -127,7 +127,8 @@ or a hub starts, it removes the directories beside its own that nobody serves an
 for an hour, and with a lock that no process holds. A Slurm allocation held warm takes its
 directory with it when the job ends; a virtual machine nobody used for a day leaves nothing here.
 What stays in `~/.cache/errand` for good is errand's own: its sources, and the Python it made for
-itself where the machine had none.
+itself where the machine had none. [Where errand writes](./storage) says how to put all of it
+elsewhere.
 
 ## What is up, and stopping it
 

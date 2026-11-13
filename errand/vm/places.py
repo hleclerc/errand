@@ -12,7 +12,9 @@ from pathlib import Path
 
 
 def cache_dir( ) -> Path:
-    return Path( os.environ.get( "XDG_CACHE_HOME" ) or Path.home() / ".cache" ) / "errand"
+    """errand's per-user directory here: `ERRAND_CACHE_DIR`, else `~/.cache/errand`."""
+    from .. import bootstrap
+    return bootstrap.local_cache()
 
 
 def images_rel( ) -> str:

@@ -84,7 +84,7 @@ def held( host, needs: dict, label: str ):
     try:
         conn = agents.open( U.ssh_target( host.ssh ) )
         said = conn.ping()
-        boot = f"{said[ 'home' ]}/{bootstrap.boot_rel()}"
+        boot = f"{said.get( 'cache' ) or said[ 'home' ] + '/' + bootstrap.BASE}/{bootstrap.boot_rel()}"
         call = conn.open( { "op": "spawn", "keep": False, "argv": [
             said[ "python" ], boot, "-m", "errand.queue", "hold",
             json.dumps( { "needs": needs, "label": label } ) ] } )

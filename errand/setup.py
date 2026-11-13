@@ -166,9 +166,9 @@ def _inside( env, ctx ):
             from . import bootstrap
             ssh = env.ssh
             there = ssh.remote_root( ctx ) if ssh is not None else ctx.root
-            home = bootstrap.ship( ssh.host, ssh.options ) if ssh is not None else None
+            cache = bootstrap.ship( ssh.host, ssh.options ) if ssh is not None else None
             made[ "ctx" ] = alive.Allocation( env, ctx.tags, SimpleNamespace(
-                root = ctx.root, ssh = ssh, there = Path( there ), home = home ) ).inside()
+                root = ctx.root, ssh = ssh, there = Path( there ), cache = cache ) ).inside()
         return made[ "ctx" ]
 
     return inside
