@@ -8,7 +8,7 @@ import shlex
 import subprocess
 import sys
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from .. import trace
 
@@ -172,6 +172,51 @@ def _how( quiet, capture, input ) -> dict:
     return how
 
 
+WINDOWS = sys.platform == "win32"
+
+
+def remote_path( path ):
+    """A path of the machine an `Ssh` leads to, which is POSIX: errand started on Windows must not read it
+    as one of its own ( `a/b` turned into `a\\b` )."""
+    if path is None or not WINDOWS:
+        return None if path is None else Path( path )
+    return PurePosixPath( str( path ).replace( "\\", "/" ) )
+
+# What only a shell reads: on Windows, where there is none, a line holding one of them is not run.
+SHELL_SYNTAX = { "&&", "||", ";", "|", "&", ">", ">>", "<", "2>", "2>&1", "(", ")", "{", "}" }
+
+
+class NeedsAShell( RuntimeError ):
+    """A line errand would run here through `sh`, on a machine that has none: a path not made for Windows yet."""
+
+
+def windows_argv( line: str ) -> list:
+    """`line`, one command quoted as `sh( argv )` quotes it, as the argv Windows starts. `python3`, which a Windows
+    rarely has under that name, is the interpreter errand runs on when it is not found."""
+    import shutil
+    try:
+        argv = shlex.split( line )
+    except ValueError:
+        argv = None
+    if not argv or any( a in SHELL_SYNTAX or "$(" in a or "`" in a for a in argv ) or argv[ 0 ] in ( "command", "test", "[" ):
+        raise NeedsAShell( f"errand would run this line through sh, and Windows has none: {line[ : 200 ]}" )
+    if argv[ 0 ] in INTERPRETERS and shutil.which( argv[ 0 ] ) is None:
+        argv[ 0 ] = sys.executable
+    return argv
+
+
+def windows_env( env: dict ) -> dict:
+    """A command's variables as cmd.exe's `set` would leave them: `%PATH%` and the like read, one after the other."""
+    import os
+    import re
+    seen = { k.upper(): v for k, v in os.environ.items() }
+    out = { }
+    for k, v in env.items():
+        out[ k ] = re.sub( r"%([^%]+)%", lambda m: seen.get( m.group( 1 ).upper(), m.group( 0 ) ), str( v ) )
+        seen[ k.upper() ] = out[ k ]
+    return out
+
+
 class Here:
     """This machine, from the project root: what the first layer is handed."""
     remote = False
@@ -181,6 +226,11 @@ class Here:
 
     def shell( self, line: str, *, quiet = False, tty = False, capture = False, input = None,
                timeout = None ):
+        if WINDOWS:
+            # No `sh` here: a line that is one command ( what `sh( argv )` writes ) runs as that command; anything
+            # a shell would have to read is said, by name, rather than guessed at.
+            return subprocess.run( windows_argv( line ), cwd = str( self.root ), timeout = timeout,
+                                   **_how( quiet, capture, input ) )
         return subprocess.run( [ "sh", "-c", line ], cwd = str( self.root ), timeout = timeout,
                                **_how( quiet, capture, input ) )
 

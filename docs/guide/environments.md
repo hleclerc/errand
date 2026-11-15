@@ -113,6 +113,40 @@ The same trick covers the case where one platform has apptainer and another does
 environments, the same tags, the same fingerprint, the same output paths, only the container engine
 differs. Choosing where to run has nothing to say about which engine holds the image.
 
+## Environments a package provides
+
+A library can declare environments for the projects that use it, so that they have nothing to write: build
+environments under fixed names, say. A provider is a function taking the project root, which fills
+`errand.envs` like a project file does:
+
+```python
+# mylib/errand_envs.py
+import errand
+
+def provide( root ):
+    errand.envs[ "mylib-linux" ] = errand.Env( [ errand.Apptainer( image = "mylib.sif", recipe = "…" ) ] )
+```
+
+An installed package declares it under the entry point group `errand.envs`:
+
+```toml
+[project.entry-points."errand.envs"]
+mylib = "mylib.errand_envs:provide"
+```
+
+and a program that drives errand itself appends it to `errand.providers` before calling `errand.main`.
+
+A provider that finds no way to an environment from this machine declares it anyway, as a
+[`Missing`](./layers/missing) that says what to write where, rather than leaving it undeclared. A layer a
+user may give a provider to complete ( an `Apptainer` with its `scratch`, a `Micromamba` with its
+`root_prefix` ) can be declared without its `image` or `name`; used as it is, it is refused.
+
+Providers run after `errand-vars.py`, so they can read what this machine knows ( `errand.value` ), and
+before the project's other files, which have the last word: one of them can redefine an environment under
+the same name, or change it in place ( `errand.envs[ "mylib-linux" ].stack.append( … )` ). They run even in a
+project that has no `errand-*.py` at all. A provider that fails is said, and skipped: what the others
+declare is still there.
+
 ## Looking at them
 
 ```bash
@@ -144,7 +178,8 @@ errand run --grid=, -k bench --env gpu,cluster    # both: --grid asks for severa
 
 Use `--env NAME` when you want exactly one and mean it. Everything else is in [Tags](./tags).
 
-With nothing asked for, `errand.default_env = "name"` decides; with none, the first one declared is used;
+With nothing asked for, `errand.default_env = "name"` decides; with none, the first one the project declared is used ( never
+one a [provider](#environments-a-package-provides) declared );
 with no environment declared at all, errand runs in the interpreter you started it with.
 
 ## Next

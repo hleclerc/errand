@@ -51,7 +51,8 @@ if test( "a session is a fork of the zygote, which stays, and learns what to imp
         first = session( p, agent )
         assert first.returncode == 0 and "PASS hello" in first.stdout, first.stdout + first.stderr
         zygote = agent / "warm"
-        assert ( zygote / "sock" ).exists(), "the zygote stays"
+        log = ( zygote / "log" ).read_text() if ( zygote / "log" ).exists() else "( no log )"
+        assert ( zygote / "sock" ).exists(), f"the zygote stays:\n{log[ -1500 : ]}"
         second = session( p, agent )
         assert second.returncode == 0 and "PASS hello" in second.stdout, second.stdout + second.stderr
         pids = [ int( r.stdout.split( "pid " )[ 1 ].split()[ 0 ] ) for r in ( first, second ) ]
@@ -102,3 +103,34 @@ if test( "sessions are forked only where the stack asks for it, with a Preload" 
     assert warm[ 3 ] == "errand.agents.warm"
     request = json.loads( warm[ -1 ] )
     assert request[ "preload" ] == [ "torch" ] and request[ "learn" ] is False
+
+
+if test( "the zygote keeps as long as its agent, is listed, and goes when its agent goes ( ADR 0008 )" ):
+    if not hasattr( os, "fork" ):
+        from errand import skip
+        skip( "no fork here" )
+    from errand.agents import table as T
+    d = Path( tempfile.mkdtemp( dir = "/tmp" ) )
+    stand_in = subprocess.Popen( [ "sleep", "60" ] )         # the agent, as far as the zygote can tell
+    try:
+        p, agent = project( d ), d / "agent"
+        os.environ[ "ERRAND_AGENT_PID" ], os.environ[ "ERRAND_AGENT_KEEP" ] = str( stand_in.pid ), "300"
+        try:
+            got = session( p, agent )
+        finally:
+            del os.environ[ "ERRAND_AGENT_PID" ], os.environ[ "ERRAND_AGENT_KEEP" ]
+        assert got.returncode == 0 and "PASS hello" in got.stdout, got.stdout + got.stderr
+        listed = T.zygotes( [ agent ] )
+        assert len( listed ) == 1 and listed[ 0 ][ "pid" ], listed
+        zygote = listed[ 0 ][ "pid" ]
+        stand_in.kill()
+        stand_in.wait()
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline and T.pid_runs( zygote ):
+            time.sleep( 0.1 )
+        assert not T.pid_runs( zygote ), "a zygote outlived its agent"
+        assert T.zygotes( [ agent ] ) == [ ]
+    finally:
+        if stand_in.poll() is None:
+            stand_in.kill()
+        shutil.rmtree( d, ignore_errors = True )

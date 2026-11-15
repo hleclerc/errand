@@ -25,23 +25,26 @@ One file per family:
     schedulers    Slurm, and waiting for a job
     gateways      Ssh, push and fetch
     hosts         Here and Over: where a layer's own work runs
+    missing       Missing: what cannot be reached from here, said
     stacks        questions about a whole stack
 """
 from __future__ import annotations
 
-from .base import _how, _install_steps, _quiet, Command, compose, Context, file_stamp, fingerprint, Here, INTERPRETERS, sh, SITE_STAMP, under
+from .base import _how, _install_steps, _quiet, Command, compose, Context, file_stamp, fingerprint, Here, INTERPRETERS, NeedsAShell, remote_path, sh, SITE_STAMP, under, WINDOWS, windows_argv, windows_env
 from .families import Artefact, batch_of, Container, Gateway, Interpreter, is_scheduler, Launcher, Layer, Overlay, Scheduler
 from .overlays import Guix, Module, Nix, Vars
 from .launchers import Mpi, Preload, preload_of
 from .interpreters import Conda, fetch_micromamba, Micromamba, MICROMAMBA_URL, Uv, Venv
 from .containers import _BuiltElsewhere, Apptainer, Docker, Podman, relay, replace_line
-from .schedulers import run_on, Slurm, slurm_seconds, watch_dir, watch_job
-from .gateways import _remote, _rsh, fetch, own_paths, push, RSYNC_EXCLUDES, Ssh, ssh_options, Unreachable
+from .schedulers import run_on, Slurm, slurm_seconds, unhooked, watch_dir, watch_job
+from .gateways import _remote, _rsh, back_zones, fetch, own_paths, push, RSYNC_EXCLUDES, Ssh, transfer, ssh_options, Unreachable
 from .hosts import _NO_AGENT, host_of, Over
+from .missing import Missing, missing_of
 from .stacks import chooses_python, container_of, interpreters_of, mpi_of, NODE_LOCAL, ssh_of, vm_of, warnings_for
 
 
 __all__ = [
+    'NeedsAShell', 'remote_path', 'WINDOWS', 'windows_argv', 'windows_env',
     'Command',
     'Context',
     'Layer',
@@ -81,6 +84,8 @@ __all__ = [
     'Slurm',
     'RSYNC_EXCLUDES',
     'own_paths',
+    'back_zones',
+    'transfer',
     'Ssh',
     '_rsh',
     '_remote',
@@ -99,6 +104,7 @@ __all__ = [
     'slurm_seconds',
     'watch_dir',
     'run_on',
+    'unhooked',
     'watch_job',
     'warnings_for',
     'container_of',
@@ -107,4 +113,6 @@ __all__ = [
     'mpi_of',
     'ssh_of',
     'vm_of',
+    'Missing',
+    'missing_of',
 ]

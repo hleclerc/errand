@@ -53,6 +53,7 @@ export default defineConfig( {
             { text: 'Ssh',                         link: '/guide/layers/ssh' },
             { text: 'Slurm',                       link: '/guide/layers/slurm' },
             { text: 'Windows',                     link: '/guide/layers/windows' },
+            { text: 'WindowsBox',                  link: '/guide/layers/windows-box' },
             { text: 'Apptainer, Docker, Podman',   link: '/guide/layers/containers' },
             { text: 'Micromamba, Conda',           link: '/guide/layers/micromamba' },
             { text: 'Venv, Uv',                    link: '/guide/layers/venv' },
@@ -61,6 +62,7 @@ export default defineConfig( {
             { text: 'Mpi',                         link: '/guide/layers/mpi' },
             { text: 'Preload',                     link: '/guide/layers/preload' },
             { text: 'Vars',                        link: '/guide/layers/vars' },
+            { text: 'Missing',                     link: '/guide/layers/missing' },
           ] },
         ]
       },

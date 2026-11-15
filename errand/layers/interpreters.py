@@ -8,7 +8,7 @@ import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .base import _install_steps, _quiet, Command, Context, file_stamp, sh, SITE_STAMP, under
+from .base import _install_steps, _quiet, Command, Context, file_stamp, sh, SITE_STAMP, under, WINDOWS
 from .families import Artefact, Interpreter
 
 
@@ -54,7 +54,7 @@ class Venv( Interpreter, Artefact ):
 @dataclass
 class Micromamba( Interpreter, Artefact ):
     """A micromamba environment, by name."""
-    name        : str
+    name        : str = ""          # empty only in a declaration something completes ( a package's own layers ): refused when used
     python      : str | None = None
     channels    : list = field( default_factory = lambda: [ "conda-forge" ] )
     packages    : list = field( default_factory = list )
@@ -189,6 +189,8 @@ class Uv( Interpreter, Artefact ):
     when        : str | None = None     # a condition: an expression over the tags and `phase`
 
     def _python( self, ctx ):
+        if WINDOWS and not ctx.remote:          # a venv on Windows: Scripts\python.exe
+            return str( ctx.root / self.path / "Scripts" / "python.exe" )
         return str( ctx.root / self.path / "bin" / "python" )
 
     def wrap( self, cmd: Command, ctx: Context ) -> Command:
@@ -207,7 +209,7 @@ class Uv( Interpreter, Artefact ):
         return sh( [ "test", "-x", f"{self.path}/bin/python" ] )
 
     def stamp_shell( self, ctx ):
-        return sh( [ f"{self.path}/bin/python", "-c", SITE_STAMP ] )
+        return sh( [ self._python( ctx ) if WINDOWS and not ctx.remote else f"{self.path}/bin/python", "-c", SITE_STAMP ] )
 
     def kept( self ):
         return [ self.path ]

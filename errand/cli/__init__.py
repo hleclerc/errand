@@ -20,7 +20,7 @@ from .main import main
 from .parsing import ARGS, build_parser, KINDS, split_args, split_target, split_verb
 from .grid import alternatives, describe_grid, expand, separator_for
 from .plans import plan_of, plan_path, planned, read_plan
-from .project import _put_src_on_path, _targets, child_env_for, IN_ENV, output_tree
+from .project import _put_src_on_path, _targets, child_env_for, IN_ENV, output_tree, TAGS
 from .here import aggregate_needs
 from .parallel import job_count
 
@@ -43,6 +43,7 @@ __all__ = [
     '_targets',
     '_put_src_on_path',
     'IN_ENV',
+    'TAGS',
     'aggregate_needs',
     'job_count',
     'child_env_for',

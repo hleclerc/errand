@@ -58,6 +58,12 @@ class Env:
         self.name  = ""
         self.stack = list( stack )
         self.tags  = dict( tags )
+        for i, layer in enumerate( self.stack ):
+            # A `WindowsBox` is reached by the `Ssh` before it: its own copy knows which.
+            if getattr( layer, "is_box", False ):
+                import dataclasses
+                self.stack[ i ] = layer = dataclasses.replace( layer )
+                layer.via = self.stack[ 0 ] if i == 1 and isinstance( self.stack[ 0 ], L.Ssh ) else None
         # What does not depend on the selected tags can be checked now, rather
         # than on the day somebody first runs in this environment.
         for phase in PHASES:
@@ -107,6 +113,11 @@ class Env:
     def vm( self ):
         return L.vm_of( self.stack_for( "run" ) )
 
+    @property
+    def missing( self ):
+        """The `Missing` layer that says why this environment cannot be reached from here, or None."""
+        return L.missing_of( [ l for _, l in self.indexed() ] )
+
     def describe( self ):
         def one( l ):
             when = getattr( l, "when", None )
@@ -154,6 +165,12 @@ def check_stack( stack, phase = "run" ):
         # the machine that boots it.
         if getattr( layer, "is_vm", False ) and i and not ( i == 1 and isinstance( stack[ 0 ], L.Ssh ) ):
             raise ValueError( f"{type( layer ).__name__} must be the first layer, or follow its Ssh" )
+    for layer in stack:
+        # An image left for something to fill in ( a package that completes the layers its users give ) and never filled.
+        if isinstance( layer, L.Container ) and not getattr( layer, "image", "x" ):
+            raise ValueError( f"{type( layer ).__name__}( image = ... ) is empty: name the image" )
+        if isinstance( layer, L.Micromamba ) and not layer.name:
+            raise ValueError( f"{type( layer ).__name__}( name = ... ) is empty: name the environment" )
     schedulers = [ l for l in stack if L.is_scheduler( l ) ]
     if len( schedulers ) > 1:
         raise ValueError( f"{len( schedulers )} schedulers in the {phase} phase "
@@ -182,6 +199,12 @@ class Settings:
     # directory several projects share. Relative to the root, or absolute -- the
     # same path on every machine.
     builds_directory : str | None = None
+    # Where a run writes in the project's copy over there ( ADR 0006 ). Elsewhere the copy holds only
+    # what errand sends, and a change is said, then put back. `{ "results": "back" }`: path patterns
+    # as rsync reads them ( `results`, a name anywhere; `/results`, at the root ), each a kind:
+    #     back    written over there, brought back here
+    #     build   built over there ( what a layer builds, `kept()`, is one already )
+    zones            : dict = field( default_factory = dict )
 
 
 class Envs( dict ):
@@ -199,6 +222,14 @@ class Envs( dict ):
 
 settings  = Settings()
 envs      = Envs()
+# What declares environments BEFORE the project does: callables taking the project root, which fill
+# `envs` like a project file would. A program that drives errand appends to it; an installed package
+# declares one under the entry point group `errand.envs`. They run after `errand-vars.py`, so they
+# can read this machine's values ( `errand.value` ), and before the project's other files, which
+# can then redefine an environment they declared, under the same name, or change it in place.
+providers = [ ]
+PROVIDERS_GROUP = "errand.envs"
+_provided = set( )          # id() of the environments a provider declared: never the default ( `default` )
 # What runs what: name -> runner, filled with the ones that come with errand,
 # which a project edits in place ( `errand.runners[ "bench" ] = …`, `del`,
 # `.replace` ).
@@ -222,7 +253,7 @@ def outputs_rel( root: Path ) -> str:
     outside the project here, it is the default name over there."""
     import os
     rel = os.path.relpath( outputs( root ), root )
-    return DEFAULT_OUTPUTS if rel.startswith( ".." ) or os.path.isabs( rel ) else rel
+    return DEFAULT_OUTPUTS if rel.startswith( ".." ) or os.path.isabs( rel ) else rel.replace( os.sep, "/" )
 
 
 def runs( root: Path ) -> Path:
@@ -344,7 +375,21 @@ def configure( **kw ):
         if not hasattr( settings, k ):
             raise TypeError( f"configure(): unknown setting {k!r}; "
                              f"expected one of { ', '.join( vars( settings ) ) }" )
+        if k == "zones":
+            _check_zones( v )
         setattr( settings, k, v )
+
+
+def _check_zones( zones ):
+    kinds = ( "back", "build" )               # `errand`, errand's own outputs, is not declared
+    if not isinstance( zones, dict ):
+        raise TypeError( f"configure( zones = ... ): a dict, path -> kind ( {' or '.join( kinds )} ), "
+                         f"not {type( zones ).__name__}" )
+    for path, kind in zones.items():
+        if kind not in kinds:
+            raise ValueError( f"configure( zones = ... ): {path!r} is {kind!r}; a zone is {' or '.join( kinds )}" )
+        if not isinstance( path, str ) or not path.strip( "/" ) or ".." in path.split( "/" ):
+            raise ValueError( f"configure( zones = ... ): {path!r} is not a path in the project" )
 
 
 def reset( ):
@@ -353,6 +398,7 @@ def reset( ):
     sys.modules[ "errand" ].default_env = None
     sys.modules[ "errand" ].default_run = None
     envs.clear()
+    _provided.clear()
     _default_runners()
 
 
@@ -380,17 +426,51 @@ def load( root: Path, warn = None ) -> bool:
     files = config_files( root )
     local.reset( files, root )
     if not files:
+        _provide( root, warn )
         _root_runners( root )
         return False
     package = _root_package( root )
+    provided = False
     for path in files:
+        if not provided and path.name != VARS_FILE:
+            _provide( root, warn )           # after this machine's values, before the project's declarations
+            provided = True
         spec = importlib.util.spec_from_file_location(
             f"{package}._errand_" + re.sub( r"\W", "_", path.stem ), path )
         module = importlib.util.module_from_spec( spec )
         spec.loader.exec_module( module )
         local.offer( module )
+    if not provided:
+        _provide( root, warn )
     _root_runners( root )
     return True
+
+
+def _provide( root: Path, warn = None ):
+    """Run the `providers`, then those installed packages declare ( `errand.envs` entry points ).
+    One that fails is said and skipped: the environments the others declare stay usable."""
+    say = warn or ( lambda text: print( f"errand: {text}", file = sys.stderr ) )
+    found = list( providers )
+    try:
+        from importlib.metadata import entry_points
+        installed = entry_points( group = PROVIDERS_GROUP )
+    except Exception:                       # no metadata to read: nothing installed declares any
+        installed = ( )
+    for ep in installed:
+        try:
+            fn = ep.load()
+        except Exception as err:
+            say( f"the environments of `{ep.value}` ( entry point {PROVIDERS_GROUP} ) are not loaded: {err}" )
+            continue
+        if fn not in found:
+            found.append( fn )
+    for fn in found:
+        try:
+            before = set( map( id, envs.values() ) )
+            fn( Path( root ) )
+            _provided.update( id( e ) for e in envs.values() if id( e ) not in before )
+        except Exception as err:
+            say( f"`{getattr( fn, '__module__', '' )}.{getattr( fn, '__qualname__', fn )}` failed to declare its environments: {err}" )
 
 
 def _root_package( root: Path ) -> str:
@@ -425,15 +505,18 @@ def tag_names( ) -> list:
 
 
 def default( ) -> Env:
-    """The one `errand.default_env` names, else the first declared, else this interpreter."""
+    """The one `errand.default_env` names, else the first the project declared, else this interpreter. An environment a
+    provider declared is never chosen by default ( a project can name one with `default_env`, or redefine it ): it is there
+    for what asks for it."""
     named = sys.modules[ "errand" ].default_env
     if named is not None:
         if named not in envs:
             raise ValueError( f"errand.default_env = {named!r}, but no environment has that name; "
                               f"declared: { ', '.join( envs ) or 'none' }" )
         return envs[ named ]
-    if envs:
-        return next( iter( envs.values() ) )
+    own = [ e for e in envs.values() if id( e ) not in _provided ]
+    if own:
+        return own[ 0 ]
     return Env.make( "default", [ ], { } )
 
 

@@ -17,7 +17,7 @@ from .hosts import Over
 
 @dataclass
 class Apptainer( Container, Artefact ):
-    image : str
+    image : str = ""            # empty only in a declaration something completes ( a package's own layers ): refused when used
     recipe: str | None = None
     flags : list = field( default_factory = list )
     mounts: dict = field( default_factory = dict )
@@ -52,6 +52,9 @@ class Apptainer( Container, Artefact ):
     @property
     def container( self ):
         return Path( self.image ).name
+
+    def requires( self, ctx ):
+        return [ ( sh( [ "command", "-v", self.exe ] ), f"{self.exe}, not found" ) ]
 
     def wrap( self, cmd: Command, ctx: Context ) -> Command:
         binds = [ f for src, dst in self.mounts.items()
@@ -208,7 +211,7 @@ class Docker( Container, Artefact ):
     could not clear it. Podman, being rootless, already maps the caller, and
     sets this to nothing.
     """
-    image : str
+    image : str = ""            # empty only in a declaration something completes: refused when used
     recipe: str | None = None
     flags : list = field( default_factory = list )
     mounts: dict = field( default_factory = dict )
@@ -220,6 +223,10 @@ class Docker( Container, Artefact ):
     @property
     def container( self ):
         return self.image.replace( "/", "_" ).replace( ":", "-" )
+
+    def requires( self, ctx ):
+        return [ ( sh( [ "command", "-v", self.engine ] ), f"{self.engine}, not found" ),
+                 ( sh( [ self.engine, "info" ] ), f"a running {self.engine} ( `{self.engine} info` fails )" ) ]
 
     def _user_flags( self ):
         if self.user is None:

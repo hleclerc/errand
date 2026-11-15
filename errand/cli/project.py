@@ -113,14 +113,27 @@ def _targets( args, tag_names ):
             axes[ name ] = values
 
     if not axes:
-        return config.select( names = names, expression = args.env_tags )
+        return _reachable( config.select( names = names, expression = args.env_tags ), named = bool( names ) )
 
     out = [ ]
     keys = list( axes )
     for combo in itertools.product( *( axes[ k ] for k in keys ) ):
         wanted = dict( zip( keys, combo ) )
         out += config.select( names = names, expression = args.env_tags, wanted_tags = wanted )
-    return out
+    return _reachable( out, named = bool( names ) )
+
+
+def _reachable( targets, named = False ):
+    """`targets` without those that cannot be reached from here ( a `Missing` layer ). Asked for by name, or none left: refused,
+    saying what each one lacks, before anything is pushed, built or run. Chosen by tag, they are only left out."""
+    said = { }
+    for env, _ in targets:
+        if env.missing is not None:
+            said.setdefault( env.name, env.missing.message( env.name ) )
+    kept = [ ( env, tags ) for env, tags in targets if env.missing is None ]
+    if said and ( named or not kept ):
+        raise ValueError( "\n".join( said.values() ) )
+    return kept
 
 
 # ── one environment, from outside it ────────────────────────────────────────

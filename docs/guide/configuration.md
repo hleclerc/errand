@@ -58,6 +58,7 @@ errand.configure(
     builds_directory  = None,              # what errand builds, elsewhere: another disk, a shared directory
     src               = [ ],               # paths prepended to every child's PYTHONPATH
     exclude           = [ ],               # directories discovery must not walk into
+    zones             = { },               # where a run writes in the project's copy over there
 )
 ```
 
@@ -67,6 +68,7 @@ errand.configure(
 | `builds_directory` | what errand builds ( Windows images ) and its records of it, put somewhere else than `errand-outputs/builds/`: another disk, or a directory several projects share. Relative to the root, or absolute — then the same path on every machine |
 | `src` | your package layout, so a child process can import your code without an install |
 | `exclude` | vendored code, fixtures, a copy of something that would be imported and should not be |
+| `zones` | the paths a run writes in the project's copy over ssh, each a kind: `{ "/results": "back" }` ( written there, brought back ), `{ "cache": "build" }` ( built there ). A push never sends into a zone nor deletes in one. A leading `/` anchors a path at the root; without, a name matches anywhere. See [what gets pushed](./layers/ssh#what-gets-pushed) |
 
 The `out` and `state` of an older errand are ignored, with a warning: what they named is in
 `errand-outputs/` now. [Where errand writes](./storage) gathers every place, for a home with

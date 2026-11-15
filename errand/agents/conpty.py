@@ -129,10 +129,15 @@ def start( argv, env, cwd, tty ):
     info = PROCESS_INFORMATION()
     block = "".join( f"{k_}={v}\0" for k_, v in ( env or os.environ ).items() ) + "\0"
     line = ctypes.create_unicode_buffer( subprocess.list2cmdline( [ str( a ) for a in argv ] ) )
+    from .winjob import CREATE_SUSPENDED, Job
+    job = Job.make()
     _check( k.CreateProcessW( None, line, None, None, False,
-                              EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT,
+                              EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT
+                              | ( CREATE_SUSPENDED if job is not None else 0 ),
                               ctypes.create_unicode_buffer( block ), cwd, ctypes.byref( si ), ctypes.byref( info ) ),
             "CreateProcessW" )
+    if job is not None and not job.take( info.hProcess, info.hThread ):
+        job = None
 
     import msvcrt
     keys_fd = msvcrt.open_osfhandle( keys.value, 0 )
@@ -153,4 +158,4 @@ def start( argv, env, cwd, tty ):
     def resize( cols, rows ):
         k.ResizePseudoConsole( console, COORD( cols, rows ) )
 
-    return Child( proc, [ ( read, "out" ) ], write, lambda: write( b"\x1a" ), resize = resize )
+    return Child( proc, [ ( read, "out" ) ], write, lambda: write( b"\x1a" ), resize = resize, job = job )

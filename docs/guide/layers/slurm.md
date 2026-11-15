@@ -9,6 +9,11 @@ Slurm( partition = None, nodes = None, cpus = None, gpus = None,
 `srun` while you wait, `sbatch` under [`--batch`](../detached) — which *is* the detachment: it
 returns as soon as the job is queued.
 
+A job you wait for gets a name (`errand-…`), and the agent that runs `srun` (or `salloc`) is told
+how to cancel it. Ctrl-C, a lost connection, or that agent being killed then ends with a `scancel`
+of that name, so no allocation outlives its command. Name the job yourself (`extra = [ "--job-name",
+… ]`) and cancelling it is yours.
+
 Not an interpreter-selecting layer: it puts the command inside an allocation and leaves it otherwise
 alone, so it stacks in front of a container or an environment exactly as `Ssh` does in front of it.
 

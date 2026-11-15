@@ -53,7 +53,11 @@ def mpi_of( stack ):
 
 
 def ssh_of( stack ):
-    return stack[ 0 ] if stack and isinstance( stack[ 0 ], Ssh ) else None
+    """The `Ssh` that leads to the POSIX machine the layers after it run on -- not one that only says how to reach a
+    `WindowsBox`: everything there is the box's business, from here."""
+    if not stack or not isinstance( stack[ 0 ], Ssh ):
+        return None
+    return None if len( stack ) > 1 and getattr( stack[ 1 ], "is_box", False ) else stack[ 0 ]
 
 
 def vm_of( stack ):

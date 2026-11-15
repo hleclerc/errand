@@ -162,8 +162,10 @@ def _main( argv = None ):
 
     if verb == "status":
         from . import standing
-        left = standing.show_live( root )
-        return show_batches( root, quiet_if_none = bool( left ) )
+        got = standing.tables()
+        standing.show_running( root, everything = bool( getattr( known, "all", False ) ), got = got )
+        standing.show_live( root, got = got )
+        return show_batches( root, quiet_if_none = True )
 
     if verb == "watch":
         return show_batches( root, live = True )
@@ -175,9 +177,9 @@ def _main( argv = None ):
         if words != [ "stop" ]:
             print( bad( f"errand vm: unknown action {words[ 0 ]!r} ( only `stop` )" ) )
             return 2
-        from .. import vm
-        # Every keeper is here, wherever its machine runs: stopping it stops that.
-        return vm.stop_all( echo = lambda s: print( dim( s ) ) )
+        from ..vm.machine import stop_everywhere
+        # Each keeper is on the machine that runs its QEMU ( ADR 0008 ): here, and over each Ssh.
+        return stop_everywhere( config.envs.values(), echo = lambda s: print( dim( s ) ) )
 
     if verb == "setup":
         if words:
@@ -192,7 +194,7 @@ def _main( argv = None ):
         for env, tags in targets:
             rc |= setup.ensure( root, env, L.Context( root = root, tags = tags ),
                                 force = known.force, echo = lambda s: print( dim( s ) ),
-                                dry_run = known.dry_run )
+                                dry_run = known.dry_run, asked = True )
         return rc
 
     # run, list

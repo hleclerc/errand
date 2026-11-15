@@ -50,7 +50,11 @@ class Agent:
                 elif kind == F.EOF:
                     proc.close_input()
                 elif kind == F.SIGNAL:
-                    proc.signal( int( F.load( payload ).get( "sig", 15 ) ) )
+                    said = F.load( payload )
+                    if said.get( "stop" ):
+                        proc.stop()                 # Ctrl-C: INT, TERM, KILL, run here ( `Proc.stop` )
+                    else:
+                        proc.signal( int( said.get( "sig", 15 ) ) )
                 elif kind == F.RESIZE:
                     size = F.load( payload )
                     proc.resize( size.get( "cols", 80 ), size.get( "rows", 24 ) )
@@ -76,13 +80,16 @@ class Agent:
                                                  "cache": _cache() } )
             elif op == "spawn":
                 # what it starts knows which agent started it: where a zygote beside it lives ( `warm` )
-                env = { **( req.get( "env" ) or { } ), "ERRAND_AGENT_DIR": str( self.root ) }
+                # ... and how long it stays, and who it is: a zygote beside it keeps as long, and goes
+                # with it ( `warm` )
+                env = { **( req.get( "env" ) or { } ), "ERRAND_AGENT_DIR": str( self.root ),
+                        "ERRAND_AGENT_KEEP": str( self.keep_alive ), "ERRAND_AGENT_PID": str( os.getpid() ) }
                 proc = Proc( self.root, req[ "argv" ], env, req.get( "cwd" ), bool( req.get( "keep" ) ),
                              tty = req.get( "tty" ), store = req.get( "store" ) )
                 with self.lock:
                     self.procs[ proc.id ] = proc
                 channels[ channel ] = proc
-                writer.send( channel, F.REPLY, { "ok": True, "id": proc.id } )
+                writer.send( channel, F.REPLY, { "ok": True, "id": proc.id, "pid": proc.child.pid } )
                 proc.attach( writer, channel )
             elif op == "attach":
                 proc = self.procs.get( req[ "id" ] )
@@ -101,8 +108,12 @@ class Agent:
                 if running and not req.get( "force" ):
                     writer.send( channel, F.REPLY, { "ok": False, "running": running } )
                 else:
-                    self.stopping = True
+                    # Forced: what runs is stopped first, not left behind without its owner.
                     writer.send( channel, F.REPLY, { "ok": True, "running": running } )
+                    threading.Thread( target = self.shut, daemon = True ).start()
+            elif op in ( "sync", "pull" ):
+                from . import syncop
+                syncop.serve( self, writer, channels, channel, req )      # its own REPLY, from its thread
             elif op == "list":
                 writer.send( channel, F.REPLY, { "ok": True, "procs": finished( self.root, req.get( "store" ),
                                                                                 req.get( "ids" ) ) } )
@@ -140,6 +151,7 @@ class Agent:
         with self.lock:
             if any( p.code is None for p in self.procs.values() ):
                 self.idle_since = time.monotonic()
+                self._said_on_disk( "running" )       # for a keeper that asks ( a Windows guest's )
         busy = time.monotonic() - self.idle_since <= self.keep_alive
         if busy:
             self._busy()
@@ -156,25 +168,41 @@ class Agent:
         return True
 
     def _busy( self ):
-        """Say so on disk, at most every ten seconds: for an agent above this one ( `idle` )."""
+        """Say so on disk: for an agent above this one ( `idle` )."""
+        self._said_on_disk( "busy" )
+
+    def _said_on_disk( self, name: str ):
+        """`root/<name>` touched, at most every ten seconds: `busy` -- used lately, within
+        `keep_alive` --, `running` -- a process of its own runs now."""
         now = time.time()
-        if now - getattr( self, "_said", 0 ) >= 10:
-            self._said = now
+        said = self.__dict__.setdefault( "_said", { } )
+        if now - said.get( name, 0 ) >= 10:
+            said[ name ] = now
             try:
-                ( self.root / "busy" ).touch()
+                ( self.root / name ).touch()
             except OSError:
                 pass
 
-    def terminate( self ):
-        """Everything it started, told to go ( an attached agent, its bridge gone: `daemon._attached` )."""
+    def terminate( self, timeout: float = 8.0 ):
+        """Everything it started, stopped -- SIGTERM, then SIGKILL -- and waited for, a while: an
+        attached agent whose bridge is gone ( `daemon._attached` ), an agent stopped by force or by a
+        SIGTERM. What still runs after `timeout` is the next agent's to kill ( `kill_orphans` )."""
         import signal
         with self.lock:
             procs = [ p for p in self.procs.values() if p.code is None ]
         for p in procs:
             try:
-                p.signal( signal.SIGTERM )
+                p.stop( first = signal.SIGTERM )
             except OSError:
                 pass
+        deadline = time.monotonic() + timeout
+        for p in procs:
+            p.wait_gone( max( 0.0, deadline - time.monotonic() ) )
+
+    def shut( self ):
+        """Go now, and take what runs with it."""
+        self.terminate()
+        self.stopping = True
 
     def run( self ) -> int:
         def client( conn, threading ):
@@ -182,9 +210,20 @@ class Agent:
                 self.clients += 1          # counted before `idle` can look again
             threading.Thread( target = self.serve_client, args = ( conn, ), daemon = True ).start()
 
-        self.root.mkdir( parents = True, exist_ok = True )
-        sweep( self.root )
-        return endpoint.serve( self.root, self.idle, client )
+        import signal
+
+        def asked_to_go( *_ ):
+            # A SIGTERM from outside ( a logout, a `kill` ): what runs goes with the agent.
+            threading.Thread( target = self.shut, daemon = True ).start()
+
+        if threading.current_thread() is threading.main_thread() and \
+                signal.getsignal( signal.SIGTERM ) == signal.SIG_DFL:     # an attached agent has its own
+            signal.signal( signal.SIGTERM, asked_to_go )
+        # Swept once the directory is held: another agent's processes are never this one's to kill.
+        from . import syncop
+        # Going: the copies it synced are checked once more ( ADR 0006 ), for the next push to say.
+        return endpoint.serve( self.root, self.idle, client, starting = lambda: sweep( self.root ),
+                               closing = syncop.closing )
 
 
 def _cache( ) -> str:

@@ -103,7 +103,7 @@ class Session( Marked ):
             self.marks.put( { "op": "lost" } )
 
     def stop( self ):
-        agents.client.stop( self.call )
+        self.stop_delivered = agents.client.stop( self.call )
 
 
 class LocalSession( Marked ):
@@ -148,10 +148,17 @@ class WatchedSession( Marked ):
         self.cancel = threading.Event()
 
         def run():
-            code = L.watch_job( host, submit, log, every, echo = echo, show = lambda t: self._out( t.encode() ),
-                                cancel = self.cancel )
-            self._out( b"", end = True )
-            self.marks.put( { "op": "exit", "code": code } )
+            # Whatever happens to the watcher, its end is said: a thread that dies silently leaves its
+            # command waiting for ever, and the job unwatched.
+            code = 1
+            try:
+                code = L.watch_job( host, submit, log, every, echo = echo, show = lambda t: self._out( t.encode() ),
+                                    cancel = self.cancel )
+            except Exception as err:
+                echo( f"  watching the slurm job failed: {err}" )
+            finally:
+                self._out( b"", end = True )
+                self.marks.put( { "op": "exit", "code": code } )
 
         threading.Thread( target = run, daemon = True ).start()
 

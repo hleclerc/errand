@@ -12,8 +12,9 @@ The stream to the guest agent goes through the host agent of the machine that
 runs QEMU, as `ssh -p <port> Administrator@127.0.0.1 …` from there: no new
 login on that machine, one on the guest's sshd per stream.
 
-Only for a Windows with a Python ( `Windows( python = … )` ): without one,
-`errand run` hands it the command itself, as before.
+Every Windows has a Python ( `Windows.python`, a pinned release by default; a box's, found or
+installed by uv ), so this is how errand reaches every guest ( ADR 0008 ). With agents off, `errand
+run` hands the guest the command itself instead.
 """
 from __future__ import annotations
 
@@ -28,7 +29,8 @@ from .sessions import Session
 
 
 def usable( env ) -> bool:
-    return env.vm is not None and bool( getattr( env.vm, "python", None ) )
+    """A guest errand can run in: every one has a Python ( ADR 0008 )."""
+    return env.vm is not None
 
 
 class Guest:
@@ -41,9 +43,10 @@ class Guest:
         self.host = L.Over( where.ssh, where.there ) if where.ssh is not None else L.Here( where.root )
         self.ctx = L.Context( root = where.there, tags = tags, remote = where.ssh is not None, host = self.host,
                               origin = where.root )
+        self.box = getattr( self.layer, "is_box", False )
         self.name = self.layer.image_name( self.ctx )
         self.there = self.layer.guest_root( self.ctx )
-        self.said_where = where_of( self.host )
+        self.said_where = f"on {self.layer.via.host}" if self.box and self.layer.via is not None else where_of( self.host )
         self.key = bootstrap.sources_key()
         self.src = f"C:/errand/src/{self.key}"
         self.boot = f"{self.src}/errand/_boot.py"
@@ -55,10 +58,16 @@ class Guest:
         from ..vm.facts import Facts, need, package_hint
         from ..vm.machine import Machine
         from ..vm.windows import ready_line
-        if self.host.shell( ready_line( self.name, keyed = True ), quiet = True ).returncode:
-            raise VmError( f"windows is not installed yet {self.said_where} -- errand setup <name>" )
-        self.m = Machine( self.host, Facts.of( self.host ), self.name )
-        need( self.m.facts, ( "rsync", ), package_hint( self.m.facts, [ "rsync" ] ) )
+        if self.box:
+            from ..vm.box import Box
+            self.m = Box( self.layer, self.where.root )
+            if not self.m.ready( self.name ):
+                raise VmError( f"{self.m.said} is not set up for this declaration -- errand setup --env {self.env.name}" )
+        else:
+            if self.host.shell( ready_line( self.name, keyed = True ), quiet = True ).returncode:
+                raise VmError( f"windows is not installed yet {self.said_where} -- errand setup <name>" )
+            self.m = Machine( self.host, Facts.of( self.host ), self.name )
+            need( self.m.facts, ( "rsync", ), package_hint( self.m.facts, [ "rsync" ] ) )
         self._held = self.m.using( self.layer.booted(), self.echo )
         self._held.__enter__()
         try:
@@ -90,7 +99,7 @@ class Guest:
             source, dest = f"{bootstrap.PACKAGE}/", f"{self.src}/errand"
         win = dest.replace( "/", "\\" )
         self.m.guest( f'if not exist "{win}" mkdir "{win}"', quiet = True )
-        got = self.host.shell( rsync_line( self.m._reach( "ssh", "-p" ), dest, source ), capture = True )
+        got = self.host.shell( rsync_line( self.m._reach( "ssh", "-p" ), dest, source, self.m.address ), capture = True )
         if rsync_failed( got ):
             raise VmError( f"could not copy errand into windows:\n{( got.stderr or '' ).strip()[ -800 : ]}" )
 
@@ -107,9 +116,11 @@ class Guest:
         digest = hashlib.sha1( f"{self.env.name}\0{line_for( '@' )}".encode() ).hexdigest()[ : 10 ]
         name = f"env-{self.key}-{digest}"
         guest = line_for( f"C:/errand/agents/{name}" )
-        on_host = L.sh( [ *self.m._reach( "ssh", "-p" ), "-T", "Administrator@127.0.0.1", guest ] )
+        on_host = L.sh( [ *self.m._reach( "ssh", "-p" ), "-T", self.m.address, guest ] )
         ssh = self.where.ssh
-        if ssh is None:
+        if self.box:
+            argv = [ *self.m._reach( "ssh", "-p" ), "-T", self.m.address, guest ]
+        elif ssh is None:
             argv = [ "sh", "-c", on_host ]
         elif agents.mode() == "hub":
             argv = [ *U.rsh_argv( ssh.host, ssh.options ), ssh.host, on_host ]

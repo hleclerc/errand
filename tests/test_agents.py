@@ -204,6 +204,130 @@ if test( "an attached agent is its bridge's own, and goes with it, what it start
         assert gone( kept ), "what it started outlived it"
 
 
+def wait_for( path, within = 10 ):
+    deadline = time.monotonic() + within
+    while not Path( path ).exists() and time.monotonic() < deadline:
+        time.sleep( 0.05 )
+    time.sleep( 0.1 )
+    return int( Path( path ).read_text() )
+
+
+def alive( pid ):
+    try:
+        os.kill( pid, 0 )
+        return True
+    except OSError:
+        return False
+
+
+if test( "an agent killed outright: the next one in its directory kills what it left running ( ADR 0008 )" ):
+    import signal
+    agents = fresh()
+    with scratch() as d:
+        conn = agents.open( local( d ) )
+        agent = conn.ping()[ "pid" ]
+        agents.start( conn, [ "sh", "-c", f"sleep 60 & echo $! > {d}/child; echo $$ > {d}/kept; wait" ] )
+        kept, child = wait_for( f"{d}/kept" ), wait_for( f"{d}/child" )
+        os.kill( agent, signal.SIGKILL )
+        assert gone( agent )
+        conn.close()
+        assert alive( kept ) and alive( child ), "nothing kills it before the next agent"
+        agents._open.clear()
+        assert agents.open( local( d ) ).ping()[ "pid" ] != agent
+        assert gone( kept, 15 ) and gone( child, 15 ), "an agent's processes outlived it and the next one"
+        agents._open.clear()
+
+
+if test( "a SIGTERM to an agent takes what it runs with it" ):
+    import signal
+    agents = fresh()
+    with scratch() as d:
+        conn = agents.open( local( d ) )
+        agent = conn.ping()[ "pid" ]
+        agents.start( conn, [ "sh", "-c", f"echo $$ > {d}/kept; exec sleep 60" ] )
+        kept = wait_for( f"{d}/kept" )
+        os.kill( agent, signal.SIGTERM )
+        assert gone( kept, 15 ) and gone( agent, 15 ), "a logout or a kill left the work running, unowned"
+        conn.close()
+        agents._open.clear()
+
+
+if test( "Ctrl-C stops what ignores it, and what it left in its group, with its client already gone" ):
+    agents = fresh()
+    with scratch() as d:
+        conn = agents.open( local( d ) )
+        stubborn = ( f"trap '' INT TERM; ( trap '' INT TERM; sleep 60 ) & echo $! > {d}/child; "
+                     f"echo $$ > {d}/kept; while :; do sleep 0.1; done" )
+        pid = agents.start( conn, [ "sh", "-c", stubborn ] )
+        kept, child = wait_for( f"{d}/kept" ), wait_for( f"{d}/child" )
+        agents.client.stop( agents.attach( conn, pid ) )
+        time.sleep( 0.2 )
+        conn.close()                    # errand exits right after Ctrl-C: the agent finishes the job
+        agents._open.clear()
+        assert gone( kept, 15 ), "a process that ignores SIGINT and SIGTERM was not stopped"
+        assert gone( child, 15 ), "what it left in its group outlived the stop"
+
+
+if test( "a process that ends by itself leaves what it meant to ( nohup … & )" ):
+    agents = fresh()
+    with scratch() as d:
+        conn = agents.open( local( d ) )
+        got = agents.shell( conn, f"nohup sleep 30 >/dev/null 2>&1 & echo $! > {d}/bg", capture = True )
+        assert got.returncode == 0
+        bg = wait_for( f"{d}/bg" )
+        time.sleep( 0.5 )
+        try:
+            assert alive( bg ), "a batch submitted with nohup was killed with its submitter"
+        finally:
+            os.kill( bg, 9 )
+        conn.close()
+        agents._open.clear()
+
+
+if test( "errand agents stop --force stops what runs before the agent goes" ):
+    agents = fresh()
+    with scratch() as d:
+        conn = agents.open( local( d ) )
+        agent = conn.ping()[ "pid" ]
+        agents.start( conn, [ "sh", "-c", f"trap '' TERM; echo $$ > {d}/kept; while :; do sleep 0.1; done" ] )
+        kept = wait_for( f"{d}/kept" )
+        assert conn.open( { "op": "stop" } ).reply( 10 )[ "ok" ] is False, "stopped with work running, unforced"
+        assert conn.open( { "op": "stop", "force": True } ).reply( 10 )[ "ok" ]
+        assert gone( kept, 15 ) and gone( agent, 20 ), "forced: the agent went and left its work"
+        conn.close()
+        agents._open.clear()
+
+
+if test( "a directory nobody serves, whatever its age: what still runs there is killed by a neighbour" ):
+    import json, signal
+    from errand.agents import endpoint, procs
+    with scratch() as d:
+        base = Path( d )
+        for name in ( "me", "dead" ):
+            ( base / name ).mkdir()
+            ( base / name / "lock" ).touch()
+        orphan = subprocess.Popen( [ "sleep", "60" ], start_new_session = True )
+        mark = base / "dead" / "proc" / "x"
+        mark.mkdir( parents = True )
+        mark.joinpath( "meta.json" ).write_text( json.dumps( { "keep": True, "pgid": orphan.pid,
+                                                               "since": procs.started( orphan.pid ) } ) )
+        # a pid recorded with another start time is somebody else's now: left alone
+        other = subprocess.Popen( [ "sleep", "60" ], start_new_session = True )
+        ( base / "dead" / "proc" / "y" ).mkdir()
+        ( base / "dead" / "proc" / "y" / "meta.json" ).write_text( json.dumps( { "keep": True, "pgid": other.pid,
+                                                                                 "since": "another life" } ) )
+        try:
+            endpoint.sweep( base / "me" )
+            assert orphan.wait( 10 ) == -signal.SIGTERM, "an orphan was left running"
+            assert ( mark / "exit" ).read_text() == str( -signal.SIGKILL )
+            assert other.poll() is None, "a pid reused by another process was killed"
+            assert ( base / "dead" ).exists(), "recent: the directory itself stays"
+        finally:
+            for p in ( orphan, other ):
+                if p.poll() is None:
+                    p.kill()
+
+
 HUB = """
 import os, sys
 sys.path.insert( 0, {root!r} )
@@ -373,3 +497,45 @@ if test( "a socket whose path is too long for the platform is reached through a 
                 t.join()
             finally:
                 server.close()
+
+
+if test( "what a process leaves its owner to do on a stop is done: by its agent, and by the next one for an orphan" ):
+    import signal
+    from errand import layers as L
+    agents = fresh()
+    with scratch() as d:
+        # a stand-in scancel, which says it was called, on the PATH of what the agent starts
+        ( Path( d ) / "bin" ).mkdir()
+        ( Path( d ) / "bin" / "scancel" ).write_text( f'#!/bin/sh\necho "$@" >> {d}/cancelled; echo cancel >> {d}/order\n' )
+        ( Path( d ) / "bin" / "scancel" ).chmod( 0o755 )
+        ( Path( d ) / "bin" / "srun" ).write_text( f"#!/bin/sh\ntrap 'echo int >> {d}/order; exit 130' INT\n"
+                                                   f"echo $$ > {d}/srun; while :; do sleep 0.1; done\n" )
+        ( Path( d ) / "bin" / "srun" ).chmod( 0o755 )
+        env = { "PATH": f"{d}/bin:{os.environ[ 'PATH' ]}" }
+        line = L.Slurm( time = "5" ).wrap( L.Command( [ "x" ] ), L.Context( root = Path( d ) ) ).argv
+        name = line[ line.index( "--job-name" ) + 1 ]
+        conn = agents.open( local( Path( d ) / "a" ) )
+        pid = agents.start( conn, line, env = env )
+        srun = wait_for( f"{d}/srun" )
+        agents.client.stop( agents.attach( conn, pid ) )
+        assert gone( srun, 15 )
+        deadline = time.monotonic() + 10
+        while not Path( f"{d}/cancelled" ).exists() and time.monotonic() < deadline:
+            time.sleep( 0.05 )
+        assert f"--name={name}" in Path( f"{d}/cancelled" ).read_text(), "the job was not cancelled by name"
+        assert Path( f"{d}/order" ).read_text().split() == [ "int", "cancel" ], \
+            "cancelled before srun had its Ctrl-C: the job's own clean-up was cut short"
+        # an orphan: its agent killed outright, the next one cancels its job
+        Path( f"{d}/cancelled" ).unlink()
+        Path( f"{d}/srun" ).unlink()
+        agent = conn.ping()[ "pid" ]
+        agents.start( conn, line, env = env )
+        srun = wait_for( f"{d}/srun" )
+        os.kill( agent, signal.SIGKILL )
+        assert gone( agent )
+        conn.close()
+        agents._open.clear()
+        agents.open( local( Path( d ) / "a" ) ).ping()
+        assert gone( srun, 15 )
+        assert Path( f"{d}/cancelled" ).exists(), "the next agent killed the orphan but left its job"
+        agents._open.clear()

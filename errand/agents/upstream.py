@@ -96,6 +96,8 @@ def argv_of( target: dict ) -> list:
 
 
 def env_of( target: dict ) -> dict:
+    if target.get( "env" ):
+        return { **os.environ, **target[ "env" ] }
     if target[ "kind" ] == "local":
         parent = str( bootstrap.PACKAGE.parent )
         return { **os.environ, "PYTHONPATH": os.pathsep.join( p for p in ( parent, os.environ.get( "PYTHONPATH" ) ) if p ) }
@@ -112,7 +114,8 @@ def spawn( target: dict, stderr = None ) -> subprocess.Popen:
     """The stream to the agent: a process whose stdio reaches the bridge."""
     prepare( target )
     return subprocess.Popen( argv_of( target ), stdin = subprocess.PIPE, stdout = subprocess.PIPE,
-                             stderr = stderr, env = env_of( target ), start_new_session = True )
+                             stderr = stderr, env = env_of( target ), start_new_session = True,
+                             cwd = target.get( "cwd" ) )
 
 
 def direct( target: dict ) -> Connection:

@@ -140,9 +140,10 @@ def hold( path: Path ):
         return None
 
 
-def serve( root: Path, idle, client, closing = None ) -> int:
+def serve( root: Path, idle, client, closing = None, starting = None ) -> int:
     """Listen in `root` until `idle()` says to stop, each connection handed to `client( conn )`
-    on a thread of its own. One server per directory: another one there means it answers."""
+    on a thread of its own. One server per directory: another one there means it answers.
+    `starting()` runs once the directory is held, before anybody is served."""
     import threading
 
     root.mkdir( parents = True, exist_ok = True )
@@ -150,6 +151,8 @@ def serve( root: Path, idle, client, closing = None ) -> int:
     if held is None:
         return 0
     sweep( root )
+    if starting is not None:
+        starting()
     server, accept = listen( root )
     server.settimeout( 1.0 )
     try:
@@ -176,25 +179,32 @@ def serve( root: Path, idle, client, closing = None ) -> int:
 def sweep( root: Path, older = 3600.0 ):
     """The directories beside this one that nobody serves any more -- an agent or a hub of sources
     since replaced -- untouched for an hour, and whose lock is free: they go. Not one that holds a
-    session somebody may still attach to."""
+    session somebody may still attach to. Whatever age, a directory whose lock is free and whose
+    processes still run has lost its agent: they are killed now ( ADR 0008 )."""
     import shutil
     import time
+    from .procs import kill_orphans, running
     now = time.time()
     for d in root.parent.iterdir() if root.parent.is_dir() else [ ]:
         if d == root or not d.is_dir() or not ( d / "lock" ).exists():
             continue
         try:
-            if now - max( p.stat().st_mtime for p in [ d, *d.iterdir() ] ) < older:
-                continue
+            old = now - max( p.stat().st_mtime for p in [ d, *d.iterdir() ] ) >= older
         except ( OSError, ValueError ):
             continue
-        if _attachable( d, now ):
-            continue                           # a session `errand attach` may still come back for
+        if not old and not running( d ):
+            continue
         free = hold( d / "lock" )
         if free is None:
             continue                       # somebody serves it
-        free.close()
-        shutil.rmtree( d, ignore_errors = True )
+        try:
+            kill_orphans( d )              # nobody serves it: what still runs there is nobody's
+            if not old or _attachable( d, now ) or _untold( d, now ):
+                continue                   # a session `errand attach` may still come back for, or
+                                           # one whose end nobody can tell yet
+            shutil.rmtree( d, ignore_errors = True )
+        finally:
+            free.close()
 
 
 def _attachable( d: Path, now: float ) -> bool:
@@ -211,4 +221,24 @@ def _attachable( d: Path, now: float ) -> bool:
                 return True
         except ( OSError, ValueError ):
             continue
+    return False
+
+
+def _untold( d: Path, now: float ) -> bool:
+    """A record with no end whose process still runs, or that cannot say ( written by an errand that
+    recorded no pid ) and is less than a week old: removing it would leave that work unowned and
+    unseen ( `table` reads these records )."""
+    import json
+    from .procs import KEEP_DAYS
+    from .table import pid_runs
+    for p in ( d / "proc" ).iterdir() if ( d / "proc" ).is_dir() else [ ]:
+        try:
+            if ( p / "exit" ).exists():
+                continue
+            meta = json.loads( ( p / "meta.json" ).read_text() )
+        except ( OSError, ValueError ):
+            continue
+        pid = meta.get( "pid" ) or meta.get( "pgid" )
+        if pid_runs( pid ) if pid else now - meta.get( "started", 0 ) < KEEP_DAYS * 86400:
+            return True
     return False

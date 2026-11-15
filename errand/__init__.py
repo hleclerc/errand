@@ -33,9 +33,9 @@ default_run: list | None = None
 __all__ = [
     "Args", "Param", "Skipped", "bench", "entry", "experiment", "has_tag", "have",
     "need", "out_dir", "skip", "tag", "test", "track",
-    "configure", "default_env", "default_run", "Env", "envs", "runners", "main", "value",
+    "configure", "default_env", "default_run", "Env", "envs", "providers", "runners", "main", "value",
     "Vars", "Venv", "Micromamba", "Conda", "Uv", "Nix", "Guix", "Module",
-    "Apptainer", "Docker", "Podman", "Ssh", "Slurm", "Mpi", "Preload", "Windows",
+    "Apptainer", "Docker", "Podman", "Ssh", "Slurm", "Mpi", "Preload", "Windows", "WindowsBox", "Missing",
     "Runner", "Level", "Outcome", "RunContext", "Errand", "Pytest", "Catch2", "Cargo",
     "Python", "Executable",
 ]
@@ -48,6 +48,7 @@ _LAZY = {
     "configure" : "errand.config",
     "Env"       : "errand.config",
     "envs"      : "errand.config",
+    "providers" : "errand.config",
     "runners"   : "errand.config",
     "Vars"      : "errand.layers",
     "Venv"      : "errand.layers",
@@ -64,7 +65,9 @@ _LAZY = {
     "Slurm"     : "errand.layers",
     "Mpi"       : "errand.layers",
     "Preload"   : "errand.layers",
+    "Missing"   : "errand.layers",
     "Windows"   : "errand.vm",
+    "WindowsBox": "errand.vm",
     "Runner"    : "errand.runner",
     "Level"     : "errand.runner",
     "Outcome"   : "errand.runner",
@@ -82,14 +85,14 @@ _LAZY = {
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .cli import main
-    from .config import Env, configure, envs, runners
+    from .config import Env, configure, envs, providers, runners
     from .layers import (
-        Apptainer, Conda, Docker, Guix, Micromamba, Module, Mpi, Nix, Podman, Slurm, Ssh, Uv, Vars, Venv,
+        Apptainer, Conda, Docker, Guix, Micromamba, Missing, Module, Mpi, Nix, Podman, Slurm, Ssh, Uv, Vars, Venv,
     )
     from .runner import (
         Cargo, Catch2, Errand, Executable, Level, Outcome, Pytest, Python, RunContext, Runner,
     )
-    from .vm import Windows
+    from .vm import Windows, WindowsBox
 
 
 def __getattr__( name ):

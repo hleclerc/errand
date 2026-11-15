@@ -19,6 +19,14 @@ MSYS2_PACKAGES = [ "rsync-3.5.1-2", "msys2-runtime-3.6.10-7", "libopenssl-3.6.5-
 RSYNC_FILES    = [ "rsync.exe", "msys-2.0.dll", "msys-crypto-3.dll", "msys-iconv-2.dll", "msys-idn2-0.dll",
                    "msys-intl-8.dll", "msys-unistring-5.dll", "msys-lz4-1.dll", "msys-popt-0.dll",
                    "msys-xxhash-0.dll", "msys-zstd-1.dll" ]
+# errand started on Windows: rsync's remote shell must be MSYS2's ssh too, as Windows' own ssh.exe takes
+# the pipes MSYS2's rsync gives it for closed ones. Unpacked beside rsync, here only.
+SSH_PACKAGES   = [ "openssh-10.6p2-2", "heimdal-libs-7.8.0-9", "libopenssl-4.1.0-1", "libsqlite-3.54.1-1",
+                   "libxcrypt-4.5.2-1", "zlib-1.4-1", "gcc-libs-16.2.0-1" ]
+SSH_FILES      = [ "ssh.exe", "msys-asn1-8.dll", "msys-com_err-1.dll", "msys-crypt-2.dll", "msys-crypto-4.dll",
+                   "msys-gcc_s-seh-1.dll", "msys-gssapi-3.dll", "msys-hcrypto-4.dll", "msys-heimbase-1.dll",
+                   "msys-heimntlm-0.dll", "msys-hx509-5.dll", "msys-krb5-26.dll", "msys-roken-18.dll",
+                   "msys-sqlite3-0.dll", "msys-wind-0.dll", "msys-z.dll" ]
 GUEST_MSYS     = r"C:\errand\msys"
 GUEST_RSYNC    = "C:/errand/msys/usr/bin/rsync.exe"
 EXCLUDES = [ *L.RSYNC_EXCLUDES, "errand-outputs", ".errand" ]
@@ -32,14 +40,14 @@ def msys_path( path: str ) -> str:
     return path.rstrip( "/" )
 
 
-def rsync_line( reach: list, there: str, source: str = "./" ) -> str:
+def rsync_line( reach: list, there: str, source: str = "./", address: str = f"{USER}@127.0.0.1" ) -> str:
     """The project, minus what an `Ssh` push leaves out too, into `there` in the
     guest -- run from its root on the machine that runs QEMU. Links followed, as
     NTFS has none worth the name; no permission, owner or group, which the
     guest's ACLs would only garble. Nothing deleted: what a command built beside
     the sources is not on this side, and must stay over there."""
     return L.sh( [ "rsync", "-rtL", "-e", L.sh( reach ), "--rsync-path", GUEST_RSYNC,
-                   *[ f"--exclude={e}" for e in EXCLUDES + L.own_paths() ], source, f"{USER}@127.0.0.1:{msys_path( there )}/" ] )
+                   *[ f"--exclude={e}" for e in EXCLUDES + L.own_paths() ], source, f"{address}:{msys_path( there )}/" ] )
 
 
 # rsync's 23 ( "some files were not transferred" ) and 24 ( "some vanished" ),

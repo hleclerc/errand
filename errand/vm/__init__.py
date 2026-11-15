@@ -26,8 +26,8 @@ does there is a shell line run through it, whose answer is read back here:
 what that machine is, whether an image is installed, starting QEMU, copying the
 project in, running the command, bringing results back. Nothing of errand runs
 over there; all it needs there is QEMU, ssh, rsync and tar. The disks and the guest's
-key live in THAT machine's cache; the locks, the state and the keeper live in
-this one's.
+key live in THAT machine's cache, and so do the locks, the state and the keeper
+( ADR 0008 ): what keeps QEMU runs beside it, owned by errand's agent there.
 
 **Three moments, three costs.**
 
@@ -49,9 +49,11 @@ several commands boots once -- and then `keep` more ( none by default: a boot
 is half a minute, and an idle machine holds what it holds for nothing ). All
 that time it holds its cores and its memory, so when it runs on this machine
 it holds them IN THE QUEUE, under a claim like any other work, and shows up in
-`errand queue`. A small keeper process owns the machine ( and the claim ): it
-starts QEMU once there is room, stops it once nobody holds it, and is what
-`errand vm stop` stops. Commands on one machine take turns.
+`errand queue`. A small keeper process owns the machine ( and the claim ), on the machine
+that runs QEMU, as a process of errand's agent there: it starts QEMU as its
+child once there is room, stops it once nobody uses it, and is what `errand vm
+stop` stops. A command holds the machine through that agent ( `using` ), for
+as long as it runs. Commands on one machine take turns.
 
 Nothing here is Windows-specific but the recipe; another guest would be another
 recipe over the same `Machine`.
@@ -64,6 +66,7 @@ copying in and out ( `transfer` ), the booted machine ( `machine` ), installing 
 from __future__ import annotations
 
 from .windows import Windows
+from .box import WindowsBox
 from .common import _seconds, VmError
 from .places import images_dir
 from .facts import accel, Facts, need, package_hint, qemu_hint
@@ -78,6 +81,7 @@ from .guest import autounattend, setup_script
 __all__ = [
     'VmError',
     'Windows',
+    'WindowsBox',
     '_seconds',
     'images_dir',
     'Facts',

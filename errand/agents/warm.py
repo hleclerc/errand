@@ -113,7 +113,8 @@ def session( request: dict ) -> int:
     where = Path( agent ) / "warm"
     sock = _reach( where )
     if sock is None:
-        _start_zygote( where, float( request.get( "keep_alive" ) or 900 ) )
+        # As long as its agent stays unused ( ADR 0008 ): what is kept warm is kept as long as the rest.
+        _start_zygote( where, float( os.environ.get( "ERRAND_AGENT_KEEP" ) or request.get( "keep_alive" ) or 900 ) )
         deadline = time.monotonic() + WAIT
         while sock is None and time.monotonic() < deadline:
             time.sleep( 0.05 )
@@ -337,6 +338,8 @@ class Zygote:
         held = hold( self.where / "lock" )
         if held is None:
             return 0
+        ( self.where / "pid" ).write_text( str( os.getpid() ) )
+        agent = os.environ.get( "ERRAND_AGENT_PID" )
         path = self.where / "sock"
         if path.exists():
             path.unlink()
@@ -376,6 +379,14 @@ class Zygote:
                                     except ( ProcessLookupError, PermissionError ):
                                         pass
                 self._reap()
+                if agent and not _alive( agent ):
+                    # Its agent is gone ( stopped, killed ): so is what it kept, and what it ran here.
+                    for pid in list( self.children ):
+                        try:
+                            os.killpg( pid, signal.SIGKILL )
+                        except ( ProcessLookupError, PermissionError ):
+                            pass
+                    break
                 self._breathe()
                 if self.children:
                     self.idle_since = time.monotonic()
@@ -404,6 +415,7 @@ class Zygote:
             if self.claim is not None:
                 from .. import queue
                 queue.release( self.claim )
+            ( self.where / "pid" ).unlink( missing_ok = True )
             held.close()
         return 0
 
@@ -434,6 +446,16 @@ class Zygote:
         if now - self.touched > 5:
             self.touched = now
             self.claim_lost = not queue.touch( self.claim )
+
+
+def _alive( pid ) -> bool:
+    try:
+        os.kill( int( pid ), 0 )
+        return True
+    except ( ProcessLookupError, ValueError ):
+        return False
+    except PermissionError:
+        return True
 
 
 def _reseed():

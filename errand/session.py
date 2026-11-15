@@ -215,10 +215,14 @@ class Session:
         self.command_line = self.as_line( argv )
         self._last.clear()
         self.seen_batches = { r[ "id" ] for r in batch.load_all( self.root ) }
+        # What the screen launches is a command of its own, typed at the top:
+        # being inside an environment ( the screen opened from one, or from a
+        # run of errand's ) must not make it take that one for its own.
+        env = { k: v for k, v in os.environ.items() if k not in ( cli.IN_ENV, cli.TAGS ) }
         try:
             self.child = subprocess.Popen(
                 [ sys.executable, "-m", "errand", *argv ], cwd = self.root,
-                env = { **os.environ, "PYTHONUNBUFFERED": "1", "NO_COLOR": "1",
+                env = { **env, "PYTHONUNBUFFERED": "1", "NO_COLOR": "1",
                         R.STAMP_ENV: self.stamp },
                 stdout = subprocess.PIPE, stderr = subprocess.STDOUT, text = True, bufsize = 1 )
         except OSError as err:

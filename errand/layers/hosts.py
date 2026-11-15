@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .. import agents
-from .base import _how, Here
+from .base import _how, Here, remote_path
 
 if TYPE_CHECKING:              # only named: building one is `host_of`'s business
     from .gateways import Ssh
@@ -22,7 +22,7 @@ class Over:
 
     def __init__( self, ssh: Ssh, root = None ):
         self.ssh  = ssh
-        self.root = Path( root ) if root is not None else None
+        self.root = remote_path( root )
 
     def shell( self, line: str, *, quiet = False, tty = False, capture = False, input = None,
                timeout = None ):

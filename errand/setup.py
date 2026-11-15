@@ -27,6 +27,7 @@ from . import layers as L, yamlish
 
 
 OK, STALE, MISSING, UNKNOWN, ADOPTED = "ok", "stale", "not built", "unknown", "adopted"
+UNREACHABLE = "unreachable"     # a `Missing` layer: says what is lacking ( `errand envs` shows it in the stack )
 FOUND = "found"     # there, and nothing known about it: what is adopted
 
 # Between the parts of what a machine answers: a remote shell started with `-i`
@@ -56,8 +57,22 @@ def wanted( env, ctx ) -> dict:
     return out
 
 
+def _windows_here( there ) -> bool:
+    """This machine, a Windows: what would be a line of `sh` is done here, in Python."""
+    return L.WINDOWS and not there.host.remote
+
+
 def look( root: Path, layer, there ) -> tuple:
     """( record, stamp ) of `layer`, asked of the machine it lives on, in one go."""
+    if _windows_here( there ):
+        record = there.host.root / builds( root ) / f"{slug( layer )}.yaml"
+        text = record.read_text() if record.is_file() else ""
+        stamp = layer.stamp_shell( there ) if hasattr( layer, "stamp_shell" ) else "true"
+        try:
+            said = there.host.shell( stamp, capture = True ).stdout if stamp != "true" else ""
+        except ( L.NeedsAShell, OSError ):
+            said = ""
+        return yamlish.load( text ) if text.strip() else { }, ( said or "" ).strip()
     path = shlex.quote( f"{builds( root )}/{slug( layer )}.yaml" )
     stamp = layer.stamp_shell( there ) if hasattr( layer, "stamp_shell" ) else "true"
     answer = there.host.shell( f"echo {MARK}; cat {path} 2>/dev/null; echo {MARK}; ( {stamp} ) 2>/dev/null; echo {MARK}",
@@ -69,6 +84,11 @@ def look( root: Path, layer, there ) -> tuple:
 
 
 def write( root: Path, layer, there, record: dict ):
+    if _windows_here( there ):
+        target = there.host.root / builds( root ) / f"{slug( layer )}.yaml"
+        target.parent.mkdir( parents = True, exist_ok = True )
+        target.write_text( yamlish.dump( record ) )
+        return
     path = f"{builds( root )}/{slug( layer )}.yaml"
     there.host.shell( f"mkdir -p {shlex.quote( builds( root ) )} && cat > {shlex.quote( path )}",
                       quiet = True, input = yamlish.dump( record ) )
@@ -122,11 +142,13 @@ def retried( layer, record: dict ) -> bool:
 
 
 def status( root: Path, env, ctx ) -> str:
-    """ok / adopted / stale / not built / unknown -- what `errand envs` prints."""
+    """ok / adopted / stale / not built / unknown / unreachable -- what `errand envs` prints."""
+    if env.missing is not None:
+        return UNREACHABLE
     want = wanted( env, ctx )
     if not want:
         return UNKNOWN if env.wraps_anything( ctx.tags ) else OK
-    if env.ssh:
+    if env.ssh or getattr( env.vm, "is_box", False ):
         return UNKNOWN           # only the other machine can say
     for _, layer in env.indexed( ctx.tags ):
         if hasattr( layer, "probe" ) and not layer.probe( ctx ):
@@ -168,13 +190,13 @@ def _inside( env, ctx ):
             there = ssh.remote_root( ctx ) if ssh is not None else ctx.root
             cache = bootstrap.ship( ssh.host, ssh.options ) if ssh is not None else None
             made[ "ctx" ] = alive.Allocation( env, ctx.tags, SimpleNamespace(
-                root = ctx.root, ssh = ssh, there = Path( there ), cache = cache ) ).inside()
+                root = ctx.root, ssh = ssh, there = L.remote_path( there ) if ssh else Path( there ), cache = cache ) ).inside()
         return made[ "ctx" ]
 
     return inside
 
 
-def ensure( root: Path, env, ctx, *, force = False, echo = print, dry_run = False ) -> int:
+def ensure( root: Path, env, ctx, *, force = False, echo = print, dry_run = False, asked = False ) -> int:
     """Build or update whatever `env` declares and does not have.
 
     **What is already there was built by somebody, and is adopted rather than
@@ -189,6 +211,9 @@ def ensure( root: Path, env, ctx, *, force = False, echo = print, dry_run = Fals
     The one exception is what is built aside, which a build cannot harm: found
     older than its own recipe, it is rebuilt. An adoption is a guess, and a wrong
     one has cost a whole release built in an image missing a pin.
+
+    A layer that builds on somebody's own machine ( `setup_only`: a `WindowsBox` ) is built only when asked, by
+    `errand setup` ( `asked` ): any other command stops, and says so.
     """
     # Asked of, and built on, the machine the environment lives on: a layer
     # must not answer with what it finds here ( a root prefix, a binary ).
@@ -197,8 +222,13 @@ def ensure( root: Path, env, ctx, *, force = False, echo = print, dry_run = Fals
         place = env.ssh.place( ctx )
         there = L.Context( root = place.root, tags = ctx.tags, remote = True, host = place,
                            origin = ctx.origin )
-    jobs, adopted = [ ], [ ]
     inside = _inside( env, ctx )
+    lacking = lacks( env, ctx, there, inside )
+    if lacking:
+        for line in lacking:
+            echo( f"  {env.name}: {line}" )
+        return 1
+    jobs, adopted = [ ], [ ]
     for _, layer in env.indexed( ctx.tags ):
         if not isinstance( layer, L.Artefact ):
             continue
@@ -227,6 +257,12 @@ def ensure( root: Path, env, ctx, *, force = False, echo = print, dry_run = Fals
             write( root, layer, at, { "built": _built( want, stamp, "adopted" ) } )
     if not jobs:
         return 0
+    held = [ layer for layer, *_ in jobs if getattr( layer, "setup_only", False ) ]
+    if held and not asked and not dry_run:
+        for layer in held:
+            echo( f"  {env.name}: {layer.describe()} is not set up for this declaration: "
+                  f"errand setup --env {env.name} ( it installs on that machine )" )
+        return 1
 
     why = "rebuilding" if force else "bringing up to date"
     echo( f"  {why} {env.name}" )
@@ -245,13 +281,22 @@ def ensure( root: Path, env, ctx, *, force = False, echo = print, dry_run = Fals
 
     for layer, want, steps, record, stamp, present, there in jobs:
         log = f"{builds( root )}/{slug( layer )}.log"
-        there.host.shell( f"mkdir -p {shlex.quote( builds( root ) )} && : > {shlex.quote( log )}", quiet = True )
+        if _windows_here( there ):
+            ( there.host.root / log ).parent.mkdir( parents = True, exist_ok = True )
+            ( there.host.root / log ).write_text( "" )
+        else:
+            there.host.shell( f"mkdir -p {shlex.quote( builds( root ) )} && : > {shlex.quote( log )}", quiet = True )
         for step in steps:
             echo( f"    $ {step}" )
             # A step is a shell line, or -- when it takes more than one line and
             # decisions between them -- something to call, which runs its lines
             # through `there.host` itself and says how it went.
-            code = step( echo ) if callable( step ) else there.host.shell( _logged( step, log ), tty = True ).returncode
+            if callable( step ):
+                code = step( echo )
+            elif _windows_here( there ):
+                code = _tee_here( there.host, step, there.host.root / log )
+            else:
+                code = there.host.shell( _logged( step, log ), tty = True ).returncode
             if code != 0:
                 if hasattr( layer, "abandon" ):
                     there.host.shell( layer.abandon( there ), quiet = True )
@@ -263,6 +308,50 @@ def ensure( root: Path, env, ctx, *, force = False, echo = print, dry_run = Fals
                 return 1
         write( root, layer, there, { "built": _built( want, look( root, layer, there )[ 1 ], "built" ) } )
     return 0
+
+
+# What errand started on Windows runs here itself: the rest needs a POSIX machine, which an `Ssh` leads to.
+ON_WINDOWS_HERE = ( "Vars", "Venv", "Uv", "Missing", "Preload" )
+
+
+def lacks( env, ctx, there, inside = None ) -> list:
+    """What the layers of `env` require ( `requires` ) and do not find where they run: one shell line per place, asked
+    before anything is built. -> [ "on build-box: apptainer, not found ( apptainer:… )" ]."""
+    if L.WINDOWS and not there.host.remote:
+        posix = [ l for _, l in env.indexed( ctx.tags )
+                  if not isinstance( l, L.Gateway ) and type( l ).__name__ not in ON_WINDOWS_HERE ]
+        stack = [ l for _, l in env.indexed( ctx.tags ) ]
+        if posix and not ( stack and isinstance( stack[ 0 ], L.Gateway ) ):
+            return [ f"here: {l.describe()} needs a POSIX machine, and this is Windows: put an Ssh to one before it"
+                     for l in posix ]
+    by_place = { }
+    for _, layer in env.indexed( ctx.tags ):
+        at = ( inside( layer ) if inside else None ) or there
+        requires = getattr( layer, "requires", None )     # a layer may be anything with the methods it uses
+        for test, what in ( requires( at ) if requires else ( ) ):
+            by_place.setdefault( id( at ), ( at, [ ] ) )[ 1 ].append( ( test, what, layer ) )
+    out = [ ]
+    for at, checks in by_place.values():
+        if _windows_here( at ):
+            import shutil
+            place = "here"
+            for test, what, layer in checks:
+                words = shlex.split( test )
+                found = shutil.which( words[ 2 ] ) is not None if words[ : 2 ] == [ "command", "-v" ] and len( words ) == 3 else None
+                if found is None:
+                    try:
+                        found = at.host.shell( test, quiet = True ).returncode == 0
+                    except L.NeedsAShell:
+                        found = True          # cannot be asked here: the build says it, if it is so
+                if not found:
+                    out.append( f"{place}: {what} ( {layer.describe()} )" )
+            continue
+        line = "; ".join( f"{{ {test} ; }} >/dev/null 2>&1 || echo errand-lacks-{i}" for i, ( test, _, _ ) in enumerate( checks ) )
+        got = at.host.shell( line, capture = True )
+        failed = { int( w[ len( "errand-lacks-" ): ] ) for w in ( got.stdout or "" ).split() if w.startswith( "errand-lacks-" ) }
+        place = "here" if not at.host.remote else f"on {at.host.describe()}"
+        out += [ f"{place}: {what} ( {layer.describe()} )" for i, ( _, what, layer ) in enumerate( checks ) if i in failed ]
+    return out
 
 
 def _built( want, stamp, origin ) -> dict:
@@ -279,6 +368,19 @@ def _existing( layer, stamp: str ) -> str:
     date = f", from {time.strftime( '%Y-%m-%d', time.localtime( when ) )}," if when else ""
     return ( f"the existing one{date} is untouched" if getattr( layer, "aside", False )
              else f"the existing one{date} may be half updated" )
+
+
+def _tee_here( host, step: str, log: Path ) -> int:
+    """`step` run here, its output shown and kept in `log`, as `_logged` does through a shell."""
+    import subprocess, sys
+    proc = subprocess.Popen( L.windows_argv( step ), cwd = str( host.root ), stdout = subprocess.PIPE,
+                             stderr = subprocess.STDOUT )
+    with open( log, "ab" ) as kept:
+        for chunk in iter( lambda: proc.stdout.read1( 65536 ), b"" ):
+            sys.stdout.buffer.write( chunk )
+            sys.stdout.flush()
+            kept.write( chunk )
+    return proc.wait()
 
 
 def _logged( step: str, log: str ) -> str:

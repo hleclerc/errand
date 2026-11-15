@@ -58,10 +58,11 @@ if test( "a stack is folded against the REMOTE root", tags = [ "ssh" ] ):
 
 if test( "rsync is given the same options as ssh", tags = [ "ssh" ] ):
     # Reaching a different machine than ssh does would be a very quiet bug.
-    from errand.layers.gateways import CONNECT_TIMEOUT
-    assert L._rsh( [ ] ) == [ "-e", f"ssh -o ConnectTimeout={CONNECT_TIMEOUT}" ]
+    from errand.layers.gateways import ssh_options
+    assert L._rsh( [ ] ) == [ "-e", "ssh " + " ".join( ssh_options( [ ] ) ) ]
     flag, command = L._rsh( [ "-p", "2222" ] )
-    assert flag == "-e" and command == f"ssh -p 2222 -o ConnectTimeout={CONNECT_TIMEOUT}"
+    assert flag == "-e" and command == "ssh " + " ".join( ssh_options( [ "-p", "2222" ] ) )
+    assert command.startswith( "ssh -p 2222 -o ConnectTimeout=" )
 
 
 if test( "it reaches the machine at all", tags = [ "ssh" ] ):
@@ -138,11 +139,15 @@ if test( "the local file says what it has" ):
         print( f"  {key}: {'yes' if have( key ) else 'no'}" )
 
 
-if test( "every ssh errand starts gives up on a host that does not answer, unless told otherwise" ):
-    from errand.layers.gateways import ssh_options, CONNECT_TIMEOUT
-    assert ssh_options( [ ] ) == [ "-o", f"ConnectTimeout={CONNECT_TIMEOUT}" ]
+if test( "every ssh errand starts gives up on a host that does not answer, or a connection gone dead, "
+         "unless told otherwise" ):
+    from errand.layers.gateways import ssh_options, CONNECT_TIMEOUT, ALIVE
+    assert ssh_options( [ ] ) == [ "-o", f"ConnectTimeout={CONNECT_TIMEOUT}", "-o", f"ServerAliveInterval={ALIVE[ 0 ]}",
+                                   "-o", f"ServerAliveCountMax={ALIVE[ 1 ]}" ]
     assert ssh_options( [ "-p", "2222" ] )[ : 2 ] == [ "-p", "2222" ]
-    assert ssh_options( [ "-o", "ConnectTimeout=60" ] ) == [ "-o", "ConnectTimeout=60" ], "theirs wins"
+    theirs = ssh_options( [ "-o", "ConnectTimeout=60", "-o", "ServerAliveInterval=5" ] )
+    assert theirs[ : 4 ] == [ "-o", "ConnectTimeout=60", "-o", "ServerAliveInterval=5" ], "theirs wins"
+    assert "ConnectTimeout=10" not in theirs and "ServerAliveInterval=15" not in theirs
 
 
 if test( "a host ssh cannot log in to stops the command, said once and plainly" ):
@@ -155,3 +160,29 @@ if test( "a host ssh cannot log in to stops the command, said once and plainly" 
     assert unreachable( "h", sp.CompletedProcess( "ssh", 255, "", "make: *** [all] Error 255\n" ) ) is None, \
         "a command over there that exits 255 is not an unreachable host"
     assert unreachable( "h", sp.CompletedProcess( "ssh", 1, "", "Connection refused\n" ) ) is None
+
+
+if test( "errand's sources cross as one tar, unpacked beside the copy and put in its place; with tar alone too" ):
+    import shutil as _sh
+    import subprocess as _sp
+    import tempfile as _tf
+    from pathlib import Path as _P
+    from errand import bootstrap as B
+    data = B.package_tar()
+    want = sorted( p.relative_to( B.PACKAGE ).as_posix() for p in B.PACKAGE.rglob( "*.py" ) if "__pycache__" not in p.parts )
+    bare = _P( _tf.mkdtemp() )                     # a PATH with no python: tar does it
+    for tool in ( "sh", "rm", "mkdir", "mv", "tar", "gzip", "cat" ):
+        found = _sh.which( tool )
+        if found:
+            ( bare / tool ).symlink_to( found )
+    for path in ( None, str( bare ) ):
+        d = _P( _tf.mkdtemp() ) / "errand"
+        d.mkdir()
+        ( d / "stale.py" ).write_text( "from an older errand" )
+        env = None if path is None else { "PATH": path }
+        done = _sp.run( [ "sh", "-c", B.UNPACK, "sh", str( d ), "k123" ], input = data, capture_output = True, env = env )
+        assert done.returncode == 0, done.stderr
+        got = sorted( p.relative_to( d ).as_posix() for p in d.rglob( "*.py" ) )
+        assert got == want, ( path, set( got ) ^ set( want ) )
+        assert ( d / ".sources" ).read_text().strip() == "k123"
+        assert sorted( p.name for p in d.parent.iterdir() ) == [ "errand" ], "no .part, no .old left"

@@ -5,7 +5,7 @@ then runs the work in the environment asked for. Two things must therefore be
 true over there before anything else can be, and neither is the environment's
 business:
 
-* **errand is importable.** Its sources travel: `ship` rsyncs the package to
+* **errand is importable.** Its sources travel: `ship` sends the package, one tar on stdin, to
   `~/.cache/errand/src/<key>/errand/`, one copy per checkout here, and the
   command becomes `python <copy>/errand/_boot.py ...`. Nothing is installed,
   and the errand that answers is the one that asked -- no version skew.
@@ -106,9 +106,12 @@ def ship( host: str, options = ( ), agent = True ) -> str:
     """The package, to `<cache>/<src_rel>/errand/` on `host`: -> `<cache>`, errand's per-user
     directory over there ( `ERRAND_CACHE_DIR`, else `~/.cache/errand` ).
 
-    Skipped when what is there says it is these sources already ( `.sources` ),
-    which costs one line through the agent rather than an rsync."""
-    from .layers import _remote, _rsh
+    Skipped when what is there says it is these sources already ( `.sources` ), which costs one
+    line. Otherwise one tar crosses, on the stdin of that same kind of line, and is unpacked
+    beside the copy before it takes its place ( ADR 0006 ): no rsync is needed over there, and a
+    copy is whole or not there. New sources mean a new agent ( `sources_key` ), whose start ships
+    them: there is no agent of these sources yet to sync them through."""
+    from .layers import _remote
     sub = shlex.quote( src_rel() )
     key = sources_key()
     got = _remote( host, options, f'b={SH_BASE}; mkdir -p "$b"/{sub} && echo "ERRAND_CACHE=$b" && '
@@ -122,10 +125,10 @@ def ship( host: str, options = ( ), agent = True ) -> str:
         raise subprocess.CalledProcessError( got.returncode or 1, "mkdir", got.stdout, got.stderr )
     dest = f"{cache}/{src_rel()}"
     if key not in ( got.stdout or "" ).split():
-        subprocess.run( [ "rsync", "-a", "--delete", *_rsh( options, host, agent ), "--exclude=__pycache__",
-                          "--exclude=.sources", f"{PACKAGE}/", f"{host}:{dest}/errand/" ],
-                        check = True, stdin = subprocess.DEVNULL )
-        _remote( host, options, f"echo {key} > {shlex.quote( dest )}/errand/.sources", agent = agent )
+        line = f"sh -c {shlex.quote( UNPACK )} sh {shlex.quote( dest + '/errand' )} {key}"
+        done = _remote( host, options, line, agent = agent, input = package_tar() )
+        if done.returncode:
+            raise subprocess.CalledProcessError( done.returncode, "unpack errand's sources", done.stdout, done.stderr )
     return cache
 
 
@@ -252,3 +255,37 @@ def command( cmd, inner, cache: str, preferred: str = "python3", boot: str | Non
     where = shlex.quote( boot ) if boot else f'"$base"/{shlex.quote( boot_rel() )}'
     then = f'exec "$py" {where} "$@"\n'
     return L.Command( [ "sh", "-c", _script( then, preferred ), "sh", *rest ], cmd.env )
+
+
+def package_tar( ) -> bytes:
+    """errand's sources, gzipped: what `ship` sends. No caches, no `.sources`."""
+    import io
+    import tarfile
+    buf = io.BytesIO()
+    with tarfile.open( fileobj = buf, mode = "w:gz", compresslevel = 6 ) as t:
+        for p in sorted( PACKAGE.rglob( "*" ) ):
+            rel = p.relative_to( PACKAGE )
+            if "__pycache__" in rel.parts or rel.name == ".sources" or p.is_dir():
+                continue
+            t.add( str( p ), arcname = rel.as_posix() )
+    return buf.getvalue()
+
+
+# Over there, from stdin: unpacked beside the copy, then put in its place. Python when there is one
+# ( any errand runs on ), `tar` otherwise. `$1` the copy, `$2` the sources key.
+UNPACK = r"""
+d="$1"; set -e
+rm -rf "$d.part" "$d.old"; mkdir -p "$d.part"
+if command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import sys, tarfile
+kw = { "filter": "data" } if hasattr( tarfile, "data_filter" ) else { }
+with tarfile.open( fileobj = sys.stdin.buffer, mode = "r|gz" ) as t:
+    t.extractall( sys.argv[ 1 ], **kw )' "$d.part"
+else
+    tar xzf - -C "$d.part"
+fi
+echo "$2" > "$d.part/.sources"
+[ -e "$d" ] && mv "$d" "$d.old"
+mv "$d.part" "$d"
+rm -rf "$d.old"
+"""

@@ -207,7 +207,7 @@ def states( root: Path, record: dict ) -> list:
             continue
         for run in plan[ "runs" ]:
             run = { **run, "env": place.get( "env" ) or run.get( "env" ) }
-            result = _result_for( root, run )
+            result = _result_for( root, run, record.get( "stamp" ) )
             if result:
                 rows.append( { **run, "state": DONE, "status": result.get( "status" ),
                                "place": result.get( "place" ) or run.get( "place" ),
@@ -218,16 +218,18 @@ def states( root: Path, record: dict ) -> list:
     return rows
 
 
-def _result_for( root: Path, run: dict ):
-    path = result_path_for( root, run )
+def _result_for( root: Path, run: dict, stamp = None ):
+    path = result_path_for( root, run, stamp )
     return yamlish.read( path ) if path else None
 
 
-def result_path_for( root: Path, run: dict ):
+def result_path_for( root: Path, run: dict, stamp = None ):
     """WHERE this run's result file landed, or None while it is still owed.
 
     The path and not just its contents, because whoever wants to watch the run
-    wants `output.txt` beside it.
+    wants `output.txt` beside it. `stamp`: the submission's ( `ERRAND_STAMP`, which
+    starts the name of every run directory it makes ) -- an earlier run of the same
+    case, with the same parameters, is not this one.
     """
     if not run.get( "under" ):
         return None
@@ -239,6 +241,8 @@ def result_path_for( root: Path, run: dict ):
     for path in sorted( under.glob( "*/result.yaml" ), reverse = True ):
         got = yamlish.read( path )
         if not got:
+            continue
+        if stamp and str( got.get( "stamp" ) or path.parent.name[ : len( str( stamp ) ) ] ) != str( stamp ):
             continue
         if got.get( "env" ) == run.get( "env" ) and ( got.get( "params" ) or { } ) == \
            ( run.get( "params" ) or { } ):

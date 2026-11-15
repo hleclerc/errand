@@ -15,6 +15,7 @@ import threading
 import time
 
 from . import frames as F
+from .frames import GRACE     # noqa: F401 -- the stop's steps, for a process of this machine ( `LocalSession` )
 
 
 MARKER = b"\x00errand-agent-1\n"      # what a bridge says before the first frame
@@ -116,26 +117,19 @@ class Connection:
             self._close()
 
 
-GRACE = ( 2.0, 5.0 )        # seconds after Ctrl-C at which SIGTERM, then SIGKILL, follow SIGINT
-
-
 def stop( call: Call ):
-    """Ctrl-C, over there: SIGINT to the process and all it started ( its process group ), then
-    SIGTERM, then SIGKILL, for whatever is still alive -- a Python that catches KeyboardInterrupt
-    and goes on, a program that ignores SIGINT. What errand started is stopped, not asked."""
-    import threading
-
-    def send( sig ):
-        try:
-            call.send( F.SIGNAL, { "sig": int( sig ) } )
-        except OSError:
-            pass
-
-    send( signal.SIGINT )
-    for after, sig in zip( GRACE, ( signal.SIGTERM, signal.SIGKILL ) ):
-        t = threading.Timer( after, send, args = ( sig, ) )
-        t.daemon = True
-        t.start()
+    """Ctrl-C, over there: one word to the agent, which stops the process and all it started ( its
+    process group ) -- SIGINT, then SIGTERM, then SIGKILL, for whatever is still alive, a Python
+    that catches KeyboardInterrupt and goes on, a program that ignores SIGINT. The owner does it
+    ( `Proc.stop` ), so it happens even if this process is gone by then. What errand started is
+    stopped, not asked.
+    -> whether it was said: a stream already lost cannot carry it, and the caller must not then
+    behave as if the work had stopped."""
+    try:
+        call.send( F.SIGNAL, { "sig": int( signal.SIGINT ), "stop": True } )
+        return True
+    except Exception:
+        return False
 
 
 def shell( conn: Connection, line: str, *, cwd = None, quiet = False, capture = False, input = None,

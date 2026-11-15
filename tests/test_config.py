@@ -263,3 +263,110 @@ if test( "being let in prepares the place, like any other command", tags = [ "sl
         # place itself, not the preparing of it.
         code, output = run_errand( project, "run", "--env", "made", "--no-setup", "echo", "ran anyway" )
         assert "bringing up to date" not in output, output
+
+
+if test( "a provider declares environments the project's files can redefine" ):
+    import tempfile
+
+    from errand import local as LOC
+
+    kept = ( dict( LOC._cache ), list( LOC._files ), LOC._missing_root )
+    seen = { }
+
+    def provider( root ):
+        # it runs after this machine's values, and is handed the project root
+        seen[ "root" ], seen[ "host" ] = root, errand.value( "far_host" )
+        C.envs[ "kit-a" ] = C.Env( [ L.Vars( { "FROM": "provider" } ) ] )
+        C.envs[ "kit-b" ] = C.Env( [ L.Vars( { "FROM": "provider" } ) ] )
+
+    C.providers.append( provider )
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path( tmp )
+            # no project file at all: the provided environments are there anyway
+            assert not C.load( root )
+            assert sorted( C.envs ) == [ "kit-a", "kit-b" ]
+
+            ( root / C.VARS_FILE ).write_text( "far_host = 'over-there'\n" )
+            ( root / C.ENVS_FILE ).write_text(
+                "import errand\n"
+                "errand.envs[ 'kit-a' ] = errand.Env( [ errand.Vars( { 'FROM': 'project' } ) ] )\n"
+                "errand.envs[ 'kit-b' ].stack.append( errand.Vars( { 'MORE': '1' } ) )\n" )
+            assert C.load( root )
+            assert seen[ "host" ] == "over-there" and seen[ "root" ] == root
+            assert C.envs[ "kit-a" ].stack[ 0 ].values == { "FROM": "project" }          # redefined
+            assert len( C.envs[ "kit-b" ].stack ) == 2                                # changed in place
+            # the default is the first environment the PROJECT declared: kit-a, redefined by it, not kit-b
+            assert C.default().name == "kit-a"
+            ( root / C.ENVS_FILE ).write_text( "" )
+            C.load( root )
+            assert C.default().name == "default"         # only provided ones: this interpreter, as with none
+    finally:
+        C.providers.remove( provider )
+        C.reset()
+        LOC._cache.clear()
+        LOC._cache.update( kept[ 0 ] )
+        LOC._files[ : ], LOC._missing_root = kept[ 1 ], kept[ 2 ]
+
+
+if test( "a provider that fails is said, and the others still declare" ):
+    import tempfile
+
+    said = [ ]
+
+    def broken( root ):
+        raise RuntimeError( "no toolchain here" )
+
+    def fine( root ):
+        C.envs[ "kit" ] = C.Env( [ ] )
+
+    C.providers.extend( [ broken, fine ] )
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            C.load( Path( tmp ), warn = said.append )
+        assert "kit" in C.envs
+        assert any( "no toolchain here" in m for m in said ), said
+    finally:
+        C.providers.remove( broken )
+        C.providers.remove( fine )
+        C.reset()
+
+
+if test( "an environment that cannot be reached says why, and nothing is pushed, built or run" ):
+    import tempfile
+
+    from _infra import run_errand
+
+    with tempfile.TemporaryDirectory() as tmp:
+        project = Path( tmp )
+        ( project / C.ENVS_FILE ).write_text(
+            "import errand\n"
+            "errand.envs[ 'here' ] = errand.Env( [ errand.Vars( { 'X': '1' } ) ], kit = True )\n"
+            "errand.envs[ 'far' ] = errand.Env( [ errand.Missing( 'a Mac reachable by ssh', hint = 'name one in hosts.py' ) ],\n"
+            "                                   kit = True )\n" )
+        code, output = run_errand( project, "envs" )
+        assert code == 0 and "missing: a Mac reachable by ssh" in output and "unreachable" in output, output
+        code, output = run_errand( project, "run", "--no-queue", "--env", "far", "echo", "never-run" )
+        assert code != 0, output
+        assert "far: needs a Mac reachable by ssh" in output and "name one in hosts.py" in output, output
+        assert "never-run" not in output.replace( "echo never-run", "" ), output
+
+    # chosen by tag, it is only left out; by name, or when it is all there is, refused
+    from errand.cli.project import _reachable
+    near = C.Env.make( "near", [ L.Vars( { } ) ] )
+    far = C.Env.make( "far", [ L.Missing( "a Mac" ) ] )
+    assert [ e.name for e, _ in _reachable( [ ( near, { } ), ( far, { } ) ] ) ] == [ "near" ]
+    for targets, named in ( ( [ ( near, { } ), ( far, { } ) ], True ), ( [ ( far, { } ) ], False ) ):
+        try:
+            _reachable( targets, named = named )
+            assert False, "refused"
+        except ValueError as err:
+            assert "far: needs a Mac" in str( err )
+
+
+if test( "a container whose image was left for something to complete, and never was, is refused" ):
+    try:
+        C.Env( [ L.Apptainer( flags = [ "--nv" ] ) ] )
+        assert False, "refused"
+    except ValueError as err:
+        assert "Apptainer( image = ... ) is empty" in str( err )

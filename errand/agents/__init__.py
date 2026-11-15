@@ -49,6 +49,8 @@ def enabled( ) -> bool:
 def open( target: dict ) -> Connection:
     """A connection to the agent `target` names: reused while it lives."""
     key = U.identity( target )
+    from . import ledger
+    ledger.note( target )             # a machine `errand status` asks from now on
     with _lock:
         conn = _open.get( key )
         if conn is None or not conn.alive:

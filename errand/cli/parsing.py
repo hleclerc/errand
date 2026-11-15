@@ -30,7 +30,7 @@ VERBS = {
     "tui"   : ( "the screen: tick what to run, watch each case as it talks", [ ] ),
     "queue" : ( "what this machine has, and what is holding it", [ ] ),
     "wait"  : ( "wait until nothing holds the machine", [ ] ),
-    "status": ( "how the launched ( --batch ) work is going", [ ] ),
+    "status": ( "what runs on every machine work was sent to, then how the --batch work is going", [ "all" ] ),
     "watch" : ( "the same, live", [ ] ),
     "forget": ( "drop a submission from the list: errand forget ID, or every one that is over: errand forget finished", [ ] ),
     "attach": ( "follow again what a command left running ( a lost connection ), and bring it back", [ ] ),
@@ -105,6 +105,7 @@ def build_parser( tag_names = ( ) ):
     p.add_argument( "--force", action = "store_true",
                     help = "setup: from scratch; init: replace what is there; agents stop: even with something running" )
     p.add_argument( "--dry-run", action = "store_true", help = "say what setup would do, and do nothing" )
+    p.add_argument( "--all", dest = "all", action = "store_true", help = "status: every project in full, not one line each" )
 
     for name in tag_names:
         p.add_argument( f"--{name.replace( '_', '-' )}", dest = f"tag_{name}", default = None,

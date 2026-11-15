@@ -147,8 +147,8 @@ if test( "Slurm asks for one task per rank, and errand runs once in the allocati
     assert "--ntasks-per-node" not in slurm.flags( ctx() ), "one process: nothing to spread"
     assert slurm.flags( L.Context( root = Path( "/" ), needs = { "ranks": 8 }, phase = "prepare" ) )[ :4 ] == [ "--nodes", "1", "--ntasks", "1" ]
     cmd = slurm.wrap( L.Command( [ "python", "-m", "errand" ] ), ctx( ranks = 8 ) )
-    assert cmd.argv[ 0 ] == "salloc" and cmd.argv[ -9: ] == [ "srun", "--nodes", "1", "--ntasks", "1", "--overlap", "python", "-m", "errand" ], cmd.argv
-    assert slurm.wrap( L.Command( [ "x" ] ), ctx() ).argv[ 0 ] == "srun"
+    assert L.unhooked( cmd.argv )[ 0 ] == "salloc" and cmd.argv[ -9: ] == [ "srun", "--nodes", "1", "--ntasks", "1", "--overlap", "python", "-m", "errand" ], cmd.argv
+    assert L.unhooked( slurm.wrap( L.Command( [ "x" ] ), ctx() ).argv )[ 0 ] == "srun"
     for bad in ( [ "--ntasks=4" ], [ "-n", "4" ], [ "-n4" ], [ "--ntasks-per-node", "2" ] ):
         try:
             L.Slurm( extra = bad )

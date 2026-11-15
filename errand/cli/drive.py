@@ -19,9 +19,11 @@ from __future__ import annotations
 
 import json
 import os
+import posixpath
 import re
 import shlex
 import subprocess
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -33,7 +35,7 @@ from .plans import plans_rel, read_plan
 from .project import child_env_for
 from . import alive, guest
 from .sessions import follow_all, INTERRUPTED, LocalSession, Session, WatchedSession
-from .style import dim, head, warn
+from .style import bad, dim, head, warn
 
 LOGIN = 'exec "${SHELL:-/bin/sh}" -ic "$1"'          # `sh -c LOGIN sh line`: the user's interactive shell
 
@@ -55,13 +57,15 @@ def arrive( env, tags, root ):
         print( warn( f"  warning: {message}" ), flush = True )
     cache = None
     if ssh is not None:
-        say( f"  rsync push -> {ssh.host}:{there}" )
-        L.push( root, ssh.host, there, ssh.options, echo = say, outputs = ssh.errand_outputs_directory )
+        say( f"  {L.transfer( ssh.transfer )} push -> {ssh.host}:{there}" )
+        L.push( root, ssh.host, there, ssh.options, echo = say, outputs = ssh.errand_outputs_directory,
+                transfer_by = ssh.transfer )
         for other in ssh.also:
             L.push( Path( os.path.normpath( root / other ) ), ssh.host,
-                    Path( os.path.normpath( there / other ) ), ssh.options )
+                    L.remote_path( posixpath.normpath( L.remote_path( there ) / other ) ), ssh.options,
+                    transfer_by = ssh.transfer )
         cache = bootstrap.ship( ssh.host, ssh.options )
-    return SimpleNamespace( root = root, ssh = ssh, there = Path( there ), cache = cache,
+    return SimpleNamespace( root = root, ssh = ssh, there = L.remote_path( there ) if ssh else Path( there ), cache = cache,
                             boot = envs.boot_of( ssh, cache ) )
 
 
@@ -190,7 +194,15 @@ def drive( env, tags, verb, known, *, root, out_root, report, kinds, pull = ( ) 
     rcs = follow_all( sessions, report, boxes )
     if rcs is None:
         if live:
-            live.unlink( missing_ok = True )            # stopped: nothing over there to come back to
+            if all( getattr( s, "stop_delivered", True ) for s in sessions ):
+                live.unlink( missing_ok = True )        # stopped: nothing over there to come back to
+            else:
+                # The stop could not be said ( the stream was already lost ): the work may still run,
+                # and its record stays, said to be asked to stop ( `errand status`, `errand attach` ).
+                rec = json.loads( live.read_text() )
+                live.write_text( json.dumps( { **rec, "stop_requested": time.time() }, indent = 1 ) )
+                print( bad( "  the stop could not reach it: it may still run ( errand status says; "
+                            "errand attach, then Ctrl-C, stops it )" ), flush = True )
         return INTERRUPTED
     box.update( next( ( b for b in boxes if b.get( "plan" ) ), { } ) )
     if any( b.get( "lost" ) for b in boxes ):
@@ -271,14 +283,14 @@ def _bring_back( where, env_name, box, pull ):
 
     def fetch( paths ):
         if paths:
-            say( f"  rsync pull  <- {ssh.host}:{where.there} [{', '.join( paths )}]" )
-            L.fetch( paths, ssh.host, where.there, where.root, ssh.options )
+            say( f"  {L.transfer( ssh.transfer )} pull  <- {ssh.host}:{where.there} [{', '.join( paths )}]" )
+            L.fetch( paths, ssh.host, where.there, where.root, ssh.options, transfer_by = ssh.transfer )
 
     fetch( [ plans_rel( where.root ) ] )
     plan = box.get( "plan" ) or read_plan( where.root, env_name )
     if plan:
         fetch( sorted( { r[ "under" ] for r in plan[ "runs" ] } ) )
-    fetch( list( pull ) )
+    fetch( [ *pull, *L.back_zones() ] )
 
 
 def attach( root, ident = None, *, report ) -> int:
@@ -312,7 +324,7 @@ def attach( root, ident = None, *, report ) -> int:
             if any( b.get( "lost" ) for b in boxes ):
                 continue
         ssh = SimpleNamespace( **rec[ "ssh" ] ) if rec.get( "ssh" ) else None
-        _bring_back( SimpleNamespace( root = root, ssh = ssh, there = Path( rec[ "there" ] ) ), rec[ "env" ], { },
+        _bring_back( SimpleNamespace( root = root, ssh = ssh, there = L.remote_path( rec[ "there" ] ) if ssh else Path( rec[ "there" ] ) ), rec[ "env" ], { },
                      rec.get( "pull", [ ] ) )
         path.unlink( missing_ok = True )
     return rc

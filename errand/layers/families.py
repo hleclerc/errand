@@ -37,6 +37,11 @@ class Layer( abc.ABC ):
     def wrap( self, cmd: "Command", ctx: "Context" ) -> "Command":
         return cmd
 
+    def requires( self, ctx: "Context" ) -> list:
+        """What it needs of the place it runs at, checked there before anything is built: `[ ( shell test, what is
+        lacking when it fails ) ]` -- `( "command -v apptainer", "apptainer, not found" )`. Nothing by default."""
+        return [ ]
+
 
 class Overlay( Layer ):
     """The command's surroundings: variables, a module, a shell of packages."""

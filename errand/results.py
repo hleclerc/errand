@@ -277,6 +277,7 @@ def write_result( leaf: Path, *, entry, root, env_name, where, tags, status, err
         "line"       : entry.line,
         "kind"       : entry.kind,
         "date"       : now(),
+        "stamp"      : stamp(),           # the command it belongs to ( a --batch submission's )
         "env"        : env_name,
         "place"      : where,
         "host"       : socket.gethostname().split( "." )[ 0 ],

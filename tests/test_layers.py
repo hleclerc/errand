@@ -112,7 +112,7 @@ if test( "an environment that declares nothing is never stale" ):
 
 if test( "a batch allocation wraps, it does not replace the interpreter" ):
     cmd = folded( [ L.Slurm( partition = "gpu", gpus = 1, time = "2:00:00" ) ] )
-    assert cmd.argv[ 0 ] == "srun"
+    assert L.unhooked( cmd.argv )[ 0 ] == "srun"
     assert cmd.argv[ -4 : ] == [ "python", "-m", "errand", "x" ]
     assert "--partition" in cmd.argv and "gpu" in cmd.argv
     # nothing unset becomes a flag: srun would take `--nodes None` literally
@@ -122,7 +122,7 @@ if test( "a batch allocation wraps, it does not replace the interpreter" ):
 if test( "slurm stacks in front of a container, ssh in front of both" ):
     stack = [ L.Slurm( partition = "gpu" ), L.Apptainer( image = "c/x.sif" ) ]
     cmd = folded( stack )
-    assert cmd.argv[ 0 ] == "srun"
+    assert L.unhooked( cmd.argv )[ 0 ] == "srun"
     assert "apptainer" in cmd.argv and cmd.argv.index( "apptainer" ) > cmd.argv.index( "srun" )
 
 
@@ -426,3 +426,26 @@ if test( "the built image is streamed from the builder, never left half-copied" 
             assert not ( dest / "c" / "none.sif" ).exists()
         finally:
             os.environ[ "PATH" ] = path
+
+
+if test( "what a layer requires of its place is asked there, before anything is built, and said" ):
+    import tempfile
+
+    from errand import setup as S
+
+    class Needy( L.Layer ):
+        def __init__( self, tests ): self.tests = tests
+        def describe( self ): return "needy"
+        def requires( self, ctx ): return self.tests
+
+    with tempfile.TemporaryDirectory() as tmp:
+        ctx = L.Context( root = Path( tmp ) )
+        env = Env.make( "e", [ Needy( [ ( "true", "nothing" ), ( "command -v errand-no-such-tool", "errand-no-such-tool, not found" ) ] ) ] )
+        assert S.lacks( env, ctx, ctx ) == [ "here: errand-no-such-tool, not found ( needy )" ]
+        said = [ ]
+        assert S.ensure( Path( tmp ), env, ctx, echo = said.append ) == 1
+        assert said == [ "  e: here: errand-no-such-tool, not found ( needy )" ], said
+        assert S.lacks( Env.make( "f", [ Needy( [ ( "true", "x" ) ] ) ] ), ctx, ctx ) == [ ]
+
+    assert L.Apptainer( image = "i.sif", exe = "singularity" ).requires( None )[ 0 ][ 1 ] == "singularity, not found"
+    assert [ w for _, w in L.Docker( image = "i" ).requires( None ) ] == [ "docker, not found", "a running docker ( `docker info` fails )" ]

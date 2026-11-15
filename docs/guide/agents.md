@@ -94,8 +94,10 @@ errand attach                            # later: the rest, the report, the resu
 
 Ctrl-C reaches the work wherever it runs, through every layer: over ssh, in a container, in an
 allocation, in a Windows guest. The work gets an interrupt first, as at a terminal. If it is still
-there after 2 seconds it is told to terminate, and after 5 seconds it is killed. errand then exits
-with code 130. A Python that catches `KeyboardInterrupt` and goes on does not keep errand waiting.
+there after 2 seconds it is told to terminate, and after 5 seconds it is killed, with whatever it
+started in its process group. The agent over there does this, not errand, so it happens even if
+errand is already gone. errand then exits with code 130. A Python that catches `KeyboardInterrupt`
+and goes on does not keep errand waiting.
 
 ## A real terminal
 
@@ -119,6 +121,12 @@ is the project's, in its `errand-outputs/` (over there, in the project's copy):
 | a command's output, kept for `errand attach` | `errand-outputs/state/procs/` | it is brought back |
 | run records | `errand-outputs/runs/` | you remove them |
 | Windows images | `errand-outputs/builds/windows/` | a newer one is ready |
+
+Nothing errand starts runs without an owner. An agent writes down the process group of everything
+it starts. Stopped with `errand agents stop --force`, or by a SIGTERM (a logout, a `kill`), it
+stops what it runs before it goes. If it is killed outright (SIGKILL, the OOM killer), the next
+agent in its directory, or the next one beside it, finds that work, which nobody can follow any
+more, and kills it. → [ADR 0008](https://github.com/hleclerc/errand/blob/main/docs/adr/0008-nothing-runs-unowned.md)
 
 Agents and the hub stop when they have had nothing to do for their time, and take their sockets
 with them. A hub started from sources that have since changed also takes its directory with it.
@@ -148,9 +156,28 @@ Stopping goes from the far end: an environment before the machine or the allocat
 allocation held warm goes with its agent, and the job ends. An agent with something running is left
 alone, and says so; `--force` stops it anyway.
 
-`errand status` starts with the commands left running when their connection was lost. For each, the
-agent says whether the work is still running or has finished and waits to be brought back with
-`errand attach`.
+`errand status` starts with what runs, wherever it runs. Each agent writes what it owns to its own
+directory, and `errand status` reads that, without starting an agent. It reads this machine
+directly, and every other machine work was sent to from here (the ledger, `~/.cache/errand/ledger/`)
+over one ssh each. It also covers the guests of the virtual machines that are up. On a machine that
+runs work, such as lmo, `errand status` typed there shows everything its agents run, whoever started
+it and from wherever.
+
+```
+running   ( on mac, lmo: this machine, and every machine work was sent to from it )
+  sdot-ffi
+    lmo          3f2a9c1e  run tests/test_w2.py::*  --env lin  12 min  running
+  guitar_2000: 2 running on lmo
+  lmo: windows vm 80103674 ready, 8 cpus 16G
+```
+
+The current project is shown in full, and every other project gets one line (`--all` expands
+them). A process whose agent is gone is **orphaned**: the next agent in that directory stops it. On
+Linux, a process errand started that no record holds any more (an older errand's, for instance) is
+found by its environment and shown as **unowned**, with the `kill` that stops it.
+
+Then come the commands left running when their connection was lost. For each, the agent says
+whether the work is still running, or has finished and waits to be brought back with `errand attach`.
 
 ## When you want it otherwise
 

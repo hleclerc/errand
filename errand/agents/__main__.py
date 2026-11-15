@@ -4,6 +4,7 @@
               ( `connect <dir> <keep_alive> attached`: an agent of its own, a child that goes with it )
     serve     the agent itself, in the foreground ( tests, debugging )
     rsh       rsync's remote shell, through the agent ( `rsh.py` )
+    table     what runs on this machine on errand's behalf, read from disk, as JSON ( `table.py` )
 """
 from __future__ import annotations
 
@@ -13,6 +14,9 @@ from pathlib import Path
 
 def main( argv = None ) -> int:
     argv = list( sys.argv[ 1 : ] if argv is None else argv )
+    if argv[ : 1 ] == [ "table" ]:
+        from .table import main as table
+        return table()
     if argv[ : 1 ] == [ "rsh" ] and len( argv ) >= 3:
         from .rsh import main as rsh
         return rsh( argv[ 1 ], argv[ 2 : ] )

@@ -133,26 +133,38 @@ if test( "what is missing is said with the command that fixes it, on that machin
             raise AssertionError( f"accepted: {f}" )
 
 
-if test( "a machine is up while an errand process holds it, then kept warm for `keep`" ):
+def quiet_guest( m, busy = False ):
+    """No guest to ask: whether a session runs there is said by the test."""
+    m.busy = busy
+    m._guest_busy = lambda: m.busy
+    return m
+
+
+if test( "a machine is up while a command holds it or a session runs in the guest, then kept warm for `keep`" ):
+    from errand.vm.common import _lock
     assert vm.Windows().keep == "5m", "kept warm a little: it gives way to whoever needs its cores"
     with tempfile.TemporaryDirectory() as tmp, cache( tmp ):
-        m = vm.Machine( L.Here( Path( tmp ) ), facts( cache = tmp ), "img" )
-        ( m.live / "holders" ).mkdir( parents = True )
+        m = quiet_guest( vm.Machine( L.Here( Path( tmp ) ), facts( cache = tmp ), "img" ) )
+        m.live.mkdir( parents = True )
         ( m.live / "used" ).touch()
-        ( m.live / "holders" / str( os.getpid() ) ).touch()           # this process: alive
-        ( m.live / "holders" / "999999" ).touch()                     # a process long gone
-        assert m._idle( 0 ) is None, "held by a live errand process: it stays up"
-        assert m.holders() == [ str( os.getpid() ) ], "the dead one is forgotten"
-        ( m.live / "holders" / str( os.getpid() ) ).unlink()
+        hold = _lock( m.live / "use.lock" )                          # a command's hold ( `using` )
+        assert m._idle( 0 ) is None, "held by a command: it stays up"
+        hold.close()
+        m.busy = True
+        assert m._idle( 0 ) is None, "a session runs in the guest, its command gone: it stays up"
+        m.busy = False
+        os.utime( m.live / "used", ( 0, 0 ) )
         held = m._idle( 0 )
-        assert held is not None and m.state() == "stopping", "nobody holds it: it goes"
+        assert held is not None and m.state() == "stopping", "nobody uses it: it goes"
         for lock in held:
             lock.close()
         os.utime( m.live / "used" )
-        assert m._idle( 3600 ) is None, "`keep` still means what it says once nobody holds it"
+        assert m._idle( 3600 ) is None, "`keep` still means what it says once nobody uses it"
 
 
 if test( "kept warm, a machine says so in its claim, and goes as soon as somebody needs the room" ):
+    from errand.vm.common import _lock
+
     class Claim:
         def __init__( self ):
             self.warm, self.asked = [ ], False
@@ -162,18 +174,37 @@ if test( "kept warm, a machine says so in its claim, and goes as soon as somebod
             return self.asked
 
     with tempfile.TemporaryDirectory() as tmp, cache( tmp ):
-        m, claim = vm.Machine( L.Here( Path( tmp ) ), facts( cache = tmp ), "img" ), Claim()
-        ( m.live / "holders" ).mkdir( parents = True )
+        m, claim = quiet_guest( vm.Machine( L.Here( Path( tmp ) ), facts( cache = tmp ), "img" ) ), Claim()
+        m.live.mkdir( parents = True )
         ( m.live / "used" ).touch()
-        ( m.live / "holders" / str( os.getpid() ) ).touch()
+        hold = _lock( m.live / "use.lock" )
         assert m._idle( 3600, claim ) is None and claim.warm == [ False ], "in use: it may not give way"
-        ( m.live / "holders" / str( os.getpid() ) ).unlink()
+        hold.close()
         assert m._idle( 3600, claim ) is None and claim.warm == [ False, True ], "nobody: only kept warm"
         claim.asked = True
         held = m._idle( 3600, claim )
         assert held is not None, "asked for its cores: it goes now, whatever `keep` says"
         for lock in held:
             lock.close()
+
+
+if test( "on the machine that runs it, QEMU is its keeper's child: in its group, and reaped" ):
+    with tempfile.TemporaryDirectory() as tmp, cache( tmp ):
+        m = vm.Machine( L.Here( Path( tmp ) ), facts( cache = tmp ), "img" )
+        pid = m._child( [ "sleep", "60" ], f"{tmp}/qemu.log" )
+        try:
+            assert os.getpgid( pid ) == os.getpgid( 0 ), "a stop of the keeper's group takes QEMU with it"
+            assert m.alive_there( pid ) is True
+        finally:
+            m.stop_there( pid )
+        assert m.alive_there( pid ) is False, "stopped, and reaped: no zombie taken for a live QEMU"
+
+
+if test( "the machine's state is named after its image: two projects' copies are two machines" ):
+    with tempfile.TemporaryDirectory() as tmp, cache( tmp ):
+        a = vm.Machine( L.Here( Path( tmp ) / "a" ), facts( cache = tmp, root = f"{tmp}/a" ), "img" )
+        b = vm.Machine( L.Here( Path( tmp ) / "b" ), facts( cache = tmp, root = f"{tmp}/b" ), "img" )
+        assert a.live != b.live and a.live.parent == b.live.parent == Path( tmp ) / "errand" / "vm"
 
 
 if test( "no image, no command -- and said so" ):
@@ -237,6 +268,16 @@ if test( "what it is installed from decides which image, and nothing else does" 
     assert vm.Windows( python = "3.13.1" ).image( ctx() ) != base
     assert vm.Windows( msvc = False ).image( ctx() ) != base
     assert vm.Windows( provision = [ "choco install git" ] ).image( ctx() ) != base
+
+
+if test( "every guest has a Python, and errand runs in it through its agent ( ADR 0008 )" ):
+    from types import SimpleNamespace
+    from errand.cli import guest as G
+    from errand.vm.windows import PYTHON
+    assert vm.Windows().declared()[ "python" ] == PYTHON
+    assert vm.Windows( python = None ).image( ctx() ) == vm.Windows().image( ctx() ), "None is the default release"
+    assert f"python-{PYTHON}-amd64.exe" in vm.setup_script( python = vm.Windows().declared()[ "python" ] )
+    assert G.usable( SimpleNamespace( vm = vm.Windows() ) )
 
 
 if test( "a provisioning script is fingerprinted by what it says" ):

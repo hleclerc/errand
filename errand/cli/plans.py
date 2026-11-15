@@ -4,7 +4,6 @@ says will happen.
 from __future__ import annotations
 
 from pathlib import Path
-import os
 
 from .. import config, entries as E, layers as L, results as R
 from .parsing import shown_params
@@ -14,7 +13,7 @@ from .parsing import shown_params
 
 def plans_rel( root ) -> str:
     """The plans, in errand's state: named from the root, as on the other side."""
-    return os.path.join( config.state_rel( root ), "plans" )
+    return f"{config.state_rel( root )}/plans"         # the same on both sides, a Windows too
 
 
 def plan_path( root, env_name ) -> Path:

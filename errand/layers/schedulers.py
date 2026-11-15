@@ -140,14 +140,38 @@ class Slurm( Scheduler ):
             # The allocation is for every rank, and errand runs in it once, as one task on the first node:
             # it starts the ranks with an `srun` of its own ( `errand.mpi` ), which the step it runs in
             # must not hold the cores of ( `--overlap` ).
-            return Command( [ "salloc", *self.flags( ctx ), "srun", "--nodes", "1", "--ntasks", "1", "--overlap",
-                              *cmd.argv ], cmd.env )
-        return Command( [ "srun", *self.flags( ctx ), *( [ "--pty" ] if ctx.interactive else [ ] ),
-                          *cmd.argv ], cmd.env )
+            return _cancelled_on_stop( [ "salloc", *self.flags( ctx ), "srun", "--nodes", "1", "--ntasks", "1",
+                                         "--overlap", *cmd.argv ], cmd.env )
+        return _cancelled_on_stop( [ "srun", *self.flags( ctx ), *( [ "--pty" ] if ctx.interactive else [ ] ),
+                                     *cmd.argv ], cmd.env )
 
     def describe( self ):
         nodes = self._nodelist()
         return f"slurm:{self.partition or 'default partition'}" + ( f"@{nodes}" if nodes else "" )
+
+
+# A job waited for ( `srun`, `salloc` ) is named, and tells its owner how to cancel it ( ADR 0008 ):
+# a stop reaches the process group of srun, but an srun or a salloc killed outright leaves its
+# allocation behind until slurm notices. The agent that runs it cancels it by that name when it is
+# stopped, and so does the next agent if that one is killed ( `procs.on_stop` ).
+# The path of scancel as this command finds it: the agent's own PATH may lack what a profile adds.
+CANCEL_ON_STOP = ( '[ -n "$ERRAND_PROC_DIR" ] && echo "$(command -v scancel || echo scancel) --quiet --name=$0 --user=$(id -un)" '
+                   '> "$ERRAND_PROC_DIR/on_stop" 2>/dev/null; exec "$@"' )
+
+
+def _cancelled_on_stop( argv: list, env ) -> Command:
+    flags = [ str( a ).split( "=" )[ 0 ] for a in argv ]
+    if "--job-name" in flags or "-J" in flags:
+        return Command( argv, env )          # named by the user: theirs to cancel
+    import uuid
+    name = f"errand-{uuid.uuid4().hex[ : 12 ]}"
+    return Command( [ "sh", "-c", CANCEL_ON_STOP, name, argv[ 0 ], "--job-name", name, *argv[ 1 : ] ], env )
+
+
+def unhooked( argv: list ) -> list:
+    """`argv` without the line that registers its cancel ( `_cancelled_on_stop` ): srun or salloc first."""
+    argv = list( argv )
+    return argv[ 4 : ] if argv[ : 3 ] == [ "sh", "-c", CANCEL_ON_STOP ] else argv
 
 
 def slurm_seconds( time: str ) -> int:
@@ -215,7 +239,7 @@ def watch_job( host, submit: Command, log: str, every: float, echo = print, firs
             try:
                 q = host.shell( f"squeue -h -j {job} -o '%T %N' 2>/dev/null; echo ERRAND_SEP; "
                                 f"tail -c +{shown + 1} {out} 2>/dev/null", capture = True, timeout = 300 )
-            except subprocess.TimeoutExpired:
+            except Exception:              # a timeout, a lost connection: one question lost, not the job
                 q = None
             if q is None or "ERRAND_SEP" not in ( q.stdout or "" ):
                 if not lost:
@@ -234,16 +258,31 @@ def watch_job( host, submit: Command, log: str, every: float, echo = print, firs
             if not now:
                 break
     except KeyboardInterrupt:
-        host.shell( f"scancel {job}", quiet = True, timeout = 120 )
-        echo( f"  job {job} cancelled" )
+        # Said to the cluster until it is heard: a job left running would hold its nodes until its time.
+        for attempt in range( 4 ):
+            try:
+                if host.shell( f"scancel {job}", quiet = True, timeout = 120 ).returncode == 0:
+                    echo( f"  job {job} cancelled" )
+                    return 130
+            except Exception:
+                pass
+            time.sleep( 5 * ( attempt + 1 ) )
+        echo( f"  job {job} could NOT be cancelled: `scancel {job}` over there stops it" )
         return 130
-    end = host.shell( f"tail -c +{shown + 1} {out} 2>/dev/null; echo ERRAND_RC=$( cat {rc} 2>/dev/null )",
-                      capture = True, timeout = 300 )
+    try:
+        end = host.shell( f"tail -c +{shown + 1} {out} 2>/dev/null; echo ERRAND_RC=$( cat {rc} 2>/dev/null )",
+                          capture = True, timeout = 300 )
+    except Exception as err:
+        echo( f"  job {job} is over, but its return code could not be read: {err}" )
+        return 1
     text, _, code = ( end.stdout or "" ).rpartition( "ERRAND_RC=" )
     if text:
         show( text )
     if code.strip().isdigit():
         return int( code.strip() )
-    how = host.shell( f"sacct -n -X -P -j {job} -o State", capture = True, timeout = 120 )
-    echo( f"  job {job} ended without a return code: {( how.stdout or '' ).strip() or 'killed'}" )
+    try:
+        how = ( host.shell( f"sacct -n -X -P -j {job} -o State", capture = True, timeout = 120 ).stdout or "" ).strip()
+    except Exception:
+        how = ""
+    echo( f"  job {job} ended without a return code: {how or 'killed'}" )
     return 1

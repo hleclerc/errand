@@ -126,6 +126,13 @@ The push is an rsync of the project, with the obvious things excluded: `.git`, `
 image with its `.new`, `.prev` and `.part` ). Anything else found only over there is deleted, and
 `errand` prints what went.
 
+A run that writes into the project's copy, outside `errand-outputs`, loses what it wrote at the next
+push. Declare where it writes as a zone, and the push leaves it alone:
+
+```python
+errand.configure( zones = { "/results": "back" } )
+```
+
 `errand-outputs` is excluded in both directions on purpose: each side's records, plans and builds
 are its own. The remote tree's history is not yours to overwrite, and the only runs you want back are
 the ones you just asked for.

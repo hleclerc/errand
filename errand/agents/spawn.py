@@ -21,10 +21,11 @@ WINDOWS = sys.platform == "win32"
 
 
 class Child:
-    def __init__( self, popen, streams, write, close_input, resize = None, master = None ):
+    def __init__( self, popen, streams, write, close_input, resize = None, master = None, job = None ):
         self.popen, self.streams = popen, streams
         self._write, self._close_input, self._resize = write, close_input, resize
         self.master = master
+        self.job = job              # Windows: the Job Object its tree is in ( `winjob` )
 
     @property
     def pid( self ):
@@ -59,11 +60,25 @@ class Child:
                 except OSError:
                     pass
             # nothing gentler that reaches a tree: the tree, at once
+            if self.job is not None:
+                self.job.terminate()
+                return
             subprocess.run( [ "taskkill", "/T", "/F", "/PID", str( self.popen.pid ) ],
                             stdout = subprocess.DEVNULL, stderr = subprocess.DEVNULL )
             return
         try:
             os.killpg( self.popen.pid, sig )
+        except ( ProcessLookupError, PermissionError ):
+            pass
+
+    def end_tree( self ):
+        """What is left of its tree once it has exited: killed ( a stop, not an end of its own )."""
+        if WINDOWS:
+            if self.job is not None:
+                self.job.terminate()
+            return
+        try:
+            os.killpg( self.popen.pid, signal.SIGKILL )
         except ( ProcessLookupError, PermissionError ):
             pass
 
@@ -94,10 +109,16 @@ def start( argv, env = None, cwd = None, tty = None ) -> Child:
                 pass                     # no pseudo-console here: pipes, without a terminal
         else:
             return _pty( argv, full_env, cwd, tty )
+    job = None
     if WINDOWS:
+        from .winjob import CREATE_SUSPENDED, Job
+        job = Job.make()
         popen = subprocess.Popen( list( argv ), cwd = cwd or None, env = full_env,
                                   stdin = subprocess.PIPE, stdout = subprocess.PIPE, stderr = subprocess.PIPE,
-                                  creationflags = subprocess.CREATE_NEW_PROCESS_GROUP )
+                                  creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+                                                  | ( CREATE_SUSPENDED if job is not None else 0 ) )
+        if job is not None and not job.take( int( popen._handle ) ):
+            job = None
     else:
         popen = subprocess.Popen( list( argv ), cwd = cwd or None, env = full_env,
                                   stdin = subprocess.PIPE, stdout = subprocess.PIPE, stderr = subprocess.PIPE,
@@ -108,7 +129,7 @@ def start( argv, env = None, cwd = None, tty = None ) -> Child:
         popen.stdin.flush()
 
     return Child( popen, [ ( _reader( popen.stdout.fileno() ), "out" ), ( _reader( popen.stderr.fileno() ), "err" ) ],
-                  write, popen.stdin.close )
+                  write, popen.stdin.close, job = job )
 
 
 class _Master:

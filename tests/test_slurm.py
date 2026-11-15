@@ -78,7 +78,7 @@ if test( "a watched job is submitted, writes where it is looked for, and needs a
     wrapped = got.argv[ got.argv.index( "--wrap" ) + 1 ]
     assert wrapped.startswith( "A=1 python -m errand" ) and wrapped.endswith( f"> {log}/slurm-$SLURM_JOB_ID.rc" )
     # srun when somebody types into it, plain sbatch under --batch
-    assert L.Slurm( watch = 300 ).wrap( cmd, L.Context( root = Path( "/r" ), interactive = True ) ).argv[ 0 ] == "srun"
+    assert L.unhooked( L.Slurm( watch = 300 ).wrap( cmd, L.Context( root = Path( "/r" ), interactive = True ) ).argv )[ 0 ] == "srun"
     assert "--output" not in L.Slurm( watch = 300 ).wrap( cmd, L.Context( root = Path( "/r" ), batch = True ) ).argv
     try:
         L.Slurm( watch = 300 ).wrap( cmd, L.Context( root = Path( "/r" ) ) )

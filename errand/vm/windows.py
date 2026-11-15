@@ -23,6 +23,9 @@ REBUILD_AFTER  = 170         # days: rebuilt a little before the 180 run out and
 # part of the declaration, and an edit to it must be noticed like any other.
 RECIPE = 2
 
+# The Python every guest has ( ADR 0008 ): errand runs in it, through its agent. A python.org release.
+PYTHON = "3.13.16"
+
 
 @dataclass
 class Windows( L.Gateway, L.Artefact ):
@@ -39,7 +42,7 @@ class Windows( L.Gateway, L.Artefact ):
     ram      : str = "8G"
     disk     : str = "64G"           # grows as it is written, up to this
     msvc     : bool = True           # the build tools, and vcvars64 before every command
-    python   : str | None = None     # "3.13.1": that python.org release, on PATH
+    python   : str = PYTHON           # that python.org release, on PATH: errand runs in the guest with it
     provision: list = field( default_factory = list )   # PowerShell: a `.ps1` of the project, or a line
     fetch    : list = field( default_factory = list )   # what to bring back after each command
     also     : list = field( default_factory = list )   # sibling checkouts the work needs ( `../loom` ), copied in beside the project
@@ -66,7 +69,7 @@ class Windows( L.Gateway, L.Artefact ):
     def declared( self ) -> dict:
         """What is INSTALLED, as opposed to how it is booted."""
         return { "iso": self.iso, "key": self.key, "index": self.index, "disk": self.disk,
-                 "msvc": self.msvc, "python": self.python, "provision": list( self.provision ) }
+                 "msvc": self.msvc, "python": self.python or PYTHON, "provision": list( self.provision ) }
 
     def booted( self ) -> dict:
         return { "cpus": self.cpus, "ram": self.ram, "keep": self.keep, "data": self.data }

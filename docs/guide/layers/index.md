@@ -20,6 +20,7 @@ errand.envs[ "cluster" ] = errand.Env( [
 | [`Ssh`](./ssh) | must be first; everything after it runs on that machine, with the project pushed there and the results brought back |
 | [`Slurm`](./slurm) | an allocation: `srun`, or `sbatch` in [batch mode](../detached), sized from what the work asks for |
 | [`Windows`](./windows) | a Windows virtual machine errand boots and runs in; first, or right after its `Ssh` |
+| [`WindowsBox`](./windows-box) | a Windows machine that is already there, right after the `Ssh` that reaches it |
 | [`Apptainer`, `Docker`, `Podman`](./containers) | a container, using its own interpreter, built from its recipe |
 | [`Micromamba`, `Conda`](./micromamba) | `micromamba -n <name> run`; a no-op if that environment is already active |
 | [`Venv`, `Uv`](./venv) | a specific interpreter, or a uv-managed venv of the project |
@@ -27,6 +28,7 @@ errand.envs[ "cluster" ] = errand.Env( [
 | [`Module`](./module) | Lmod / environment modules, the way a cluster picks a toolchain |
 | [`Mpi`](./mpi) | a launcher of its own for [several processes](../mpi), where neither `mpiexec` nor Slurm's `srun` is the one — rarely needed |
 | [`Vars`](./vars) | environment variables for the child process |
+| [`Missing`](./missing) | an environment that cannot be reached from here: says what is lacking, and stops before anything runs |
 | [`Preload`](./preload) | at the end: sessions forked from a process that has already imported torch, jax… |
 
 ## The interpreter

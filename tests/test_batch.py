@@ -36,7 +36,7 @@ if test( "a batch system is its own detachment" ):
     # there is nothing left to let go of.
     waiting = L.Slurm( partition = "gpu" ).wrap(
         L.Command( [ "python", "-m", "errand" ] ), L.Context( root = Path( "/" ) ) )
-    assert waiting.argv[ 0 ] == "srun"
+    assert L.unhooked( waiting.argv )[ 0 ] == "srun"
 
     letting_go = L.Slurm( partition = "gpu" ).wrap(
         L.Command( [ "python", "-m", "errand" ], { "A": "1" } ),
@@ -183,3 +183,19 @@ if test( "a remote run is let go of, and collected later", tags = [ "ssh", "slow
         assert "1/1" in output, output
 
     subprocess.run( [ "ssh", *options, host, f"rm -rf {remote_root}" ] )
+
+
+if test( "a submission's result is its own, not an earlier run's of the same case ( its stamp )" ):
+    import tempfile
+    from errand import batch, yamlish
+    root = Path( tempfile.mkdtemp() )
+    run = { "under": "runs/x.py/case", "env": "lin", "params": { "n": 2 } }
+    old = root / run[ "under" ] / "2026-11-01_10h00m00-here-n=2"
+    old.mkdir( parents = True )
+    yamlish.write( old / "result.yaml", { "env": "lin", "params": { "n": 2 }, "stamp": "2026-11-01_10h00m00" } )
+    assert batch.result_path_for( root, run ) == old / "result.yaml", "without a stamp: the newest, as before"
+    assert batch.result_path_for( root, run, "2026-11-15_09h00m00" ) is None, "an earlier run was taken for this one"
+    new = root / run[ "under" ] / "out-elsewhere"
+    new.mkdir()
+    yamlish.write( new / "result.yaml", { "env": "lin", "params": { "n": 2 }, "stamp": "2026-11-15_09h00m00" } )
+    assert batch.result_path_for( root, run, "2026-11-15_09h00m00" ) == new / "result.yaml"

@@ -13,7 +13,7 @@ only meaningful on that one connection: the hub renumbers when it relays.
     ERR     <- agent    stderr bytes
     IN      -> agent    stdin bytes
     EOF     -> agent    stdin is closed
-    SIGNAL  -> agent    JSON: { "sig": n }
+    SIGNAL  -> agent    JSON: { "sig": n }, or { "sig": 2, "stop": true }: stop it, INT, TERM, KILL ( GRACE )
     CLOSE   -> agent    the client lets go of the channel; the process lives on if it may
     EXIT    <- agent    JSON: { "code": n }; the channel is over
     RESIZE  -> agent    JSON: { "cols": c, "rows": r }, for a process started with a terminal
@@ -28,6 +28,8 @@ import threading
 
 
 OPEN, REPLY, OUT, ERR, IN, EOF, SIGNAL, CLOSE, EXIT, RESIZE = range( 1, 11 )
+
+GRACE = ( 2.0, 5.0 )      # seconds after a stop ( SIGNAL with "stop" ) at which SIGTERM, then SIGKILL, follow SIGINT
 NAMES = { OPEN: "open", REPLY: "reply", OUT: "out", ERR: "err", IN: "in", EOF: "eof",
           SIGNAL: "signal", CLOSE: "close", EXIT: "exit", RESIZE: "resize" }
 

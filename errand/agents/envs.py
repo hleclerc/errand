@@ -31,7 +31,8 @@ def target( env, stack, tags, phase, *, root, ssh = None, cache = None, keep_ali
     inner = [ l for l in stack if not isinstance( l, L.Ssh ) ]
     keep = int( keep_alive or getattr( env, "keep_alive", None ) or U.KEEP_ALIVE )
     cache = cache or str( bootstrap.local_cache() )      # errand's per-user directory where the agent runs
-    ctx = L.Context( root = Path( root ), tags = tags, remote = ssh is not None, phase = phase )
+    root = L.remote_path( root ) if ssh is not None else Path( root )
+    ctx = L.Context( root = root, tags = tags, remote = ssh is not None, phase = phase )
     boot = None if ssh is not None else str( bootstrap.PACKAGE / "_boot.py" )
     # a layer whose surroundings end with the command that entered them: the agent goes with its bridge
     detach = all( getattr( l, "agent_may_detach", True ) for l in inner )
@@ -48,6 +49,13 @@ def target( env, stack, tags, phase, *, root, ssh = None, cache = None, keep_ali
     name = f"env-{bootstrap.sources_key()}-{digest}"
     line = line_for( f"{cache}/{U.AGENTS}/{name}" )
 
+    if ssh is None and L.WINDOWS:
+        # No `sh` to read the line: the command itself, its variables and its directory said apart.
+        composed = L.compose( inner, bootstrap.command(
+            L.Command( [ "python", "-m", "errand.agents", "connect", f"{cache}/{U.AGENTS}/{name}", str( keep ),
+                         *( [ ] if detach else [ "attached" ] ) ] ), inner, cache, "python", boot = boot ), ctx )
+        return { "kind": "cmd", "id": f"here:{name}", "argv": composed.argv, "env": L.windows_env( composed.env ),
+                 "cwd": str( root ), "keep_alive": keep }
     if ssh is None:
         argv = [ "sh", "-c", line ]
     elif mode() == "hub":
