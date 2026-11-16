@@ -1,4 +1,4 @@
-"""What installing needs, fetched by the machine that runs QEMU: the ISO, MSYS2's rsync.
+"""What installing needs, fetched by the machine that runs QEMU: the ISO.
 """
 from __future__ import annotations
 
@@ -6,7 +6,6 @@ import re
 
 from .. import layers as L
 from .common import _sh, VmError
-from .transfer import MSYS2_PACKAGES, MSYS2_REPO, RSYNC_FILES
 
 
 class Supplies:
@@ -45,20 +44,3 @@ class Supplies:
             raise VmError( f"could not download the ISO {self.facts.where} -- download it by hand and "
                            f"declare it: errand.Windows( iso = 'path/to/windows.iso' )" )
         return target
-
-    def obtain_rsync( self, into: str, work: str, echo = print ):
-        """The rsync of the guest, unpacked from MSYS2's packages into `into`,
-        on the install media -- by the machine that runs QEMU, which has a
-        zstd to open them with, where Windows may not."""
-        if "curl" in self.facts.tools:
-            fetch = 'curl -fsSL --retry 3 -o "$p.tar.zst" "$repo/$p-x86_64.pkg.tar.zst"'
-        elif "wget" in self.facts.tools:
-            fetch = 'wget -q -O "$p.tar.zst" "$repo/$p-x86_64.pkg.tar.zst"'
-        else:
-            raise VmError( f"neither curl nor wget {self.facts.where} to download rsync for windows with" )
-        echo( f"  downloading rsync for windows from msys2 {self.facts.where}" )
-        script = ( 'repo="$1" into="$2" work="$3"; shift 3; set -e; mkdir -p "$into" "$work"; cd "$work"; '
-                   f'for p in {" ".join( MSYS2_PACKAGES )}; do {fetch}; '
-                   'zstd -dqc "$p.tar.zst" | tar -x -f - usr/bin; done; '
-                   'for f in "$@"; do cp "usr/bin/$f" "$into/"; done; cd / && rm -rf "$work"' )
-        self.there( script, MSYS2_REPO, into, work, *RSYNC_FILES, what = "unpacking rsync for windows" )

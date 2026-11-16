@@ -11,8 +11,7 @@ QEMU, then here.
 The project crosses by manifest ( ADR 0006 ), from here straight into the guest and back, through an
 agent of the guest that no layer starts ( `host_target` ): the copy on the machine that runs QEMU
 plays no part, and the guest needs no rsync. errand's sources go first, as a tar on the stdin of one
-cmd.exe line. `transfer = "rsync"` ( on the `Ssh`, or `ERRAND_TRANSFER` ) keeps the old way, through
-that copy and MSYS2's rsync, until a guest has been seen to work without it.
+cmd.exe line.
 
 The stream to the guest agent goes through the host agent of the machine that
 runs QEMU, as `ssh -p <port> Administrator@127.0.0.1 …` from there: no new
@@ -53,13 +52,12 @@ class Guest:
         self.key = bootstrap.sources_key()
         self.src = f"C:/errand/src/{self.key}"
         self.boot = f"{self.src}/errand/_boot.py"
-        self.by_rsync = by_rsync( where.ssh )
 
     # -- holding the machine ---------------------------------------------------
 
     def __enter__( self ):
         from ..vm.common import VmError
-        from ..vm.facts import Facts, need, package_hint
+        from ..vm.facts import Facts
         from ..vm.machine import Machine
         from ..vm.windows import ready_line
         if self.box:
@@ -71,20 +69,11 @@ class Guest:
             if self.host.shell( ready_line( self.name, keyed = True ), quiet = True ).returncode:
                 raise VmError( f"windows is not installed yet {self.said_where} -- errand setup <name>" )
             self.m = Machine( self.host, Facts.of( self.host ), self.name )
-            if self.by_rsync:
-                need( self.m.facts, ( "rsync", ), package_hint( self.m.facts, [ "rsync" ] ) )
         self._held = self.m.using( self.layer.booted(), self.echo )
         self._held.__enter__()
         try:
-            if self.by_rsync:
-                self.echo( f"  copy in -> windows:{self.there}" )
-                self.m.push( self.there )
-                for other in self.layer.also:
-                    self.m.push( posixpath.normpath( f"{self.there}/{other}" ), f"{other}/" )
-                self._ship()
-            else:
-                self._ship_tar()
-                self._push_sync()
+            self._ship()
+            self._push_sync()
         except BaseException:
             self._held.__exit__( None, None, None )
             raise
@@ -99,20 +88,6 @@ class Guest:
             self._held.__exit__( *exc )
 
     def _ship( self ):
-        """errand's sources into the guest, from their copy on the machine that runs QEMU."""
-        from ..vm.common import VmError
-        from ..vm.transfer import rsync_failed, rsync_line
-        if self.where.ssh is not None:          # ~/.cache/errand/src/<key>/ holds `errand/`
-            source, dest = f"{self.where.cache}/{bootstrap.src_rel()}/", self.src
-        else:                                   # this checkout's own package
-            source, dest = f"{bootstrap.PACKAGE}/", f"{self.src}/errand"
-        win = dest.replace( "/", "\\" )
-        self.m.guest( f'if not exist "{win}" mkdir "{win}"', quiet = True )
-        got = self.host.shell( rsync_line( self.m._reach( "ssh", "-p" ), dest, source, self.m.address ), capture = True )
-        if rsync_failed( got ):
-            raise VmError( f"could not copy errand into windows:\n{( got.stderr or '' ).strip()[ -800 : ]}" )
-
-    def _ship_tar( self ):
         """errand's sources into the guest: a tar of this checkout's, on the stdin of one cmd.exe line, unpacked by
         Windows' own `tar` beside their place and moved into it. Nothing crosses when the guest has them already: a
         sources key names one content."""
@@ -202,21 +177,11 @@ class Guest:
     def fetch( self, paths ):
         if not paths:
             return
-        if self.by_rsync:
-            self.echo( f"  fetch <- windows:{self.there} [{', '.join( paths )}]" )
-            self.m.fetch( list( paths ), self.there )
-            return
         from ..agents import syncop
         from ..layers.base import WINDOWS
         self.echo( f"  sync pull  <- windows:{self.there} [{', '.join( paths )}]" )
         syncop.pull( self.host_conn(), self.there, self.where.root, [ Path( p ).as_posix() for p in paths ],
                      where = "windows", say = self.echo, links = not WINDOWS )
-
-
-def by_rsync( ssh = None ) -> bool:
-    """The old way into a guest ( MSYS2's rsync, through the copy on the machine that runs QEMU ), when asked for by
-    name: `ERRAND_TRANSFER=rsync`, or `transfer = "rsync"` on the `Ssh` before it. A sync otherwise ( ADR 0006 )."""
-    return ( os.environ.get( "ERRAND_TRANSFER" ) or getattr( ssh, "transfer", None ) or "sync" ).strip().lower() == "rsync"
 
 
 def unpack_line( src: str ) -> str:

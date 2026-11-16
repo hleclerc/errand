@@ -18,7 +18,6 @@ from .common import _alive, _backslashed, _lock, _read, _sh, GUEST_OPTIONS, USER
 from .places import images_rel, live_dir
 from .facts import accel, Facts
 from .qemu import qemu_argv
-from .transfer import rsync_failed, rsync_line
 from .caller import Caller
 from .talk import Talk
 from .keeping import Keeping

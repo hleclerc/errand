@@ -11,7 +11,6 @@ import subprocess
 
 from .. import layers as L
 from .common import _backslashed, VmError
-from .transfer import rsync_failed, rsync_line
 
 
 class Talk:
@@ -29,32 +28,3 @@ class Talk:
         except subprocess.TimeoutExpired:
             return False
         return got.returncode == 0 and "errand-ok" in ( got.stdout or "" )
-
-    def push( self, there: str, source: str = "./" ):
-        """The project as the machine that runs QEMU has it, into the guest:
-        what changed since the last time, when `there` is on the kept disk.
-        `source`: another directory of that machine, relative to the project's -- a sibling checkout."""
-        win = _backslashed( there )
-        code = self.guest( f'if not exist "{win}" mkdir "{win}"' ).returncode
-        if code:
-            raise subprocess.CalledProcessError( code, "copy into windows" )
-        got = self.host.shell( rsync_line( self._reach( "ssh", "-p" ), there, source, self.address ), capture = True )
-        if rsync_failed( got ):
-            raise VmError( f"could not copy the project into windows ( rsync: {got.returncode} ):\n"
-                           f"{( got.stderr or '' ).strip()[ -800 : ]}" )
-
-    def fetch( self, paths, there: str ):
-        """Into the project as the machine that runs QEMU has it -- from where an
-        `Ssh` before it brings them back in turn. Best effort, as over ssh: what
-        the command never produced is nothing to bring back."""
-        win, archive = _backslashed( there ), f"{self.scratch}/out.tar"
-        for p in paths:
-            p = str( p ).strip( "/" )
-            # The old archive deleted first, and a missing path an error: never
-            # bring back what an earlier command left.
-            made = self.guest( f'del "{win}.out.tar" 2>nul & cd /d "{win}" && '
-                               f'if exist "{_backslashed( p )}" ( tar -c -f "{there}.out.tar" "{p}" ) else exit 1',
-                               quiet = True )
-            if made.returncode or self.scp( f"{self.address}:{there}.out.tar", archive ):
-                continue
-            self.host.shell( L.sh( [ "tar", "-x", "-f", archive ] ) + " && " + L.sh( [ "rm", "-f", archive ] ) )

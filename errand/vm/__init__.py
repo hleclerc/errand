@@ -25,7 +25,7 @@ which is how an ARM laptop gets a Windows at all.
 does there is a shell line run through it, whose answer is read back here:
 what that machine is, whether an image is installed, starting QEMU, copying the
 project in, running the command, bringing results back. Nothing of errand runs
-over there; all it needs there is QEMU, ssh, rsync and tar. The disks and the guest's
+over there; all it needs there is QEMU, ssh and tar. The disks and the guest's
 key live in THAT machine's cache, and so do the locks, the state and the keeper
 ( ADR 0008 ): what keeps QEMU runs beside it, owned by errand's agent there.
 
@@ -40,8 +40,8 @@ key live in THAT machine's cache, and so do the locks, the state and the keeper
     boot      once per warm period, half a minute to a few. Every boot starts
               from a fresh copy-on-write layer over that image, so nothing a
               run left behind survives a restart.
-    run       once per command: the project goes in ( rsync: what changed ),
-              the command runs through cmd.exe, what `fetch` names comes back.
+    run       once per command: the project goes in ( a sync, through the guest's agent: what
+              changed ), the command runs, what `fetch` names comes back.
 
 **Up for as long as somebody needs it, and counted while it is.** A booted
 machine stays up while an errand process that used it is alive -- so a run of
@@ -71,7 +71,7 @@ from .common import _seconds, VmError
 from .places import images_dir
 from .facts import accel, Facts, need, package_hint, qemu_hint
 from .qemu import qemu_argv
-from .transfer import GUEST_RSYNC, MSYS2_PACKAGES, msys_path, rsync_failed, RSYNC_FILES, rsync_line
+from .transfer import MSYS2_PACKAGES, msys_path, RSYNC_FILES
 from .datadisk import DATA_SCRIPT, powershell
 from .machine import Machine, running, stop_all
 from .install import install
@@ -92,10 +92,7 @@ __all__ = [
     'qemu_argv',
     'MSYS2_PACKAGES',
     'RSYNC_FILES',
-    'GUEST_RSYNC',
     'msys_path',
-    'rsync_line',
-    'rsync_failed',
     'DATA_SCRIPT',
     'powershell',
     'Machine',

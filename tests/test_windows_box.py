@@ -111,10 +111,9 @@ if test( "a box not set up stops a run, and says what sets it up" ):
         raise AssertionError( "a box that does not answer was taken for one not set up" )
 
 
-if test( "setup asks this machine for ssh, scp and rsync, and builds the box in one step" ):
+if test( "setup asks this machine for ssh and scp, and builds the box in one step" ):
     box = boxed().vm
-    assert [ what for _, what in box.requires( L.Context( root = ROOT ) ) ] == [ "ssh, not found", "scp, not found",
-                                                                               "rsync, not found" ]
+    assert [ what for _, what in box.requires( L.Context( root = ROOT ) ) ] == [ "ssh, not found", "scp, not found" ]
     steps = box.build( L.Context( root = ROOT ) )
     assert len( steps ) == 1 and callable( steps[ 0 ] ) and str( steps[ 0 ] ).startswith( "set up windows-box" )
 
@@ -136,12 +135,9 @@ if test( "the guest's agent and copies use the box's own address" ):
     g.m = B.Box( env.vm, where.root )
     target = g.target()
     assert target[ "argv" ][ 0 ] == "ssh" and "me@winbox" in target[ "argv" ] and "-T" in target[ "argv" ]
-    line = vm.rsync_line( g.m._reach( "ssh" ), "C:/errand/work/p", "./", g.m.address )
-    assert "me@winbox:/c/errand/work/p/" in line
 
 
-if test( "files cross through an agent of the guest that no layer starts; rsync only when asked by name" ):
-    import os
+if test( "files cross through an agent of the guest that no layer starts" ):
     from errand.cli import guest as G
     env = boxed( also = [ "../sib" ] )
     where = SimpleNamespace( root = Path( tempfile.mkdtemp() ), ssh = None, there = ROOT, cache = None )
@@ -151,12 +147,6 @@ if test( "files cross through an agent of the guest that no layer starts; rsync 
     line = host[ "argv" ][ -1 ]
     assert host[ "argv" ][ 0 ] == "ssh" and "me@winbox" in host[ "argv" ] and host[ "id" ] != envt[ "id" ]
     assert f"connect C:/errand/agents/host-{g.key}" in line and "cd /d" not in line and "vcvars" not in line, line
-    assert not g.by_rsync and not G.by_rsync( None ) and G.by_rsync( L.Ssh( host = "h", transfer = "rsync" ) )
-    os.environ[ "ERRAND_TRANSFER" ] = "rsync"
-    try:
-        assert G.by_rsync( None )
-    finally:
-        del os.environ[ "ERRAND_TRANSFER" ]
     unpack = G.unpack_line( "C:/errand/src/k1" )
     assert unpack.startswith( r'if exist "C:\errand\src\k1\errand\_boot.py" ( exit 0 )' ) and "tar -xzf - -C" in unpack
     assert r'move "C:\errand\src\k1.part" "C:\errand\src\k1"' in unpack

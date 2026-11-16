@@ -50,13 +50,14 @@ What it costs, and when:
   survives a restart — and the machine then stays up while a command uses it, or something errand
   started runs in it (a command whose laptop closed included), then `keep` more. All that time
   it holds its cores and memory, so it holds them **in the queue**, and shows in `errand queue`.
-- **A command** costs an rsync of the project in — what changed since the last command, onto `E:`;
-  all of it with `data = None` — and a tar of `fetch` out. Nothing is deleted over there: a file
-  removed from the project stays on `E:` until the disk goes. Commands on one machine take turns.
+- **A command** costs a sync of the project in: what changed since the last command, onto `E:`
+  (all of it with `data = None`). Then `fetch` comes back. Both go straight between here and an
+  errand agent in the guest, as for an `Ssh` with `transfer = "sync"`. The machine that runs QEMU
+  holds no copy of the project. A file removed from the project is removed over there too, except
+  in a zone (`build`, errand's outputs, the project's own). Commands on one machine take turns.
 
-The rsync of the guest is MSYS2's, pinned and put in the image by the install; the machine that runs
-QEMU downloads it, and unpacks it with `zstd`. It needs `qemu-system-x86_64`, `qemu-img`, `rsync`
-and `zstd`, and an **x86-64 host**: KVM on Linux, HVF on an Intel
+The guest needs nothing for that beyond the Python errand runs in. The machine that runs QEMU needs
+`qemu-system-x86_64` and `qemu-img`, and an **x86-64 host**: KVM on Linux, HVF on an Intel
 Mac. Without hardware virtualization it works, in hours. When QEMU is missing, or `/dev/kvm` is there
 but not yours (the usual case over ssh), errand says which command fixes it on that machine.
 

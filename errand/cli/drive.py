@@ -46,7 +46,7 @@ def say( s ):
 
 def arrive( env, tags, root, project = True ):
     """The project over there, and errand's sources: -> where it all is. Without `project`, errand's sources only: a
-    guest that takes the project from here ( `guest.by_rsync` )."""
+    Windows guest takes the project from here, through its own agent ( `guest.Guest` )."""
     ssh = L.ssh_of( env.stack_for( "run", tags ) )
     there = ssh.remote_root( L.Context( root = root ) ) if ssh is not None else root
     for message in L.warnings_for( env.stack_for( "run", tags ), there ):
@@ -210,8 +210,7 @@ def drive( env, tags, verb, known, *, root, out_root, report, kinds, pull = ( ) 
 def _drive_guest( env, tags, verb, known, *, root, report, kinds, pull ) -> int:
     """The same, in a virtual machine: held for as long as this runs, everything through its guest agent."""
     from ..vm.common import VmError
-    through_copy = guest.by_rsync( L.ssh_of( env.stack_for( "run", tags ) ) )
-    where = arrive( env, tags, root, project = through_copy )
+    where = arrive( env, tags, root, project = False )
     child = child_env_for( env, tags )
     base = _requests( env, tags, verb, known, kinds, where )
     how_many = job_count( known.jobs )
@@ -241,9 +240,7 @@ def _drive_guest( env, tags, verb, known, *, root, report, kinds, pull ) -> int:
     except VmError as err:
         say( f"  {err}" )
         return 1
-    if through_copy:                # otherwise the guest's results came straight here
-        _bring_back( where, env.name, box, pull )
-    return max( rcs ) if rcs else 0
+    return max( rcs ) if rcs else 0           # what the guest wrote came straight here
 
 
 # ── coming back ──────────────────────────────────────────────────────────────

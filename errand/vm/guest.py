@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .transfer import GUEST_MSYS
 from .common import USER
 
 
@@ -162,16 +161,6 @@ try {{
     Set-Service wuauserv -StartupType Disabled -ErrorAction SilentlyContinue
     try {{ Set-MpPreference -DisableRealtimeMonitoring $true -ExclusionPath C:\\errand, C:\\BuildTools }} catch {{ }}
 
-    # What copies the project in. Its POSIX permissions would be mapped onto
-    # ACLs, and the files it writes come out unreadable to anybody else: off,
-    # so that they inherit the ACLs of where they land, as any other file.
-    Step 'rsync'
-    $bin = '{GUEST_MSYS}\\usr\\bin'
-    New-Item -ItemType Directory -Force $bin, '{GUEST_MSYS}\\etc' | Out-Null
-    Copy-Item ( Join-Path $media 'rsync\\*' ) $bin
-    Set-Content '{GUEST_MSYS}\\etc\\fstab' 'none / cygdrive binary,posix=0,noacl,user 0 0' -Encoding ascii
-    & ( Join-Path $bin 'rsync.exe' ) --version | Out-Null
-    if ( $LASTEXITCODE ) {{ throw "rsync: exit $LASTEXITCODE" }}
 {''.join( steps )}
     Set-Content C:\\errand\\setup.status 'ok'
 }} catch {{

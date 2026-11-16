@@ -14,14 +14,14 @@ errand.envs[ "win" ] = errand.Env( [ errand.Ssh( host = "me@winbox" ), errand.Wi
 ```
 
 ```bash
-errand setup --env win          # once: rsync, a Python, the provisioning
+errand setup --env win          # once: a Python, the provisioning
 errand run --env win tests/     # then: everything after it runs on Windows
 ```
 
 Everything after the `WindowsBox` runs on Windows, the way it runs in errand's own virtual machine:
 
 - each command is a cmd.exe line;
-- the project is copied in by rsync and kept between commands;
+- the project is synced in, through an errand agent there, and kept between commands;
 - an agent there runs the sessions;
 - `fetch` and `--pull` bring results back.
 
@@ -39,7 +39,6 @@ registry, so deleting that directory undoes everything:
 
 | | |
 |---|---|
-| `C:\errand\msys` | rsync, from MSYS2's packages (pinned): downloaded here, then copied over |
 | `C:\errand\uv`, `uv-python` | uv and the Python it installs, for a `python = "3.13.1"` |
 | `C:\errand\venv` | a venv of that Python. The commands and the provisioning run with it, so the machine's own Python is never written to |
 | `C:\errand\src` | errand's own sources, as on any machine errand reaches |
@@ -57,7 +56,7 @@ record of it is kept here, under `errand-outputs/builds/records`, and named afte
 - `ssh <host> echo ok` working from this terminal;
 - network access, if uv has a Python to download there.
 
-This machine needs `ssh`, `scp` and `rsync`, plus `zstd` or Python 3.14 to unpack MSYS2's packages.
+This machine needs `ssh` and `scp`.
 
 **An `Ssh` alone that reaches a Windows** is noticed on the first line errand sends. errand stops
 there and says to add the `WindowsBox`, before anything is copied or created on that machine.

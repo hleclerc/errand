@@ -1,17 +1,13 @@
-"""Copying the project into the guest and results out of it: MSYS2's rsync, pinned.
+"""MSYS2's rsync and ssh, pinned: what errand started on Windows copies with, through an `Ssh` push by rsync.
+A Windows guest or box needs neither: files cross through its agent ( ADR 0006 ).
 """
 from __future__ import annotations
 
 import re
 
-from .. import layers as L
-from .common import USER
 
 
-# rsync, which copies the project in: only what changed crosses, where a tar
-# carried all of it at every command. MSYS2's, which runs without the rest of
-# MSYS2 -- the program and the DLLs it loads, nothing else. Pinned, being what
-# an image is made of; downloaded and unpacked by the machine that runs QEMU.
+# MSYS2's rsync, which runs without the rest of MSYS2 -- the program and the DLLs it loads, nothing else.
 MSYS2_REPO     = "https://repo.msys2.org/msys/x86_64"
 MSYS2_PACKAGES = [ "rsync-3.5.1-2", "msys2-runtime-3.6.10-7", "libopenssl-3.6.5-1", "libiconv-1.19-1",
                    "libidn2-2.3.8-1", "libintl-0.22.5-1", "libunistring-1.4.2-1", "liblz4-1.10.0-1",
@@ -27,45 +23,11 @@ SSH_FILES      = [ "ssh.exe", "msys-asn1-8.dll", "msys-com_err-1.dll", "msys-cry
                    "msys-gcc_s-seh-1.dll", "msys-gssapi-3.dll", "msys-hcrypto-4.dll", "msys-heimbase-1.dll",
                    "msys-heimntlm-0.dll", "msys-hx509-5.dll", "msys-krb5-26.dll", "msys-roken-18.dll",
                    "msys-sqlite3-0.dll", "msys-wind-0.dll", "msys-z.dll" ]
-GUEST_MSYS     = r"C:\errand\msys"
-GUEST_RSYNC    = "C:/errand/msys/usr/bin/rsync.exe"
-EXCLUDES = [ *L.RSYNC_EXCLUDES, "errand-outputs", ".errand" ]
 
 
 def msys_path( path: str ) -> str:
-    """A Windows path as the rsync in the guest reads it: E:/x is /e/x."""
+    """A Windows path as MSYS2's rsync reads it: E:/x is /e/x."""
     path = str( path ).replace( "\\", "/" )
     if re.match( r"^[A-Za-z]:", path ):
         path = f"/{path[ 0 ].lower()}{path[ 2 : ]}"
     return path.rstrip( "/" )
-
-
-def rsync_line( reach: list, there: str, source: str = "./", address: str = f"{USER}@127.0.0.1" ) -> str:
-    """The project, minus what an `Ssh` push leaves out too, into `there` in the
-    guest -- run from its root on the machine that runs QEMU. Links followed, as
-    NTFS has none worth the name; no permission, owner or group, which the
-    guest's ACLs would only garble. The project's zones left out, as by a push. Nothing deleted: what a command built beside
-    the sources is not on this side, and must stay over there."""
-    return L.sh( [ "rsync", "-rtL", "-e", L.sh( reach ), "--rsync-path", GUEST_RSYNC,
-                   *[ f"--exclude={e}" for e in EXCLUDES + L.own_paths() + _zones() ], source,
-                   f"{address}:{msys_path( there )}/" ] )
-
-
-def _zones() -> list:
-    """The project's zones ( `configure( zones = ... )` ), anchored at its root: what an `Ssh` push
-    leaves out, results to bring back or builds, is no source for the guest either."""
-    from .. import config
-    return [ "/" + p.strip( "/" ) for p in config.settings.zones ]
-
-
-# rsync's 23 ( "some files were not transferred" ) and 24 ( "some vanished" ),
-# when every complaint is one of these, are a copy as good as can be: a link
-# to nothing has nothing to copy, as for an `Ssh` push.
-HARMLESS = re.compile( r"symlink has no referent|file has vanished|^rsync (error|warning): some files" )
-
-
-def rsync_failed( got ) -> bool:
-    if not got.returncode:
-        return False
-    said = [ l for l in ( got.stderr or "" ).splitlines() if l.strip() ]
-    return got.returncode not in ( 23, 24 ) or not all( HARMLESS.search( l.strip() ) for l in said )

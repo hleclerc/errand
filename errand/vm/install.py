@@ -7,7 +7,7 @@ import time
 from .. import queue
 from .guest import autounattend, EVALUATION_ISO, setup_script
 from .common import _sh, BOOT_TIMEOUT, INSTALL_TIMEOUT, VmError
-from .facts import accel, Facts, need, package_hint, qemu_hint
+from .facts import accel, Facts, need, qemu_hint
 from .machine import Machine
 
 
@@ -20,7 +20,6 @@ def install( host, name: str, declared: dict, booted: dict, echo = print, wanted
         facts = Facts.of( host )
         need( facts, ( "ssh", "scp", "ssh-keygen", "tar" ), "they come with OpenSSH and tar" )
         need( facts, ( "qemu-system-x86_64", "qemu-img" ), qemu_hint( facts ) )
-        need( facts, ( "rsync", "zstd" ), package_hint( facts, [ "rsync", "zstd" ] ) )
         how, _ = accel( facts )
         if how == "tcg":
             echo( f"  no hardware virtualization {facts.where} ( /dev/kvm ): this will take HOURS" )
@@ -33,7 +32,6 @@ def install( host, name: str, declared: dict, booted: dict, echo = print, wanted
                  '( test -f "$1/key" || ssh-keygen -q -t ed25519 -N "" -C errand-vm -f "$1/key" ) && '
                  'cp "$1/key.pub" "$3/errand_key.pub"', m.image, work, media, what = "preparing the install" )
         m.write( f"{media}/autounattend.xml", autounattend( key = declared[ "key" ], index = declared[ "index" ] ) )
-        m.obtain_rsync( f"{media}/rsync", f"{work}/msys2", echo )
         provision = [ ]
         for i, p in enumerate( declared[ "provision" ] ):
             if str( p ).endswith( ".ps1" ):

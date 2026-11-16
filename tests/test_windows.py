@@ -1,9 +1,6 @@
 """A Windows machine as an environment: everything that can be checked without booting one."""
 import contextlib
 import os
-import shlex
-import shutil
-import subprocess
 import tempfile
 import xml.dom.minidom
 from pathlib import Path
@@ -379,52 +376,28 @@ if test( "qemu is asked for inbox hardware only, and a port on localhost" ):
     assert "format=raw,readonly=on" in joined, "QEMU refuses a USB disk over a read-only node otherwise"
 
 
-if test( "the project goes in by rsync, to the path the guest's rsync reads" ):
-    assert vm.msys_path( "E:/proj" ) == "/e/proj" and vm.msys_path( "C:\\errand\\p y\\" ) == "/c/errand/p y"
-    argv = shlex.split( vm.rsync_line( [ "ssh", "-p", "2222", "-i", "/c/k ey" ], "E:/proj" ) )
-    assert argv[ 0 ] == "rsync" and argv[ -2 : ] == [ "./", "Administrator@127.0.0.1:/e/proj/" ], argv
-    assert shlex.split( argv[ argv.index( "-e" ) + 1 ] ) == [ "ssh", "-p", "2222", "-i", "/c/k ey" ]
-    assert argv[ argv.index( "--rsync-path" ) + 1 ] == vm.GUEST_RSYNC
-    assert "--delete" not in argv, "what a command built over there must stay"
-
-
-if shutil.which( "rsync" ) and test( "what is copied in leaves out what an Ssh push would" ):
+if test( "what goes into a guest leaves out what an Ssh push would, errand's outputs at any depth" ):
+    from errand import config, sync as S
+    from errand.layers import gateways
     with tempfile.TemporaryDirectory() as tmp:
         root, out = Path( tmp ) / "p", Path( tmp ) / "out"
         for p in ( "src/a.cpp", "errand-outputs/runs/x/result.yaml", ".git/HEAD", "build/a.o", ".errand/env-w.yaml",
-                   "results/big.h5", "src/results/kept.txt" ):
+                   "results/big.h5", "src/results/kept.txt", "sub/errand-outputs/runs/y.txt" ):
             ( root / p ).parent.mkdir( parents = True, exist_ok = True )
             ( root / p ).write_text( "x" )
-        # The line as the machine that runs QEMU would run it, from its root,
-        # into a directory here rather than the guest. A zone of the project stays out, as from a
-        # push; only at the root.
-        from errand import config
-        zones, config.settings.zones = config.settings.zones, { "results": "back" }
+        # A zone of the project stays out, as from a push; only at the root.
+        zones, config.settings.zones = config.settings.zones, { "/results": "back" }
         try:
-            argv = shlex.split( vm.rsync_line( [ "ssh" ], "E:/proj" ) )
+            S.sync( root, out, gateways.selection( root, follow_links = True ) )
         finally:
             config.settings.zones = zones
-        for flag in ( "-e", "--rsync-path" ):
-            del argv[ argv.index( flag ) : argv.index( flag ) + 2 ]
-        assert subprocess.run( [ *argv[ : -1 ], f"{out}/" ], cwd = root ).returncode == 0
-        names = { str( p.relative_to( out ) ) for p in out.rglob( "*" ) }
-        assert names == { "src", "src/a.cpp", "src/results", "src/results/kept.txt" }, names
+        names = { p.relative_to( out ).as_posix() for p in out.rglob( "*" ) if not p.name.startswith( S.COPY_STATE ) }
+        assert names == { "src", "src/a.cpp", "src/results", "src/results/kept.txt", "sub" }, names
 
 
-if test( "a link to nothing does not fail the copy; anything else does" ):
-    done = lambda code, err = "": subprocess.CompletedProcess( [ ], code, "", err )
-    assert not vm.rsync_failed( done( 0 ) )
-    assert not vm.rsync_failed( done( 23, 'symlink has no referent: "/p/tl24/vfs"\n'
-                                          "rsync error: some files/attrs were not transferred (code 23)\n" ) )
-    assert vm.rsync_failed( done( 23, 'rsync: [receiver] mkstemp "/e/p/x" failed: Permission denied (13)\n'
-                                      "rsync error: some files/attrs were not transferred (code 23)\n" ) )
-    assert vm.rsync_failed( done( 12, "rsync: connection unexpectedly closed\n" ) )
-
-
-if test( "rsync goes into the image, and the host is told what it lacks" ):
+if test( "no rsync in the image: files cross through the guest's agent" ):
     script = vm.setup_script()
-    assert script.index( "Step 'rsync'" ) < script.index( "vs_buildtools" )
-    assert "noacl" in script and "rsync.exe' ) --version" in script
-    assert vm.package_hint( facts(), [ "rsync", "zstd" ] ) == "sudo apt install rsync zstd"
-    assert vm.package_hint( facts( system = "Darwin", os_ids = set() ), [ "rsync" ] ) == "brew install rsync"
+    assert "rsync" not in script and "msys" not in script.lower()
+    assert vm.package_hint( facts(), [ "zstd" ] ) == "sudo apt install zstd"
+    assert vm.msys_path( "E:/proj" ) == "/e/proj" and vm.msys_path( "C:\\errand\\p y\\" ) == "/c/errand/p y"
     assert "rsync.exe" in vm.RSYNC_FILES and any( p.startswith( "rsync-" ) for p in vm.MSYS2_PACKAGES )

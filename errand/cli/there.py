@@ -88,7 +88,7 @@ def _allocation_shell( env, tags, root, argv ) -> int:
 def _guest_shell( env, tags, root ) -> int:
     from ..vm.common import VmError
     from . import drive
-    where = drive.arrive( env, tags, root, project = guest.by_rsync( L.ssh_of( env.stack_for( "run", tags ) ) ) )
+    where = drive.arrive( env, tags, root, project = False )
     try:
         with guest.Guest( env, tags, where, lambda m: print( dim( m ), flush = True ) ) as g:
             return agents.interact( agents.open( g.target() ), [ "cmd.exe" ], cwd = g.there )

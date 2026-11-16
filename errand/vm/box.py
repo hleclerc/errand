@@ -4,12 +4,11 @@
 
 The `Ssh` says how to get there ( host, options, a jump host ); the `WindowsBox` says what is there, as `Windows` does for
 a machine errand boots. Everything after it runs on Windows, the way it runs in errand's own machine: cmd.exe lines, the
-project copied in by rsync, an agent started through the layers, results fetched by tar.
+project copied in and results brought back through an agent there, an agent started through the layers.
 
 What errand puts on that machine is all in `C:\\errand`, nothing on its PATH, nothing in its registry -- deleting the
 directory undoes it:
 
-    C:\\errand\\msys       rsync, from MSYS2's packages ( the guest's, pinned ), downloaded here and copied over
     C:\\errand\\uv         uv, for a `python = "3.13.1"` the machine does not have, and that Python ( `uv-python` )
     C:\\errand\\venv       a venv of that Python ( found: `py -3`, `python`; or uv's ), which the commands and the
                           provisioning run with: the machine's own Python is never written to
@@ -37,7 +36,7 @@ from .common import _backslashed, VmError
 from .datadisk import powershell
 from .guest import VCVARS
 from .talk import Talk
-from .transfer import GUEST_MSYS, GUEST_RSYNC, MSYS2_PACKAGES, MSYS2_REPO, RSYNC_FILES, SSH_FILES, SSH_PACKAGES
+from .transfer import MSYS2_PACKAGES, MSYS2_REPO, RSYNC_FILES, SSH_FILES, SSH_PACKAGES
 
 
 ERRAND  = r"C:\errand"
@@ -108,8 +107,7 @@ class WindowsBox( L.Gateway, L.Artefact ):
 
     def requires( self, ctx ) -> list:
         """Of this machine, which reaches the box."""
-        return [ ( "command -v ssh", "ssh, not found" ), ( "command -v scp", "scp, not found" ),
-                 ( "command -v rsync", "rsync, not found" ) ]
+        return [ ( "command -v ssh", "ssh, not found" ), ( "command -v scp", "scp, not found" ) ]
 
     # -- being let in -------------------------------------------------------------
 
@@ -281,7 +279,7 @@ exit 3
 
 
 class Setup:
-    """`errand setup` for a `WindowsBox`, as one step: rsync, a Python, the provisioning, then the mark that says so."""
+    """`errand setup` for a `WindowsBox`, as one step: a Python, the provisioning, then the mark that says so."""
 
     def __init__( self, layer: WindowsBox, ctx: L.Context ):
         self.layer, self.ctx = layer, ctx
@@ -302,17 +300,8 @@ class Setup:
         if not box.answers():
             raise VmError( f"cannot reach {box.said}: `ssh {box.address} echo ok` must work from this terminal, "
                            "and its shell be cmd.exe ( Windows' OpenSSH default )" )
-        box.must( rf'for %d in ( "{ERRAND}" "{ERRAND}\bin" "{ERRAND}\src" "{ERRAND}\work" "{READY}" "{ERRAND}\provision" '
-                  rf'"{GUEST_MSYS}\usr\bin" "{GUEST_MSYS}\etc" ) do @if not exist %d mkdir %d', "making C:\\errand" )
-
-        # rsync, which copies the project in
-        if box.guest( f'if exist "{_backslashed( GUEST_RSYNC )}" ( exit 0 ) else ( exit 3 )', quiet = True ).returncode:
-            files = _rsync_files( echo )
-            echo( f"    copying rsync to {box.ssh.host}" )
-            for f in RSYNC_FILES:
-                box.put( files / f, f"{GUEST_MSYS.replace( chr( 92 ), '/' )}/usr/bin/{f}" )
-            box.must( _ps( f"Set-Content '{GUEST_MSYS}\\etc\\fstab' 'none / cygdrive binary,posix=0,noacl,user 0 0' "
-                           "-Encoding ascii" ), "writing msys2's fstab" )
+        box.must( rf'for %d in ( "{ERRAND}" "{ERRAND}\bin" "{ERRAND}\src" "{ERRAND}\work" "{READY}" "{ERRAND}\provision" ) '
+                  rf'do @if not exist %d mkdir %d', "making C:\\errand" )
 
         # the Python commands run with
         if layer.python:
