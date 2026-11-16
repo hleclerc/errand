@@ -57,17 +57,27 @@ def of_host( host: str, options = ( ) ) -> dict:
     return { "kind": "ssh", "host": host, "options": list( options ), "python": "python3", "keep_alive": KEEP_ALIVE }
 
 
-def rsh_argv( host: str, options = ( ) ) -> list:
-    """A remote shell that is the agent, over the hub's stream: `<this> host command…`."""
+def _via( target: dict, via ) -> dict:
+    """How `rsh` reaches the agent: through the hub, or on a stream of its own ( `direct`, the mode of
+    the command that asked: no hub where it would not have one )."""
+    if via is None:
+        from . import mode
+        via = mode()
+    return target if via == "hub" else { **target, "via": via }
+
+
+def rsh_argv( host: str, options = ( ), via = "hub" ) -> list:
+    """A remote shell that is the agent, over the hub's stream: `<this> host command…`. `via = None`:
+    in the mode of the command that asks ( an agent's line, which must not go around the agent )."""
     import base64, json
-    code = base64.urlsafe_b64encode( json.dumps( of_host( host, options ) ).encode() ).decode()
+    code = base64.urlsafe_b64encode( json.dumps( _via( of_host( host, options ), via ) ).encode() ).decode()
     return [ sys.executable, str( bootstrap.PACKAGE / "_boot.py" ), "-m", "errand.agents", "rsh", code ]
 
 
-def rsh_argv_to( target: dict ) -> list:
+def rsh_argv_to( target: dict, via = None ) -> list:
     """The same, to any agent: one on a node of an allocation, reached through another."""
     import base64, json
-    code = base64.urlsafe_b64encode( json.dumps( target ).encode() ).decode()
+    code = base64.urlsafe_b64encode( json.dumps( _via( target, via ) ).encode() ).decode()
     return [ sys.executable, str( bootstrap.PACKAGE / "_boot.py" ), "-m", "errand.agents", "rsh", code ]
 
 
@@ -118,9 +128,41 @@ def spawn( target: dict, stderr = None ) -> subprocess.Popen:
                              cwd = target.get( "cwd" ) )
 
 
+_DIRECT : list = [ ]        # the bridges this process owns ( `direct` )
+
+
+def _end_direct( *_ ):
+    for proc in _DIRECT:
+        if proc.poll() is None:
+            proc.terminate()
+
+
+def _owned( proc ):
+    """A bridge of its own session goes with this process, however it ends -- but SIGKILL: a waiter
+    left behind would keep its lease fresh, and what it waits for would arrive for nobody ( ADR 0009 )."""
+    import atexit
+    import signal
+    import threading
+    if not _DIRECT:
+        atexit.register( _end_direct )
+        if threading.current_thread() is threading.main_thread():
+            for sig in ( signal.SIGTERM, getattr( signal, "SIGHUP", None ) ):
+                if sig is None or signal.getsignal( sig ) not in ( signal.SIG_DFL, None ):
+                    continue
+
+                def ending( signum, frame ):
+                    _end_direct()
+                    signal.signal( signum, signal.SIG_DFL )
+                    os.kill( os.getpid(), signum )
+
+                signal.signal( sig, ending )
+    _DIRECT[ : ] = [ p for p in _DIRECT if p.poll() is None ] + [ proc ]
+
+
 def direct( target: dict ) -> Connection:
     """A connection owned by this process: it ends with it ( `--no-agent`, no terminal )."""
     proc = spawn( target )
+    _owned( proc )
     out, inp = proc.stdout.fileno(), proc.stdin
 
     def write( data ):

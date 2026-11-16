@@ -1,99 +1,105 @@
 # Environments
 
-An environment is a stack of **layers** describing how to get from "run this program" to the actual
-subprocess, plus **[tags](./tags)** saying what it is. There is always a current interpreter; most
-layers are a way to override it.
-
-Environments are declared in [`errand-envs.py`](./configuration), at the root of the project — they
-depend on who runs, and on what machine, so that file is not versioned:
+An environment is a name for a place to run: a stack of **layers**, read outside in, that takes a
+command from "run this" to the process that actually runs it.
 
 ```python
 # errand-envs.py
 import errand
 
-errand.envs[ "local" ] = errand.Env( [ errand.Micromamba( "myenv", python = "3.13", requirements = "requirements.txt" ) ],
-                                     driver = "jax" )
+errand.envs[ "local" ] = errand.Env( [ errand.Micromamba( "myenv", python = "3.13", requirements = "requirements.txt" ) ] )
 
 errand.envs[ "gpu" ] = errand.Env( [ errand.Apptainer( image = "containers/cuda.sif", recipe = "containers/cuda.def",
-                                                       pip = [ "jax[cuda13]" ] ) ],
-                                   driver = "jax", cuda = True )
+                                                       pip = [ "jax[cuda13]" ] ) ] )
 
-errand.envs[ "cluster" ] = errand.Env( [ errand.Ssh( host = "gpu-box", root = "/home/me/proj" ),
+errand.envs[ "cluster" ] = errand.Env( [ errand.Ssh( host = "login.hpc", root = "/scratch/me/proj" ),
                                          errand.Slurm( partition = "gpu", gpus = 1, time = "2:00:00" ),
                                          errand.Apptainer( image = "containers/cuda.sif", recipe = "containers/cuda.def",
-                                                           pip = [ "jax[cuda13]" ] ) ],
-                                       driver = "jax", cuda = True )
+                                                           pip = [ "jax[cuda13]" ] ) ] )
+```
+
+```bash
+errand run --env cluster python train.py
 ```
 
 <Term scene="stack" caption="The cluster environment above, crossed by one run." />
 
-Read a stack outside in: `cluster` is *that machine*, then *an allocation on it*, then *the
-container*, then your command. There is no separate remote mode, no host file, no second config —
-`Ssh` and `Slurm` are layers like the others.
+`cluster` reads as *that machine*, then *an allocation on it*, then *the container*, then your
+command. There is no separate remote mode, no host file, no second configuration: `Ssh` and `Slurm`
+are layers like the others.
+
+Nothing here is hidden from you. The stack is the list of things you would have typed: an ssh, an
+`sbatch`, an `apptainer exec`. `errand -v` prints each command as it starts
+( [When something breaks](./upkeep#when-something-breaks) ), and `errand shell --env cluster` drops
+you into the same place to look around.
+
+## Where they are declared
+
+Environments go in the project's `errand-*.py` files, at its root, conventionally
+**`errand-envs.py`**. That file can be committed as long as it names no machine. What only this
+machine knows — a host name, a scratch path — goes in an untracked **`errand-vars.py`**, read first,
+and the other files ask for it with `errand.value`:
+
+```python
+# errand-vars.py -- not tracked
+cluster_host = "login.hpc"
+```
+
+```python
+# errand-envs.py -- tracked
+errand.envs[ "cluster" ] = errand.Env( [ errand.Ssh( host = errand.value( "cluster_host", "login.hpc" ) ), … ] )
+```
+
+See [What only this machine can supply](./configuration#what-only-this-machine-can-supply).
 
 ## The layers
 
-Each layer has its page, under [Layers](./layers/) in the menu:
+Each layer has its page under [Layers](./layers/):
 
-- reaching a machine: [`Ssh`](./layers/ssh), [`Slurm`](./layers/slurm), [`Windows`](./layers/windows);
+- reaching a machine: [`Ssh`](./layers/ssh), [`Slurm`](./layers/slurm), [`Windows`](./layers/windows),
+  [`WindowsBox`](./layers/windows-box);
 - what runs there: [`Apptainer`, `Docker`, `Podman`](./layers/containers),
   [`Micromamba`, `Conda`](./layers/micromamba), [`Venv`, `Uv`](./layers/venv),
   [`Nix`, `Guix`](./layers/nix-guix), [`Module`](./layers/module);
-- around the command: [`Vars`](./layers/vars), and [`Mpi`](./layers/mpi) for a launcher of
-  [several processes](./mpi) that is not the usual one.
+- around the command: [`Vars`](./layers/vars), [`Mpi`](./layers/mpi), [`Preload`](./layers/preload);
+- and [`Missing`](./layers/missing), for a place this machine cannot reach.
 
-## Preparing, then running
+## Looking at them
 
-What a target designates is for the place to say: a binary built over there exists only over there,
-`cargo metadata` needs a cargo, a file that imports torch can only be read where torch is. So the
-machine you type on only chooses the environments and hands the command over as it was typed;
-**resolving the targets, building, collecting and expanding the matrix all happen in the
-environment** — and a typo is reported from there.
-
-That happens in a **preparation phase**, which writes a *plan* — the entries, what they ask of a
-machine, the directories they will write — before a **run phase** runs it. The plan is what the
-fetch back, [`errand status`](./detached) and [the screen](./tui) read, and what an allocation is
-sized from. The run phase collects again, without rebuilding, and refuses to run if that is not what
-was prepared.
-
-Every layer takes **`when =`**, an [expression](/reference/expressions) over the selected tags and
-the pseudo-tag `phase` ( `prepare` or `run` ). A layer without one is in both phases. So the
-allocation that prepares — one task, CPUs to compile, half an hour — and the one that runs are two
-`Slurm` layers, each with all its arguments:
-
-```python
-# errand-envs.py
-errand.envs[ "cluster" ] = errand.Env( [
-    errand.Ssh( host = "login.hpc", root = "/scratch/me/proj" ),
-    errand.Slurm( cpus = 16, time = "0:30:00",                   when = "phase=prepare" ),
-    errand.Slurm( partition = "gpu", gpus = 1, time = "2:00:00", when = "phase=run" ),
-    errand.Apptainer( image = "containers/cuda.sif" ),
-], driver = "jax", cuda = True )
+```bash
+errand envs
 ```
 
-At most one scheduler is active per phase, and errand checks it. A `Slurm` is
-[held warm](./layers/slurm#held-warm-keep-alive) for a minute at least, sized from its declaration:
-the preparation and the run go into the same allocation, one job. With `keep_alive = 0`, the
-preparation is **one task**, whatever `nodes` says, and the run a job of its own, sized from the
-plan. When both phases go through the same layers and none of them is a
-scheduler — a container, another machine — preparing and running are **one pass**, one process. A
-condition can read the tags too: `when = "fp=64"`, `when = "phase=run & cuda"`.
+```text
+  local                                  micromamba:myenv  <- default
+  gpu                                    apptainer:containers/cuda.sif  stale
+  boxed                                  docker:errand-demo:1  not built
+  cluster                                ssh:login.hpc -> slurm:gpu -> apptainer:containers/cuda.sif  unknown
+```
 
-`errand list` is the preparation: on a cluster it goes through the preparation's allocation, because
-what would run *there* is only known there.
+The blank column holds the [tags](./tags), when an environment has some.
 
-## Two rules about what goes where
+`stale` and `not built` need no action from you: the next command that uses the environment builds
+it first. `unknown` means only the other machine can say what it has. See
+[Keeping environments current](./upkeep).
 
-**Requirements belong to the layer that installs them** — a `requirements.txt` for the conda
-environment, a `pip` list for the container — because that is the thing that has to be rebuilt when
-they change.
+## Choosing one
 
-**Tags are keyword arguments**, because they belong to the environment as a whole rather than to any
-one layer of it.
+```bash
+errand run --env gpu python train.py             # by name
+errand run --grid=, --env local,gpu python train.py   # several: one run in each
+errand run python train.py                       # the default
+```
+
+With no `--env`, `errand.default_env = "name"` decides; without it, the first environment the
+project declared ( never one a [package provides](#environments-a-package-provides) ); with no
+environment at all, the interpreter errand was started with. [Several runs: grids](./matrices) covers
+`--grid`. Environments can also carry tags and be chosen by them: see
+[Choosing among environments (tags)](./tags).
 
 ## Share pieces with plain Python
 
-Project files are ordinary Python. A layer stack is an ordinary list:
+Project files are ordinary Python, and a stack is an ordinary list:
 
 ```python
 # errand-envs.py
@@ -102,22 +108,54 @@ import errand
 CUDA = [ errand.Apptainer( image = "containers/cuda.sif", recipe = "containers/cuda.def",
                            flags = [ "--nvccli" ], pip = [ "jax[cuda13]" ] ) ]
 
-errand.envs[ "gpu" ]     = errand.Env( CUDA,                                                    driver = "jax", cuda = True )
-errand.envs[ "cluster" ] = errand.Env( [ errand.Ssh( host = "gpu-box", root = "…" ) ] + CUDA, driver = "jax", cuda = True )
+errand.envs[ "gpu" ]     = errand.Env( CUDA )
+errand.envs[ "cluster" ] = errand.Env( [ errand.Ssh( host = "gpu-box", root = "/home/me/proj" ) ] + CUDA )
 ```
 
-That `cluster` is `gpu` *plus a machine in front of it* is visible in the file, and the two cannot
-drift apart — which is the point.
+`cluster` is `gpu` with a machine in front of it. The file says so, and the two cannot drift apart.
 
-The same trick covers the case where one platform has apptainer and another does not: two
-environments, the same tags, the same fingerprint, the same output paths, only the container engine
-differs. Choosing where to run has nothing to say about which engine holds the image.
+## What goes where
+
+**Requirements belong to the layer that installs them**: a `requirements.txt` for the conda
+environment, a `pip` list for the container. That layer is what gets rebuilt when they change.
+
+**Tags are keyword arguments of `Env`**, because they describe the environment as a whole, not one
+layer of it.
+
+## Preparing, then running
+
+What a target means is for the place to say: a binary built over there exists only over there, and a
+file that imports torch can only be read where torch is. So the machine you type on only chooses the
+environments and hands the command over as typed. **Resolving the target, building, and expanding
+the grid happen in the environment**, and a typo is reported from there.
+
+That is a **preparation phase**, which writes a *plan* — what will run, what it asks of the machine,
+the directories it will write — before a **run phase** runs it. The plan is what the results are
+fetched back by, what [`errand status`](./status) reads, and what an allocation is sized from.
+
+Every layer takes **`when =`**, an [expression](/reference/expressions) over the selected tags and
+the pseudo-tag `phase` ( `prepare` or `run` ). A layer without one is in both phases. To prepare in
+one allocation ( CPUs to compile ) and run in another ( a GPU ), write two `Slurm` layers:
+
+```python
+# errand-envs.py
+errand.envs[ "cluster" ] = errand.Env( [
+    errand.Ssh( host = "login.hpc", root = "/scratch/me/proj" ),
+    errand.Slurm( cpus = 16, time = "0:30:00",                   when = "phase=prepare" ),
+    errand.Slurm( partition = "gpu", gpus = 1, time = "2:00:00", when = "phase=run" ),
+    errand.Apptainer( image = "containers/cuda.sif" ),
+] )
+```
+
+At most one scheduler is active per phase, and errand checks it. With a single `Slurm`, the
+allocation is [held warm](./layers/slurm#held-warm-keep-alive) and the preparation and the run go
+into the same job. With `keep_alive = 0`, the preparation is one task and the run a job of its own,
+sized from the plan. When no layer is a scheduler, preparing and running are one pass, one process.
 
 ## Environments a package provides
 
-A library can declare environments for the projects that use it, so that they have nothing to write: build
-environments under fixed names, say. A provider is a function taking the project root, which fills
-`errand.envs` like a project file does:
+A library can declare environments for the projects that use it, so they have nothing to write. A
+provider is a function taking the project root, which fills `errand.envs` as a project file does:
 
 ```python
 # mylib/errand_envs.py
@@ -134,54 +172,18 @@ An installed package declares it under the entry point group `errand.envs`:
 mylib = "mylib.errand_envs:provide"
 ```
 
-and a program that drives errand itself appends it to `errand.providers` before calling `errand.main`.
+A program that drives errand itself appends it to `errand.providers` before calling `errand.main`.
 
-A provider that finds no way to an environment from this machine declares it anyway, as a
-[`Missing`](./layers/missing) that says what to write where, rather than leaving it undeclared. A layer a
-user may give a provider to complete ( an `Apptainer` with its `scratch`, a `Micromamba` with its
-`root_prefix` ) can be declared without its `image` or `name`; used as it is, it is refused.
-
-Providers run after `errand-vars.py`, so they can read what this machine knows ( `errand.value` ), and
-before the project's other files, which have the last word: one of them can redefine an environment under
-the same name, or change it in place ( `errand.envs[ "mylib-linux" ].stack.append( … )` ). They run even in a
-project that has no `errand-*.py` at all. A provider that fails is said, and skipped: what the others
-declare is still there.
-
-## Looking at them
-
-```bash
-errand envs
-```
-
-```text
-  local    driver=cpu                    micromamba:demo -> vars                     <- default
-  gpu      cuda  driver=cuda             apptainer:cuda.sif -> vars                  stale
-  boxed    boxed  driver=cpu             docker:errand-demo:1 -> vars                not built
-  box      cuda  driver=cuda  remote     ssh:gpu-box -> apptainer:cuda.sif -> vars   unknown
-  cluster  cuda  driver=cuda  fp=64  remote  ssh:login.hpc -> slurm:gpu -> …         unknown
-```
-
-`unknown` is honest rather than optimistic: only the other machine can say what it has.
-
-You do not have to act on `stale` or `not built` — see [Keeping them
-current](./upkeep).
-
-## Choosing one
-
-```bash
-errand run -k bench --env gpu            # by name
-errand run -k bench --driver cuda        # by tag; every tag name becomes a flag
-errand run -k bench --fp 32
-errand run -k bench -t 'cuda & !remote'  # by expression
-errand run --grid=, -k bench --env gpu,cluster    # both: --grid asks for several, and no name holds a comma
-```
-
-Use `--env NAME` when you want exactly one and mean it. Everything else is in [Tags](./tags).
-
-With nothing asked for, `errand.default_env = "name"` decides; with none, the first one the project declared is used ( never
-one a [provider](#environments-a-package-provides) declared );
-with no environment declared at all, errand runs in the interpreter you started it with.
+- A provider that finds no way to an environment from this machine declares it anyway, as a
+  [`Missing`](./layers/missing) that says what to write where.
+- A layer the user is expected to complete ( an `Apptainer` without its `image`, a `Micromamba`
+  without its `name` ) may be declared incomplete; used as it is, it is refused.
+- Providers run after `errand-vars.py`, so they can read `errand.value`, and before the project's
+  other files, which have the last word: they can redefine an environment, or change it in place
+  ( `errand.envs[ "mylib-linux" ].stack.append( … )` ).
+- They run even in a project with no `errand-*.py`. A provider that fails is reported and skipped.
 
 ## Next
 
-[Keeping them current](./upkeep) — how an environment gets built, and what errand refuses to touch.
+[Keeping environments current](./upkeep): how an environment gets built, and what errand will not
+touch.

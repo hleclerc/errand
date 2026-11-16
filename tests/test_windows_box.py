@@ -119,22 +119,6 @@ if test( "setup asks this machine for ssh, scp and rsync, and builds the box in 
     assert len( steps ) == 1 and callable( steps[ 0 ] ) and str( steps[ 0 ] ).startswith( "set up windows-box" )
 
 
-if test( "Ssh hands its box the command, pushing nothing to a POSIX machine" ):
-    got = { }
-
-    class Fake( L.Gateway ):
-        is_box = True
-        def describe( self ):
-            return "fake"
-        def run( self, inner, cmd, ctx, pull = None, echo = print ):
-            got.update( inner = inner, cmd = cmd, pull = pull )
-            return 7
-
-    code = L.Ssh( host = "winbox" ).run( [ Fake(), L.Vars( { "A": "1" } ) ], L.Command( [ "python", "x.py" ] ),
-                                         L.Context( root = ROOT ), pull = [ "out" ], echo = lambda s: None )
-    assert code == 7 and got[ "pull" ] == [ "out" ] and isinstance( got[ "inner" ][ 0 ], L.Vars )
-
-
 if test( "an Ssh alone that reaches a Windows says to add a WindowsBox" ):
     for said in ( "'true' is not recognized as an internal or external command,\r\noperable program or batch file.",
                   "true : The term 'true' is not recognized as the name of a cmdlet, function, script file" ):
@@ -146,7 +130,6 @@ if test( "an Ssh alone that reaches a Windows says to add a WindowsBox" ):
 if test( "the guest's agent and copies use the box's own address" ):
     from errand.cli import guest as G
     env = boxed()
-    assert G.usable( env )                      # a box always has a Python once set up
     where = SimpleNamespace( root = Path( tempfile.mkdtemp() ), ssh = None, there = ROOT, cache = None )
     g = G.Guest( env, { }, where, lambda s: None )
     assert g.box and g.said_where == "on me@winbox"
@@ -155,6 +138,71 @@ if test( "the guest's agent and copies use the box's own address" ):
     assert target[ "argv" ][ 0 ] == "ssh" and "me@winbox" in target[ "argv" ] and "-T" in target[ "argv" ]
     line = vm.rsync_line( g.m._reach( "ssh" ), "C:/errand/work/p", "./", g.m.address )
     assert "me@winbox:/c/errand/work/p/" in line
+
+
+if test( "files cross through an agent of the guest that no layer starts; rsync only when asked by name" ):
+    import os
+    from errand.cli import guest as G
+    env = boxed( also = [ "../sib" ] )
+    where = SimpleNamespace( root = Path( tempfile.mkdtemp() ), ssh = None, there = ROOT, cache = None )
+    g = G.Guest( env, { }, where, lambda s: None )
+    g.m = B.Box( env.vm, where.root )
+    host, envt = g.host_target(), g.target()
+    line = host[ "argv" ][ -1 ]
+    assert host[ "argv" ][ 0 ] == "ssh" and "me@winbox" in host[ "argv" ] and host[ "id" ] != envt[ "id" ]
+    assert f"connect C:/errand/agents/host-{g.key}" in line and "cd /d" not in line and "vcvars" not in line, line
+    assert not g.by_rsync and not G.by_rsync( None ) and G.by_rsync( L.Ssh( host = "h", transfer = "rsync" ) )
+    os.environ[ "ERRAND_TRANSFER" ] = "rsync"
+    try:
+        assert G.by_rsync( None )
+    finally:
+        del os.environ[ "ERRAND_TRANSFER" ]
+    unpack = G.unpack_line( "C:/errand/src/k1" )
+    assert unpack.startswith( r'if exist "C:\errand\src\k1\errand\_boot.py" ( exit 0 )' ) and "tar -xzf - -C" in unpack
+    assert r'move "C:\errand\src\k1.part" "C:\errand\src\k1"' in unpack
+
+
+if test( "bytes on a line's stdin come back as bytes: the tar of errand's sources into a guest" ):
+    got = L.Here( Path( tempfile.mkdtemp() ) ).shell( "cat", input = b"\x1f\x8b\x00", capture = True )
+    assert got.returncode == 0 and got.stdout == b"\x1f\x8b\x00", got
+
+
+if test( "the guest's push and pull, through its agent: the project and its `also` in, results straight back here" ):
+    import os
+    import shutil
+    from errand import agents, sync as S
+    from errand.cli import guest as G
+    d = Path( tempfile.mkdtemp( dir = "/tmp" ) )
+    try:
+        root, sib, there = d / "proj", d / "sib", d / "guest" / "proj"
+        for f, text in { root / "a.py": "a", root / "build/x.o": "o", sib / "s.py": "s" }.items():
+            f.parent.mkdir( parents = True, exist_ok = True )
+            f.write_text( text )
+        os.symlink( "a.py", root / "ln" )
+        env = boxed( also = [ "../sib" ] )
+        where = SimpleNamespace( root = root, ssh = None, there = root, cache = None )
+        said = [ ]
+        g = G.Guest( env, { }, where, said.append )
+        g.there = str( there )
+        os.environ[ "ERRAND_AGENT" ] = "direct"
+        from errand import config
+        zones, config.settings.zones = config.settings.zones, { "/out": "back" }      # written there, brought back
+        g._host_conn = agents.open( { "kind": "local", "dir": str( d / "ag" ), "keep_alive": 5 } )
+        g._push_sync()
+        assert ( there / "a.py" ).read_text() == "a" and ( d / "guest/sib/s.py" ).read_text() == "s"
+        assert not ( there / "ln" ).is_symlink() and ( there / "ln" ).read_text() == "a", "links followed, for Windows"
+        assert not ( there / "build" ).exists(), "a build zone is not pushed into"
+        assert any( "sync push -> windows:" in s for s in said ) and any( "1 sent" in s for s in said ), said
+        ( there / "out" ).mkdir()
+        ( there / "out/r.txt" ).write_text( "result" )
+        g.fetch( [ "out", "nothing" ] )
+        assert ( root / "out/r.txt" ).read_text() == "result"
+        said.clear()
+        g._push_sync()
+        assert not [ s for s in said if "sent" in s ], ( "nothing to send twice", said )
+        config.settings.zones = zones
+    finally:
+        shutil.rmtree( d, ignore_errors = True )
 
 
 if test( "a box is set up by errand setup only: any other command stops, and says what to run" ):

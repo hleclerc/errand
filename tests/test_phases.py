@@ -73,13 +73,14 @@ def _where( ):
                             boot = "/errand/_boot.py" )
 
 
-if test( "a session is reached by its agent, by a command through a scheduler, or by watching a job" ):
+if test( "a session is reached by its agent, in an allocation through its agent, or by watching a job" ):
     from errand.cli.drive import Reach
     kind = lambda layers, phase = "run": Reach( errand.Env( layers ), { }, phase, _where() ).kind
     assert kind( [ errand.Venv( python = "/opt/prj/bin/python" ) ] ) == "agent"
     assert kind( [ errand.Slurm( gpus = 1 ), errand.Venv( python = "/opt/prj/bin/python" ) ] ) == "alive", \
         "held warm a short while by default: the run finds the allocation its preparation had"
-    assert kind( [ errand.Slurm( gpus = 1, keep_alive = 0 ), errand.Venv( python = "/opt/prj/bin/python" ) ] ) == "command"
+    assert kind( [ errand.Slurm( gpus = 1, keep_alive = 0 ), errand.Venv( python = "/opt/prj/bin/python" ) ] ) == "alive", \
+        "an allocation for one command: through its agent as well ( ADR 0009 )"
     assert kind( [ errand.Slurm( watch = 60, time = "1:00:00" ) ] ) == "watched"
     assert kind( [ errand.Slurm( when = "phase=run" ) ], "prepare" ) == "agent", "prepared outside the allocation"
 

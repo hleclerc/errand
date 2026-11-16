@@ -4,6 +4,7 @@ The real thing -- an allocation reused between commands, ranks over two nodes fr
 a layer built inside it, the allocation let go of on its own -- is exercised on a cluster named in
 errand-envs.py, by hand ( `ERRAND_AGENT=hub errand run --env <warm env>` twice, then `squeue` ).
 """
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -16,16 +17,18 @@ def where( ):
                             there = Path( "/scratch/proj" ), cache = "/home/me/.cache/errand", boot = "/home/me/_boot.py" )
 
 
-if test( "a scheduler held warm is reached through an agent in its allocation, not by srun each time" ):
+if test( "every Slurm command is reached through an agent in an allocation, never by srun ( ADR 0009 )" ):
     from errand.cli.drive import Reach
     warm = errand.Env( [ errand.Ssh( host = "cluster" ), errand.Slurm( keep_alive = "30m" ) ] )
     cold = errand.Env( [ errand.Ssh( host = "cluster" ), errand.Slurm( keep_alive = 0 ) ] )
     short = errand.Env( [ errand.Ssh( host = "cluster" ), errand.Slurm() ] )
     assert Reach( warm, { }, "run", where() ).kind == "alive"
-    assert Reach( cold, { }, "run", where() ).kind == "command"
+    assert Reach( cold, { }, "run", where() ).kind == "alive", "keep_alive = 0: an allocation for one command"
     assert Reach( short, { }, "run", where() ).kind == "alive" and Reach( short, { }, "prepare", where() ).kind == "alive"
     from errand.cli import alive
     assert alive.seconds( short.stack[ 1 ] ) == 60 and alive.seconds( warm.stack[ 1 ] ) == 1800
+    one = alive.Allocation( cold, { }, where() )
+    assert one.node_keep() == 5 and one.agent_keep() == 5, "given back seconds after its command"
     assert Reach( warm, { }, "run", where(), batch = True ).kind == "command", "--batch lets go: nothing to keep"
 
 
@@ -111,3 +114,24 @@ if test( "a command runs in the allocation kept warm only if it fits in it: neve
     assert fits( a, { }, time = "0:05:00", host = Squeue() )[ 0 ]
     assert not fits( a, { }, time = "0:10:00", host = Squeue() )[ 0 ], "longer than what the job has left"
     assert _left( "1-02:03:04" ) == 93784 and _left( "05:00" ) == 300 and _left( "UNLIMITED" ) is None
+
+
+if test( "an allocation is sized apart from its commands, and one that does not fit gets its own ( ADR 0009 )" ):
+    from errand.cli.alive import Allocation, fits
+    qos = lambda s: "dev" if s is not None and s <= 7200 else "t3"
+    env = errand.Env( [ errand.Ssh( host = "cluster" ), errand.Slurm( gpus = 1, qos = qos, allocation = { "time": "2:00:00" } ) ] )
+    a = Allocation( env, { }, where() )
+    assert "2:00:00" in a.flags and a.flags[ a.flags.index( "--qos" ) + 1 ] == "dev", a.flags
+    assert fits( a, { }, "1:00:00" )[ 0 ] and not fits( a, { }, "3:00:00" )[ 0 ], "the allocation's time is what is left"
+    big = Allocation( env, { }, where(), needs = { "gpus": 4 } )
+    assert big.name != a.name and "4" in big.flags, "its own size, its own name: shared in turn by what fits there"
+
+
+if test( "the allocation's agent leaves at once when no waiter's lease is fresh, and says where it carves" ):
+    from errand.cli.alive import Allocation
+    script = Allocation( errand.Env( [ errand.Ssh( host = "cluster" ), errand.Slurm() ] ), { }, where() ).script()
+    assert 'touch "$d/wanted-$$"' in script and "trap 'rm -f \"$d/wanted-$$\"' EXIT" in script
+    assert "-mmin -1" in script and 'rm -f "$d/wanted-$$"' in script and 'kill -0 "$PPID"' in script
+    assert "trap 'exit 1' INT TERM HUP" in script, "a stop is a signal, not an EXIT, for sh"
+    assert 'export ERRAND_ALLOCATION="$SLURM_JOB_ID"' in script
+    assert subprocess.run( [ "sh", "-n", "-c", script ] ).returncode == 0, "the script is not valid sh"

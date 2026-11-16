@@ -17,11 +17,15 @@ class Mine( errand.Runner ):
     def run( self, entry, ctx ) -> Outcome: ...
 ```
 
-Registered with `errand.runners[ "mine" ] = Mine( )`, under which name `-r mine` picks it.
-`level` is what lets a walk over a whole tree ask only the runners that could make a file
+Registered with `errand.runners[ "mine" ] = Mine( )`, under which name `-r mine` picks it ( see
+[the list of runners](./#the-list-of-runners) ).
+
+`level` is the highest `Level` it can answer ( `NONE`, `FALLBACK`, `LANGUAGE`, `FRAMEWORK`,
+`ERRAND` ): it lets a walk over a whole tree ask only the runners that could make a file
 discoverable. A runner with `builds_to_collect = True` has `prepare` called before `collect`, during
-the preparation, with `self.context.build_dir` saying where the build goes. `specs` are `( files, name_glob )` pairs over the files this runner won; `self.root` is
-the project root, and `self.entry( name =, file =, key = )` makes an entry of this runner's.
+the preparation, with `self.context.build_dir` saying where the build goes. `specs` are
+`( files, name_glob )` pairs over the files this runner won; `self.root` is the project root, and
+`self.entry( name =, file =, key = )` makes an entry of this runner's.
 
 With `whole_files = True`, the `::name` of a target belongs to the file rather than to the entry, so
 the core does not filter entries by it: with `takes_selector = True` it reaches `run` as

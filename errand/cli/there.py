@@ -53,7 +53,12 @@ def run_there( known, command, *, root, interactive = False, targets = None ):
                          { TAGS: ",".join( f"{k}={v}" for k, v in sorted( tags.items() ) ),
                            "PYTHONPATH": path.rstrip( os.pathsep ) } )
         print( dim( f"\n  -> {env.name}  {env.describe()}" ), flush = True )
-        if interactive and env.vm is not None and guest.usable( env ) and agents.enabled():
+        from . import alive
+        if alive.scheduler( env.stack_for( "run", tags ) ) is not None:
+            # In a Slurm allocation: through its agent, as every command there ( ADR 0009 ).
+            rc |= _allocation_shell( env, tags, root, list( command ) )
+            continue
+        if env.vm is not None:
             # A shell in Windows: cmd.exe in a pseudo-console, through the guest's agent.
             rc |= _guest_shell( env, tags, root )
             continue
@@ -71,10 +76,19 @@ def run_there( known, command, *, root, interactive = False, targets = None ):
     return rc
 
 
+def _allocation_shell( env, tags, root, argv ) -> int:
+    """A terminal in the allocation the environment's commands run in, through its environment agent:
+    the allocation is found, or asked for, and shared like any other ( ADR 0009 )."""
+    from . import alive, drive
+    where = drive.arrive( env, tags, root )
+    alloc = alive.Allocation( env, tags, where )
+    return agents.interact( agents.open( alloc.env_target() ), argv, cwd = str( where.there ) )
+
+
 def _guest_shell( env, tags, root ) -> int:
     from ..vm.common import VmError
     from . import drive
-    where = drive.arrive( env, tags, root )
+    where = drive.arrive( env, tags, root, project = guest.by_rsync( L.ssh_of( env.stack_for( "run", tags ) ) ) )
     try:
         with guest.Guest( env, tags, where, lambda m: print( dim( m ), flush = True ) ) as g:
             return agents.interact( agents.open( g.target() ), [ "cmd.exe" ], cwd = g.there )

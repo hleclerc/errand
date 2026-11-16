@@ -1,30 +1,28 @@
-# Getting started
+# Quickstart
 
 errand asks nothing of your project first. Start from a command you already run, then say where
-else you would like it to run.
+else it should run.
 
-## A command, here
+## 1. A command, here
 
 ```bash
 cd my-project
 errand run make check              # what you would have typed, after `errand run`
 errand run train.py --lr 1e-3      # a .py: run by the python of the place
-errand run -x ./bench              # the machine to itself while it runs
 ```
 
-Nothing is guessed: the first word after errand's options is a `.py`, a file to execute, or a
-command of the place — and everything after it is that command's own. Each run is recorded in
-`errand-outputs/runs/` (what ran, how it ended, what it printed); `-o` hands the run's directory
-there to the command as `$ERRAND_OUT_DIR`, for files of its own.
+The first word after errand's options is a `.py`, a file to execute, or a command; everything after
+it belongs to that command. Each run is recorded in `errand-outputs/runs/`: what ran, how it ended,
+what it printed.
 
-## Then: somewhere else
+## 2. Declare a place
 
 ```bash
-errand init      # a commented errand-envs.py, and an errand-project.py with suggestions
+errand init      # writes a commented errand-envs.py
 ```
 
-Uncomment and adapt the stack of [layers](./environments) in `errand-envs.py` — where *you* run the
-project:
+Uncomment and adapt it. Each environment is a stack of [layers](./environments), read from the
+outside in: *that machine, an allocation on it, a container, your command*.
 
 ```python
 # errand-envs.py
@@ -33,70 +31,53 @@ import errand
 errand.envs[ "local" ]   = errand.Env( [ errand.Micromamba( "myproject", python = "3.13",
                                                            requirements = "requirements.txt" ) ] )
 errand.envs[ "cluster" ] = errand.Env( [ errand.Ssh( host = "gpu-box", root = "~/errand/myproject" ),
-                                         errand.Slurm( partition = "gpu", time = "00:30:00" ),
+                                         errand.Slurm( partition = "gpu", gpus = 1, time = "1:00:00" ),
                                          errand.Apptainer( image = "containers/main.sif", recipe = "containers/main.def" ) ] )
 ```
 
 ```bash
-errand envs                                  # what is declared, and in what state
-errand run --env local make check            # the micromamba environment is made first
+errand envs              # what is declared, and in what state
+errand setup --dry-run   # what getting them ready would run
+```
+
+## 3. Run it there
+
+```bash
+errand run --env local make check            # the micromamba env is created first
 errand run --env cluster python train.py     # pushed, allocated, contained, run
-errand run --grid=, --env local,cluster ./bench       # in both places
-errand shell --env cluster                   # be let in, to look
+errand shell --env cluster                   # get in and look around
 ```
 
-The environments are built the first time they are needed, checked against what you declared before
-every run after that, and brought up to date when the declaration changes. Over ssh the project is
-rsynced there first; `--pull DIR` and `-o` say what comes back.
+Environments are built the first time they are needed, checked before every run, and updated when
+the declaration changes. An environment that already exists is adopted, not rebuilt.
 
-<Term scene="stack" caption="What a single --env cluster crosses. Ssh, Slurm and Apptainer are declared once, as layers." />
+<Term scene="stack" caption="What --env cluster crosses: Ssh, Slurm and Apptainer, declared once." />
 
-## A suite, test by test
+## 4. Get the results back
 
-A suite can be run as a command — `errand run --env cluster pytest` — and that is often enough.
-Written `path::name`, its tests become **entries**: one run each, recorded each, filtered by their
-marks and tags.
-
-::: code-group
-
-```bash [pytest]
-errand run 'tests/**::*'                 # every test under tests/
-errand run tests/test_api.py::test_ok    # one of them
-errand run -e '!slow' 'tests/**::*'      # @pytest.mark.slow is an entry tag
+```bash
+errand run --env cluster --pull out python train.py   # out/ comes back here afterwards
+errand run --env cluster -o ./simulate                 # a directory per run, brought back
 ```
 
-```bash [C++ · Catch2]
-errand run 'cpp/**::*'                   # built once, in the place, then each case
-errand run cpp/test_geometry.cpp::area   # one case, by name
+With `-o`, the command gets `$ERRAND_OUT_DIR`, a fresh directory for this run, made over there and
+fetched into `errand-outputs/runs/` here. → [Results and records](./output)
+
+## 5. Let it run, and find it again
+
+```bash
+errand run --batch --env cluster python train.py   # the shell comes back at once
+errand status                                      # what runs, on every machine
+errand attach                                      # follow a run again, results included
 ```
 
-```bash [Rust · cargo]
-errand run 'src/**::*'                   # one entry per test target
-```
-
-```bash [errand's own entries]
-errand run 'bench/**::*'                 # files that `if track( "cost" ):` -- see Writing entries
-```
-
-:::
-
-Which runner takes a file is read from the file — a pytest test, a Catch2 source, a cargo target,
-a file of errand's own entries — and the defaults need no line at all. When they do not fit, or to
-say what a bare `errand run` means, `errand-project.py` says it:
-
-```python
-# errand-project.py
-import errand
-
-errand.runners.replace( errand.Catch2( dir = "cpp", build = "make -C cpp" ) )   # how it is built
-errand.runners[ "bench" ] = errand.Pytest( dirs = [ "tests/bench" ] )          # errand run -r bench …
-errand.default_run = [ "tests/**::*", "cpp/**::*" ]                            # a bare `errand run`
-```
-
-`errand init` writes the lines that fit what it finds here — in comments, for you to keep or not.
-The detail of each runner is in [Runners](/guide/runners/).
+Close the laptop whenever you like: the work goes on over there. `errand status` lists what runs
+on every machine you sent work to, and Ctrl-C on a followed run stops it through every layer.
+→ [What is running](./status), [Let it run](./detached)
 
 ## Next
 
-[Environments](./environments) for the layers, [Running it](./running) for targets and options, or
-the [tutorials](/tutorials/).
+- [Environments](./environments) and the [layers](./layers/), one by one
+- [Running](./running): targets, options, `errand shell`
+- [Four environments](/tutorials/environments), a guided tour
+- A pytest, Catch2 or cargo suite, test by test: [Running a suite](./runners/)

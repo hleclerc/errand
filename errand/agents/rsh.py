@@ -26,9 +26,10 @@ def command_of( args ) -> str:
 
 def main( code: str, args ) -> int:
     from . import open as open_agent
-    # rsync's pipes are not a terminal, yet this is only ever used when there is a hub to go through.
-    os.environ[ "ERRAND_AGENT" ] = "hub"
     target = json.loads( base64.urlsafe_b64decode( code.encode() ).decode() )
+    # Its pipes are not a terminal: the mode is the one of the command that made this line ( the hub
+    # unless it said otherwise ).
+    os.environ[ "ERRAND_AGENT" ] = target.pop( "via", "hub" )
     conn = open_agent( target )
     call = conn.open( { "op": "spawn", "argv": [ "sh", "-c", command_of( args ) ], "keep": False } )
     call.reply()

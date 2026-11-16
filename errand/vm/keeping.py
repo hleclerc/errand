@@ -7,7 +7,8 @@ on Linux a SIGKILL of the keeper alone does too ( PDEATHSIG ). Nothing it does g
 connection that may be lost: its host is this machine.
 
 It stays up while a command holds `use.lock`, or a session runs in the guest ( the guest's agents
-say so in their `running` files ), then for `keep`.
+say so in their `running` files ), then for `keep`. Booted with nobody left to use it, it stops at
+once.
 """
 from __future__ import annotations
 
@@ -65,6 +66,7 @@ class Keeping:
                         ( self.live / "state" ).write_text( "failed" )
                         return 1
                 ( self.live / "state" ).write_text( "ready" )
+                self._served = False      # until a command or a session uses it ( ADR 0009 )
                 held = None           # the locks, kept until this process is gone
                 while held is None:
                     time.sleep( 2.0 )
@@ -118,8 +120,16 @@ class Keeping:
         exits; or None.
 
         While nobody uses it, the machine is only kept warm: its claim says so, and somebody who
-        needs its cores asks for them -- then it goes now, whatever `keep` says."""
+        needs its cores asks for them -- then it goes now, whatever `keep` says.
+
+        Booted for nobody -- the command that asked went during the boot, and no other holds it --
+        it goes now too: `keep` is for a machine that served, not for one that was never used
+        ( ADR 0009 )."""
         used = self._in_use()
+        if used:
+            self._served = True
+        elif not getattr( self, "_served", True ):
+            keep = -1
         if claim is not None:
             if used == getattr( self, "_warm", True ):
                 self._warm = not used

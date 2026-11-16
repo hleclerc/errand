@@ -1,7 +1,12 @@
-# Tags
+# Choosing among environments (tags)
 
-A tag says what an environment *is*. There is nothing to declare — a tag is a keyword argument on
-`errand.Env`, and every name used becomes a flag:
+::: tip Advanced
+With a handful of environments, `--env NAME` is all you need. Tags are for projects with many of
+them, or one environment that covers a whole dimension: a precision, a backend, a problem class.
+:::
+
+A tag says what an environment *is*. There is nothing to declare: a tag is a keyword argument of
+`errand.Env`, and every tag name becomes a flag.
 
 ```python
 # errand-envs.py
@@ -10,25 +15,34 @@ errand.envs[ "cluster" ] = errand.Env( [ errand.Ssh( … ), errand.Slurm( … ) 
 ```
 
 ```bash
-errand run --env cluster               # by name
-errand run --driver jax                # by tag, one flag per name
-errand run --fp 64 --cuda
-errand run -t 'jax & fp=64 & !remote'  # --env-tags, the expression form
+errand run --driver jax python bench.py          # every environment that can be driver=jax
+errand run --fp 64 --cuda yes python bench.py   # a tag flag always takes a value
+errand run -t 'driver=jax & fp=64 & !remote' python bench.py   # -t, --env-tags: an expression
+errand envs                                      # the tags of each, in the second column
 ```
+
+`-t` reads the [expression language](/reference/expressions). A tag flag or an expression selects
+**every** environment that fits, not one: that is the point of them.
 
 ## Saying nothing means every value
 
-An environment that does not mention `fp` covers every precision, so `--grid=, --fp 32,64` is **two runs in
-it**. One that says `fp = "64"` is only ever selected for that one. A comma on a tag flag always
-means several values, so a tag value cannot hold one.
+An environment that does not mention `fp` covers every precision. `--fp 32` selects it, and runs in
+it with `fp=32` among its tags. One that says `fp = "64"` is only selected for that value, and
+`fp = "32|64"` for either; naming one with `--env cluster --fp 32` when it cannot have that value is
+an error, not an override.
 
-This is what makes a tag a *dimension* rather than a label. You declare one environment, and the
-precision, the backend or the problem class you want to sweep crosses it.
+```bash
+errand run --grid=, --fp 32,64 python bench.py   # two runs in each environment that covers both
+```
+
+That is what makes a tag a *dimension* rather than a label: you declare one environment, and the
+values you want to sweep cross it. A tag value cannot hold the [`--grid`](./matrices) separator; a
+comma without `--grid` is an error that says how to ask for several values.
 
 ## Tags only select
 
-What an environment then does to the child process is a `Vars` layer, like everything else it does
-— and that layer can read the selection back:
+A tag does nothing to the process by itself. What an environment does to it is a
+[`Vars`](./layers/vars) layer, like everything else, and that layer can read the selection back:
 
 ```python
 # errand-envs.py
@@ -36,35 +50,18 @@ errand.envs[ "gpu" ] = errand.Env( CUDA + [ errand.Vars( lambda t: { "MYPROJ_FTY
                                    driver = "jax", cuda = True )
 ```
 
-Without that, a dimension an environment merely *parametrizes* would have to be split into one
-environment per value, with each value written twice: once to be matched by `--fp`, once to be
-handed to the child. There would be a `local32` beside every `local` and a `gpu32` beside every
-`gpu`.
+Without that, each value would need its own environment, written twice: once to be matched by
+`--fp`, once to be handed to the child. There would be a `local32` beside every `local` and a
+`gpu32` beside every `gpu`.
 
-One environment covering a range is the common case, and two covering one value each is the
-exception.
-
-The work itself reads an ordinary environment variable, and names no machine:
+The work itself reads an ordinary variable, and names no machine:
 
 ```python
 # src/solver.py -- knows nothing about errand
 FTYPE = os.environ.get( "MYPROJ_FTYPE", "FP64" )
 ```
 
-## A tag can select several environments
-
-…and that is the point. Under `--grid`, several values are a matrix here exactly as on a parameter:
-
-```bash
-errand run --grid=, -k bench --fp 32,64 "bench/solvers.py::*"         # both precisions
-errand run --grid=, -k bench --env gpu,cluster "bench/solvers.py::*"  # both machines
-errand run -t 'cuda=True'                                    # every cuda environment there is
-```
-
-Each environment gets its own [output directory](./output), so results sit side by side and the
-summaries compare them. Use `--env NAME` when you want exactly one and mean it.
-
-## Inside the work
+## Reading the tags from the work
 
 ```python
 from errand import has_tag, tag
@@ -74,8 +71,9 @@ if has_tag( "driver=torch" ):
 width = tag( "fp", "64" )
 ```
 
-`tag( name )` gives a tag's value; `has_tag( expr )` reads the full
-[expression language](/reference/expressions) against the selected environment.
+`tag( name, default )` gives a tag's value; `has_tag( expr )` matches an
+[expression](/reference/expressions) against the selected environment. Outside errand — a file run
+by hand — `has_tag` answers yes to everything, so a file never silently disappears.
 
 ### Skipping a file that does not apply
 
@@ -91,24 +89,18 @@ import torch          # only reached where torch is the point
 ```
 
 Finding entries means importing every candidate file, so an `import torch` at the top of a file runs
-even when the selected environment is a jax one — and on a machine where torch is broken, that takes
-down the whole session rather than one file. Exiting before the import is what prevents it.
-`errand` catches the exit and reports the file as skipped.
+even when the selected environment is a jax one, and on a machine where torch is broken it takes the
+whole session down. Exiting before the import prevents it; errand reports the file as skipped.
 
-::: tip Run by hand, `has_tag` says yes
-Outside `errand` — a file you ran yourself — `has_tag` answers yes to everything. A file that
-silently disappears is worse than an import that fails loudly.
-:::
+## Environment tags and entry tags
 
-## Entry tags are the other kind
-
-`-e` picks *what* runs, over the tags you wrote on an [entry](./declaring-work#tags-on-an-entry).
-`-t` picks *where*, over the tags on an environment. They take the same expressions and never mix:
+`-t` picks *where*, over the tags of environments. `-e` picks *what*, over the tags written on
+[entries](./declaring-work). They take the same expressions and never mix:
 
 ```bash
-errand run -e 'slow & !gpu' -t 'cuda & !remote'
+errand run -e 'slow & !gpu' -t 'cuda & !remote' 'tests/**::*'
 ```
 
 ## Next
 
-[Running elsewhere](/guide/layers/ssh) — what `Ssh` actually does.
+[Running a command](./running).

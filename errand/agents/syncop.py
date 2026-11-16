@@ -56,7 +56,12 @@ def selection_from_wire( d: dict ) -> S.Selection:
 
 def _root( path: str ) -> Path:
     p = Path( os.path.expanduser( path ) )
-    return p if p.is_absolute() else Path.home() / p        # as ssh's `cd` reads it: from the home folder
+    p = p if p.is_absolute() else Path.home() / p           # as ssh's `cd` reads it: from the home folder
+    if os.name == "nt" and not str( p ).startswith( "\\\\" ):
+        # Extended-length: what a run writes deep in a copy ( a run directory named after a test ) is often past
+        # Windows' 260 characters, which every call under this root then gets past too.
+        p = Path( "\\\\?\\" + os.path.abspath( str( p ) ) )
+    return p
 
 
 # -- over there -----------------------------------------------------------------

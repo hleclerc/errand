@@ -60,8 +60,20 @@ ALLOCATION_VARS = ( "SLURM_JOB_ID", "PBS_JOBID", "OAR_JOB_ID", "LSB_JOBID",
 CLAIM = "ERRAND_CLAIM"
 
 
+# Set by errand in an allocation it holds ( ADR 0009 ): the allocation is the machine, carved by
+# this queue -- what runs in it is not somebody else's scheduling.
+ALLOCATION = "ERRAND_ALLOCATION"
+
+
+def in_allocation( ) -> str | None:
+    return os.environ.get( ALLOCATION ) or None
+
+
 def someone_else_is_scheduling( ) -> str | None:
-    """The name of the scheduler that already owns this process, if any."""
+    """The name of the scheduler that already owns this process, if any: not in an allocation errand
+    holds, which errand carves itself."""
+    if in_allocation():
+        return None
     for var in ALLOCATION_VARS:
         if os.environ.get( var ):
             return var.split( "_" )[ 0 ].lower()
@@ -86,7 +98,9 @@ def queue_dir( ) -> Path:
     if not ( base and os.path.isdir( base ) and os.access( base, os.W_OK ) ):
         base = tempfile.gettempdir()
     uid = os.getuid() if hasattr( os, "getuid" ) else 0
-    return Path( base ) / f"errand-queue-{uid}-{host()}"
+    # Two allocations of one user on one node are two machines: one queue each.
+    alloc = f"-alloc{in_allocation()}" if in_allocation() else ""
+    return Path( base ) / f"errand-queue-{uid}-{host()}{alloc}"
 
 
 # ── what the machine has ─────────────────────────────────────────────────────
@@ -105,6 +119,9 @@ def parse_size( value ) -> float:
 
 
 def _total_ram_mb( ) -> float:
+    # an allocation's memory, in one: what Slurm gave it on this node
+    if in_allocation() and os.environ.get( "SLURM_MEM_PER_NODE", "" ).isdigit():
+        return float( os.environ[ "SLURM_MEM_PER_NODE" ] )
     try:
         return os.sysconf( "SC_PAGE_SIZE" ) * os.sysconf( "SC_PHYS_PAGES" ) / ( 1024 * 1024 )
     except ( ValueError, OSError, AttributeError ):
@@ -122,6 +139,13 @@ def _gpu_count( ) -> int:
         return len( [ l for l in got.stdout.splitlines() if l.strip() ] ) if not got.returncode else 0
     except ( OSError, subprocess.SubprocessError ):
         return 0
+
+
+def _cpu_count( ) -> int:
+    """The cores this process may run on: an allocation's, in one ( its cpuset ), else the machine's."""
+    if in_allocation() and hasattr( os, "sched_getaffinity" ):
+        return len( os.sched_getaffinity( 0 ) ) or 1
+    return os.cpu_count() or 1
 
 
 def devices( ) -> list:
@@ -143,7 +167,7 @@ _capacity: dict | None = None
 def capacity( ) -> dict:
     global _capacity
     if _capacity is None:
-        _capacity = { "cpus": float( os.cpu_count() or 1 ),
+        _capacity = { "cpus": float( _cpu_count() ),
                       "ram" : _total_ram_mb(),
                       "gpus": float( _gpu_count() ) }
     return dict( _capacity )
@@ -318,12 +342,18 @@ def _acquire( needs: dict, exclusive: bool, label: str, mine: Path, echo ) -> li
                     else:
                         yamlish.write( queued, { "label": label, "pid": os.getpid(),
                                                  "host": host(), "since": time.time() } )
-            if echo and waiting != waited_for:
-                echo( f"  waiting for {waiting}" )
+            if waiting != waited_for:
+                if echo:
+                    echo( f"  waiting for {waiting}" )
+                from .agents import arrival
+                arrival.waiting( f"room on {host()}: {waiting}", key = "queue" )      # ADR 0009
                 waited_for = waiting
             time.sleep( POLL )
     finally:
         queued.unlink( missing_ok = True )
+        if waited_for is not None:
+            from .agents import arrival
+            arrival.arrived( key = "queue" )
 
 
 @contextlib.contextmanager

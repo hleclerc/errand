@@ -170,12 +170,31 @@ def _stub( entry: dict ):
     return SimpleNamespace( name = entry[ "name" ], file = Path( entry[ "file" ] ), line = entry[ "line" ] )
 
 
+# The step of the case running, at the bottom of this terminal ( ADR 0010 ): one line for all
+# the sessions followed, the last one that said something.
+_footer = None
+
+
+def _step( text ):
+    global _footer
+    from .footer import Footer
+    if _footer is None:
+        if not Footer.usable( sys.stdout ):
+            return
+        _footer = Footer( sys.stdout )
+    _footer.show( text )
+
+
 def follow( session, report, box: dict ) -> int:
     """Read a session to its end: what it prepared, how each case went. -> its return code."""
     rc = 0
     while True:
         m = session.next()
         op = m.get( "op" )
+        if op == "step":
+            _step( m.get( "line" ) )
+        elif op in ( "ran", "exit", "lost" ):
+            _step( None )
         if op == "prepared":
             report.broken += [ ( Path( p ), why, "" ) for p, why in m[ "broken" ] ]
             rc |= m[ "rc" ]

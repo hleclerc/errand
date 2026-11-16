@@ -1,127 +1,86 @@
-# Parameters and matrices
-
-## Param
-
-`Param( default )` declares a typed flag — the type comes from the default. Parameters show up in
-`errand list` and are echoed before each run:
-
-```python
-from errand import bench, Param
-
-if p := bench( "cost", n = Param( 1000, help = "nb of points" ),
-                       method = Param( "newton", choices = [ "newton", "lbfgs" ] ) ):
-    p.results[ "cost" ] = run( p.n, p.method )
-```
+# Several runs: grids
 
 ```bash
-errand run bench/solvers.py::cost --n=5000 --method=lbfgs
+errand run --grid=, --env local,gpu,cluster python bench.py     # three runs, one per environment
+errand run --grid=, --fp 32,64 python bench.py                  # one per value of a tag
+errand run --grid=, 'bench/solvers.py::cost' --n=1000,5000      # one per value of a parameter
+errand run --grid=, --env local,gpu 'bench/solvers.py::cost' --n=1000,5000   # four runs
 ```
 
-`Param( 1000 )` is an int, `Param( "newton" )` a string, `Param( 0.5 )` a float — the default's type
-is the reader. A value that cannot be read as that type is an error naming the flag, not a surprise
-three lines into the body, and `choices = [ … ]` is checked the same way. Every parameter takes a
-value on the command line; a yes/no is better spelled
-`Param( "no", choices = [ "no", "yes" ] )` than as a bare flag.
+Several values make several runs **only under `--grid=SEP`**, and SEP is what splits them. One command,
+every combination, each with its own [record](./output), side by side.
 
-A keyword on an entry that is **not** a `Param` has to be a trait or a resource, and anything else
-is a `TypeError` saying so — which is what catches `n = 1000` written where
-`n = Param( 1000 )` was meant.
+## The grid is asked for
 
-## A grid is asked for
+Without `--grid`, a value is one value, whatever it holds. Commas are too common to mean a grid on
+their own: a tuple, a list, a `1e-3,1e-6` written as one thing. So the grid is said, with a separator
+that fits the values:
 
 ```bash
-errand run --grid=, bench/solvers.py::cost --n=1000,5000 --method=newton,lbfgs    # 4 runs, 4 directories
+errand run --grid=, --env local,gpu python bench.py     # two environments
+errand run --grid=+ 'bench/shapes.py::grid' --shape=1,2+3,4   # two values, each holding a comma
 ```
 
-**Several values make a matrix only under `--grid=SEP`**, and SEP is what splits them — on a
-declared parameter, on `--env`, on a tag. Without `--grid`, a value is one value, whatever it holds:
-`--shape=1,2` is the string `1,2`, given to one run. A comma was too common to mean a grid on its
-own -- a tuple, a list, a range, a `1e-3,1e-6` written as one thing -- so the grid is said, and its
-separator chosen to fit the values:
+- `--grid` is errand's option: it goes **before** the target, and one separator serves the whole
+  command.
+- A value without the separator is one value: `--grid=, … --n=1000,5000 --tol=1e-6` is two runs.
+- The separator twice is an empty value: `--suffix=,_fast` is two runs, one with an empty suffix.
+- There is no escape. A value that holds the separator asks for another separator.
+- A comma without `--grid` where it cannot be one value — an environment name, a tag value, a
+  number — is an error that says how to ask for the grid.
+- Targets keep their own commas: `prep.py,train.py` is two targets, `--grid` or not.
 
-```bash
-errand run --grid=, bench/solvers.py::cost --n=1000,5000                             # two parameter values
-errand run --grid=+ bench/shapes.py::grid --shape=1,2+3,4                            # two values, each with a comma
-errand run --grid=, --fp 32,64 bench/solvers.py::cost                                # two values of a tag
-errand run --grid=, --env local,gpu bench/solvers.py::cost                           # two environments
-errand run --grid=, --env local,gpu --fp 32,64 bench/solvers.py::cost --n=1000,5000  # eight runs
-```
-
-`--grid` is errand's: it goes **before** the target, like `--env`, and one separator serves the
-whole command. A value without the separator is one value: `--grid=, … --n=1000,5000 --tol=1e-6`
-is two runs. SEP twice is an empty value: `--grid=, … --suffix=,_fast` is two runs, one with an
-empty suffix. There is no escape -- a value that holds the separator asks for another separator.
-A comma without `--grid` where it cannot be one value -- a number, an environment name, a tag
-value -- is an error that says how to ask for the grid, rather than a surprise.
-
-The targets keep their own commas: `train.py,eval.py` is two targets, `--grid` or not, since a
-target word is a pattern ( `{a,b}` included ) and not a value.
-
-Each value is an axis, the cartesian product is run, and every combination gets its own record, in
-[its own directory](./output), so the results sit side by side. When there is more than
-one run, the grid is said once before anything starts — `4 runs: n = 1000 | 5000, method = newton |
-lbfgs` — so a grid that was not meant as one is seen in time.
-
-**An argument nobody declared is not a matrix**, `--grid` or not. What follows a script or a command
-is its own, and passes through as written: `errand run scripts/sweep.sh --size 1024,4096` is one
-run, given `1024,4096`, and `-Wl,-rpath` or `python -c "f( 1, 2 )"` mean what they say. To sweep a
-script, loop in the shell, or declare the parameter on an [entry](./declaring-work).
-
-This works on **any** entry, tests included: sweeping a test across four environments is a perfectly
-good thing to want, and often the thing you most want.
-
-## What a matrix does to the tree
-
-A matrix is **more names, never more levels** — here as it is laid out under
-`errand-outputs/runs/`:
+When there is more than one run, the grid is said before anything starts, so a grid you did not mean
+is seen in time:
 
 ```text
-errand-outputs/runs/bench_solver.py/solve/
-  2026-09-24_18h04m11-local@thishost-method=cg,n=10000/result.yaml
-  2026-09-24_18h04m11-gpu@thishost-method=cg,n=10000/result.yaml
-  2026-09-24_18h04m11-gpu@gpu-box-method=cg,n=10000/result.yaml
-  2026-09-24_18h09m30-local@thishost-method=cg,n=100000/result.yaml
-  latest -> the newest of them
-  summary.yaml                        <- one row per run: this is the comparison
+  4 runs: n = 1000 | 5000, method = newton | lbfgs
 ```
 
-The runs of one command **share a stamp**, because they are one command — however many processes,
-machines or scheduler queues that command turns into. The rest of the name says where and with
-what. See [Where the output goes](./output).
+## What can vary
 
-Read `summary.yaml` after a matrix: one row per run, with the extents across them all. That is the
-comparison you ran the matrix for, and it is recomputed by re-reading the neighbouring
-`result.yaml` files, so it is always right.
-
-## Matrices and the places they cross
-
-Three things cross, and they cross together:
-
-| axis | spelled | lands in the name as |
+| axis | written | lands in the run's name as |
 |---|---|---|
-| a parameter | `--grid=, … --n=1000,5000` | `n=1000` |
-| a [tag](./tags) | `--grid=, --fp 32,64` | part of the environment's identity |
-| an [environment](./environments) | `--grid=, --env local,gpu` | `{env}@{host}` |
+| an [environment](./environments) | `--grid=, --env local,gpu` | `local@laptop`, `gpu@gpu-box` |
+| a [tag](./tags) | `--grid=, --fp 32,64` | the environment's tags, in the record |
+| a parameter of an entry | `--grid=, … --n=1000,5000` | `n=1000`, `n=5000` |
 
-Crossing a tag with an environment does *not* multiply blindly: an environment that pins
-`fp = "64"` is simply not selected by `--fp 32`, and one that says nothing about `fp` covers every
-value of it. [Saying nothing means every value.](./tags)
+They cross: every environment, with every tag value it covers, with every parameter value. An
+environment that pins `fp = "64"` is not selected by `--fp 32`, so crossing does not multiply
+blindly. [Saying nothing means every value](./tags#saying-nothing-means-every-value).
+
+**A script's or a command's arguments are not a grid**, `--grid` or not. What follows them is theirs,
+passed as written: `errand run --grid=, python sweep.py --size 1024,4096` is one run, given
+`1024,4096`, and `-Wl,-rpath` or `python -c "f( 1, 2 )"` mean what they say. To sweep a script's
+values, declare them as parameters of an [entry](./declaring-work), or loop in the shell.
+
+## What a grid does to the tree
+
+More names, never more levels. One command is one stamp, however many runs, machines or batch jobs
+it turns into:
+
+```text
+errand-outputs/runs/bench.py/
+  2026-09-24_18h04m11-local@laptop/
+  2026-09-24_18h04m11-gpu@laptop/
+  2026-09-24_18h04m11-cluster@node15/
+  latest -> the newest of them
+  summary.yaml            one row per run: the comparison
+```
+
+Read `summary.yaml` after a grid: one row per run, and the range of every number across them. See
+[Results and records](./output#summaries).
 
 ## Where it is expanded
 
-Matrices are expanded **where the work runs**, one plain run per combination, during the
-[preparation](./environments#preparing-then-running): the plan it writes names every run, and that is
-what the fetch back, `errand status` and the screen read — for a local run, a run [over
-ssh](/guide/layers/ssh) and a [detached](./detached) one alike.
+A grid of environments is expanded here: each environment gets its share of the command. A grid of
+parameters is expanded **where the work runs**, during the
+[preparation](./environments#preparing-then-running): the plan names every run, and that is what
+comes back, what [`errand status`](./status) shows, and what an allocation is sized from. The other
+machine never sees a grid, only plain runs.
 
-## On a screen
-
-[`errand tui`](./tui) builds the same command. Enter on a case opens a window with every dimension
-in it — environments, tags, parameters, how many at once — and ticking two of anything is a matrix,
-written as a `--grid` whose separator no ticked value holds. In a typed field, a comma is several
-values, as two ticks are. Below the rule the window shows the command it is about to run,
-so the day you want it in a script you already know what to write.
+Under [`--batch`](./detached), `errand status` shows a grid as a table: parameters down, places across.
 
 ## Next
 
-[Environments](./environments) — the other half of every matrix.
+[Several processes (MPI)](./mpi).

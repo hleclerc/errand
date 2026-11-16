@@ -1,124 +1,153 @@
 # Writing entries
 
-::: tip This page is about errand's own declaration, which is optional
-If you have a pytest, Catch2 or cargo suite, or just a command, you do not need any of this:
-see [Start from what you have](./start). Entries are for work that has no framework of its own — a
-number to follow, a picture to look at, a step to run on a cluster — and they mix freely with
-adopted suites in one project.
+::: warning Being reworked
+errand's own entries are being reworked into a protocol any program can follow: results written to
+a file, needs in each framework's own vocabulary, exit code 77 for a skip
+( [ADR 0003](https://github.com/hleclerc/errand/blob/main/docs/adr/0003-run-launches-everything-output-on-request.md) ).
+`entry`, `Param`, `need` and `skip` stay; the traits below are the part most likely to change.
 :::
 
-An **entry** is a piece of work that produces something. You declare it next to the code it
-exercises, with a guard that reads like `if __name__ == "__main__":` but does more — several per
-file, mixable freely, each identified by its **call site** so that two can share a name:
+You do not need entries to use errand: a command, a script or a pytest, Catch2 or cargo suite runs
+as it is ( see [Running a suite test by test](/guide/runners/) ). Entries are for work with no
+framework of its own: a number to follow, a picture to look at, a step to run on a cluster.
 
 ```python
-from errand import entry, Param
+# test_primes.py
+import time
+from errand import test, bench, experiment, Param
+from primes import sieve
 
-if p := entry( "solve", n = Param( 1000, help = "problem size" ) ):
-    p.results[ "seconds" ] = solve( p.n )
-    ( p.out_dir / "residual.png" ).write_bytes( plot( ) )
-    assert p.results[ "seconds" ] < 60
+if test( "small primes" ):
+    assert sieve( 30 ) == [ 2, 3, 5, 7, 11, 13, 17, 19, 23, 29 ]
+
+if p := bench( "sieve", n = Param( 100_000, help = "upper bound" ) ):
+    t = time.perf_counter( )
+    found = sieve( p.n )
+    p.results[ "seconds" ] = time.perf_counter( ) - t
+    p.results[ "primes" ]  = len( found )
+
+if p := experiment( "gaps", n = Param( 100_000 ) ):
+    ps = sieve( p.n )
+    ( p.out_dir / "gaps.txt" ).write_text( str( [ b - a for a, b in zip( ps, ps[ 1 : ] ) ] ) )
 ```
 
-`errand` imports the file once to find its entries, then re-imports it once per selected entry, so
-every body runs isolated and every failure is caught on its own.
+```bash
+errand run test_primes.py::sieve              # one entry, by name
+errand run test_primes.py::sieve --n=1000000  # with another value of its parameter
+errand run -k bench '**::*'                   # every benchmark under here
+errand list '**::*'                           # what is there, with the parameters each takes
+```
 
-The walrus form hands back the resolved parameters, the output directory, and a `results` dict to
-drop numbers into. An entry can assert, record numbers and write files to look at, all three at
-once — there is no rule that a benchmark may not fail, or that a test may not produce a picture.
+The whole example, with a benchmark that also asserts, is
+[`examples/03-entries`](https://github.com/hleclerc/errand/tree/main/examples/03-entries).
+`primes.py` knows nothing about errand: work is declared beside the code, not inside it.
 
-## What the guard gives you
+## The guard is the entry
+
+`if test( … ):` reads like `if __name__ == "__main__":`, but a file can hold as many as it likes.
+errand imports the file once to find them, then once more per entry it runs: the guard of that entry
+is true, every other one false. Each body runs on its own, and each failure is caught on its own.
+Entries are told apart by **call site**, so two may share a name.
+
+The walrus form hands back what the run needs:
 
 | | |
 |---|---|
-| `p.<name>` | each declared [parameter](./matrices), resolved: the default, or what the command line asked for |
+| `p.<name>` | each declared [parameter](#parameters-param), resolved: the default, or what the command line asked for |
 | `p.out_dir` | this run's own directory, already created. Write anything you like into it |
-| `p.results` | a dict to drop numbers and strings into; it ends up in `result.yaml` |
+| `p.results` | a dict for numbers and strings; it ends up in `result.yaml` |
 
-`p.results` takes anything. Numeric values are summarized (min and max) at every level above the
-run, which is what makes two dates or two machines comparable without you declaring anything.
-
-Outside errand — a file you ran by hand — `out_dir()` answers `./out`, so an ad-hoc run still has
-somewhere to put its files.
-
-## The four traits
-
-Four traits say how an entry should be treated:
-
-| trait | what it decides | default |
-|---|---|---|
-| `bulk` | picked up by a bare `errand run`, through [`errand.default_run`](./configuration#default-run) | `True` |
-| `keep` | its numbers are kept and compared date to date | `False` |
-| `exclusive` | it needs the machine to itself | `False` |
-| `stable_path` | `latest/` is what you are meant to open | `False` |
+Numeric results are summarized ( min and max ) at every level above the run, which is what makes
+two dates or two machines comparable without declaring anything. An entry can assert, record numbers
+and write files, all at once. Outside errand, a file run by hand, `out_dir()` answers `./out`.
 
 ## test, bench, track, experiment
 
-Setting the traits by hand every time would be tedious, so four ordinary functions set them for
-you:
+| | it is for | `-k` | a bare `errand run` |
+|---|---|---|---|
+| `test` | something that must pass | `test` | runs it |
+| `track` | numbers you want to follow: an error, a residual, a size, a count | `bench` | skips it |
+| `bench` | `track`, measured **alone**: timings, or anything a neighbour would disturb | `bench` | skips it |
+| `experiment` | something to look at: `latest/` is the path to open | `exp` | skips it |
 
 ```python
 from errand import test, bench, track, experiment, Param
 
-if test( "addition" ):                        # bulk
-    assert 1 + 1 == 2
-
-if p := bench( "solve", n = Param( 1000 ) ):  # keep, exclusive, not bulk
-    p.results[ "seconds" ] = solve( p.n )
-
-if p := track( "accuracy", n = Param( 1000 ) ):   # keep, not bulk
+if p := track( "accuracy", n = Param( 1000 ) ):
     p.results[ "error" ] = abs( solve( p.n ) - exact( p.n ) )
-
-if p := experiment( "the shape of it" ):      # stable_path, not bulk
-    plot( ).savefig( p.out_dir / "shape.png" )
 ```
 
-| | it is for | traits |
-|---|---|---|
-| `test` | something that must pass | `bulk` |
-| `track` | **numbers you want to follow** — an error, a residual, a size, a score, a count — kept and compared date to date | `keep`, not `bulk` |
-| `bench` | `track`, measured **alone**: the numbers are timings, or anything a neighbour would disturb | `keep`, `exclusive`, not `bulk` |
-| `experiment` | something to be looked at — `latest/` is the path to open | `stable_path`, not `bulk` |
+A bare `errand run`, the targets of [`errand.default_run`](/guide/configuration#default-run), runs
+only the tests among errand's entries: numbers worth keeping are not produced by accident. Name the
+others, or ask for them with `-k bench` / `-k exp`. A target that names them, `'**::*'` included,
+runs them.
 
-A benchmark here is not necessarily about speed. What makes an entry worth keeping is that it
-produces **numbers whose evolution you care about**; whether they are durations is incidental.
-`bench` takes the machine to itself because the commonest numbers worth following *are* timings, and
-a timing taken while something else was running is not a timing. When the numbers are not
-timings, use `track`, or `bench( …, exclusive = False )` — they are the same thing.
+`bench` takes the machine to itself because the commonest numbers worth following are timings, and
+a timing taken while something else ran is not a timing. When the numbers are not timings, use
+`track`.
 
-They are four lines of Python over `entry`, and you can write a fifth of your own the same way.
-Note that a bare `errand run` — the targets of `errand.default_run` — runs **only the tests**: a
-`bench`, a `track` or an `experiment` is named, or asked for with `-k bench` (both of the first two) /
-`-k exp`.
+## The four traits
 
-Override a trait on the spot when the preset is not quite right:
+The four functions are four lines of Python over `entry`, each setting traits:
+
+| trait | what it decides | `entry` default | set by |
+|---|---|---|---|
+| `bulk` | picked up by a bare `errand run` | `True` | `test` |
+| `keep` | its numbers are kept and compared date to date | `False` | `track`, `bench` |
+| `exclusive` | it needs the machine to itself | `False` | `bench` |
+| `stable_path` | `latest/` is what you are meant to open | `False` | `experiment` |
+
+Override one on the spot, or write a fifth function the same way:
 
 ```python
 if p := experiment( "the big one", exclusive = True ):   # a picture that needs the whole GPU
 if p := bench( "cheap probe", exclusive = False ):       # a number that does not
+if entry( "docs", bulk = False ):                       # a task, run when named: errand run tasks.py::docs
 ```
+
+## Parameters: Param
+
+`Param( default )` declares a typed flag. The type comes from the default: `Param( 1000 )` is an
+int, `Param( "newton" )` a string, `Param( 0.5 )` a float.
+
+```python
+if p := bench( "cost", n = Param( 1000, help = "nb of points" ),
+                       method = Param( "newton", choices = [ "newton", "lbfgs" ] ) ):
+    p.results[ "cost" ] = run( p.n, p.method )
+```
+
+```bash
+errand run bench/solvers.py::cost --n=5000 --method=lbfgs
+errand run --grid=, bench/solvers.py::cost --n=1000,5000    # two runs: see Several runs
+```
+
+- Parameters go **after** the target, as `--n=5000` or `--n 5000`; `max_iter` is `--max-iter`.
+- A value that cannot be read as the default's type is an error naming the flag, before anything
+  runs. `choices` is checked the same way.
+- Every parameter takes a value. A yes/no is better written `Param( "no", choices = [ "no", "yes" ] )`
+  than as a bool.
+- A keyword that is not a `Param` must be a trait or a resource; anything else is a `TypeError`.
+  That is what catches `n = 1000` written where `n = Param( 1000 )` was meant.
+- Parameters show in `errand list`, and are printed before each run.
+
+Several values of a parameter make a grid only under `--grid=SEP`: see
+[Several runs: grids](/guide/matrices).
 
 ## Resources
 
-An entry says what it needs, and nothing gets to ignore it:
+An entry says what it needs, and [the queue](/guide/machine) holds it to that:
 
 ```python
-if p := bench( "solve" ):                            # exclusive: the machine to itself
-if p := test( "wide", cpus = 4, ram = "8G" ):        # a share of it
+if p := test( "wide", cpus = 4, ram = "8G" ):        # a share of the machine
 if p := test( "on the card", gpus = 1 ):
 if p := test( "distributed", ranks = 4 ):            # 4 MPI processes, each running the body
 ```
 
-`cpus`, `ram` and `gpus` are counted against what the host has; with `ranks`, they are what one rank
-needs ( see [Several processes (MPI)](./mpi), where `--ranks` on the
-command line is the usual way to ask ). This is what the
-[queue](./machine) enforces, and what a [`Slurm`](/guide/layers/ssh) layer hands over to the scheduler when
-there is one.
+`cpus`, `ram` and `gpus` are counted against what the host has; with `ranks`, they are per rank
+( see [Several processes (MPI)](/guide/mpi) ). A [`Slurm`](/guide/layers/slurm) layer hands them to
+the scheduler. `--cpus`, `--ram`, `--gpus`, `--ranks` on the command line override them.
 
 ## Tags on an entry
-
-Entries carry free-form tags, and `--entry-tags` / `-e` filters on them with the
-[expression language](/reference/expressions):
 
 ```python
 if test( "the slow one", tags = [ "slow", "gpu" ] ):
@@ -129,39 +158,28 @@ if test( "the slow one", tags = [ "slow", "gpu" ] ):
 errand run -e 'slow & !gpu' '**::*'
 ```
 
-`-e` picks *what* runs; `-t` picks *where* (see [Tags](./tags)). They take the same expressions.
-
-::: tip Entry tags and environment tags are different things
-An entry tag is a word you wrote on the work. An environment tag says what a *place* is. They never
-mix, and they have one flag each so you can always tell which you meant.
-:::
+`-e` filters entries with the [expression language](/reference/expressions); `-t` picks
+environments with the same one ( see [Tags](/guide/tags) ). An entry tag is a word written on the
+work, an environment tag says what a place is: they never mix.
 
 ## Two rules about files
 
 **A file that declares work is not a module to import from.** Importing one from another declares
-everything in it twice, and errand says so rather than running the copies; put what is shared in a
+everything in it twice, and errand says so rather than running the copies. Put what is shared in a
 file that declares nothing.
 
 **Its own directory is on the import path while it is read**, so `test_primes.py` can
-`import primes` from beside it. Work is declared next to the code it exercises; which directory you
-happened to start `errand` from is not supposed to change what a file can import. The path is
-borrowed for the import and put back afterwards.
+`import primes` from beside it, whichever directory you started errand from.
 
-## Something that is not a test at all
+## What a run leaves
 
-There is no mechanism for project-specific subcommands, because there does not need to be one:
-something you want to run is an entry, and `bulk = False` keeps it out of the way until you name it.
-
-```python
-# tasks.py
-if entry( "docs", bulk = False ):
-    build_docs( )
+```text
+errand-outputs/runs/test_primes.py/sieve/
+  2026-09-24_18h04m11-default@thishost-n=100000/
+    result.yaml          status, duration, RAM, params, results, tags
+    output.txt           what it printed
+  latest -> the newest of them
+  summary.yaml           one row per run, and the extents
 ```
 
-```bash
-errand run tasks.py::docs
-```
-
-## Next
-
-[Running it](./running) — how to ask for one entry, a file, a glob, or everything.
+See [Results and records](/guide/output).

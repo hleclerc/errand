@@ -111,19 +111,25 @@ if test( "an environment that declares nothing is never stale" ):
 
 
 if test( "a batch allocation wraps, it does not replace the interpreter" ):
-    cmd = folded( [ L.Slurm( partition = "gpu", gpus = 1, time = "2:00:00" ) ] )
-    assert L.unhooked( cmd.argv )[ 0 ] == "srun"
-    assert cmd.argv[ -4 : ] == [ "python", "-m", "errand", "x" ]
+    batch = L.Context( root = Path( "/" ), batch = True )
+    cmd = L.compose( [ L.Slurm( partition = "gpu", gpus = 1, time = "2:00:00" ) ],
+                     L.Command( [ "python", "-m", "errand", "x" ] ), batch )
+    assert cmd.argv[ 0 ] == "sbatch" and cmd.argv[ -1 ].endswith( "python -m errand x" ), cmd.argv
     assert "--partition" in cmd.argv and "gpu" in cmd.argv
-    # nothing unset becomes a flag: srun would take `--nodes None` literally
+    # nothing unset becomes a flag: sbatch would take `--nodes None` literally
     assert "--nodes" not in cmd.argv and "--account" not in cmd.argv
+    # waited for, it is not wrapped at all: it runs in an allocation, through its agent ( ADR 0009 )
+    try:
+        folded( [ L.Slurm( partition = "gpu" ) ] )
+        raise AssertionError( "a bare srun came out of wrap" )
+    except RuntimeError as err:
+        assert "allocation" in str( err )
 
 
 if test( "slurm stacks in front of a container, ssh in front of both" ):
     stack = [ L.Slurm( partition = "gpu" ), L.Apptainer( image = "c/x.sif" ) ]
-    cmd = folded( stack )
-    assert L.unhooked( cmd.argv )[ 0 ] == "srun"
-    assert "apptainer" in cmd.argv and cmd.argv.index( "apptainer" ) > cmd.argv.index( "srun" )
+    cmd = L.compose( stack, L.Command( [ "python", "-m", "errand", "x" ] ), L.Context( root = Path( "/" ), batch = True ) )
+    assert cmd.argv[ 0 ] == "sbatch" and "apptainer" in cmd.argv[ -1 ], cmd.argv
 
 
 if test( "a module load needs a shell to exist at all" ):

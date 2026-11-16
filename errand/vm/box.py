@@ -126,38 +126,8 @@ class WindowsBox( L.Gateway, L.Artefact ):
         return " && ".join( parts )
 
     def run( self, inner, cmd: L.Command, ctx: L.Context, pull = None, echo = print ):
-        """The command as it is, without an agent: what `Windows.run` does, on a machine that is already up."""
-        there = self.guest_root( ctx )
-        env = { k: v for k, v in cmd.env.items() if k != "PYTHONPATH" }
-        wrapped = L.compose( inner, L.Command( L.under( cmd.argv, "python" ), env ),
-                             L.Context( root = Path( there ), tags = ctx.tags, remote = True ) )
-        if any( "\n" in str( a ) for a in cmd.argv ):
-            echo( "  a command for windows is one line: cmd.exe would drop everything after a newline "
-                  "-- put the script in a file of the project, and run that" )
-            return 1
-        try:
-            box = Box( self, ctx.root )
-            if not box.ready( self.image_name( ctx ) ):
-                echo( f"  {box.said} is not set up for this declaration -- errand setup <name>" )
-                return 1
-            echo( f"  copy in -> {self.via.host}:{there}" )
-            box.push( there )
-            for other in self.also:
-                box.push( f"{there}/{other}".replace( "//", "/" ), f"{other}/" )
-            line = self.line( wrapped, there )
-            echo( f"  > {line}" )
-            code = box.guest( line ).returncode
-            wanted = [ *( pull or [ ] ), *self.fetch ]
-            if wanted:
-                echo( f"  fetch <- {self.via.host}:{there} [{', '.join( wanted )}]" )
-                box.fetch( wanted, there )
-            return code
-        except VmError as err:
-            echo( f"  {err}" )
-            return 1
-        except subprocess.CalledProcessError as err:
-            echo( f"  could not copy the project in: {err}" )
-            return 1
+        # Everything on the box goes through its agent ( `cli.guest`, ADR 0009 ): no cmd.exe line.
+        raise RuntimeError( "a Windows box is reached through its agent ( errand run, errand shell )" )
 
 
 def with_venv( env: dict ) -> dict:

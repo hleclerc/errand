@@ -91,8 +91,12 @@ def session( req: dict ) -> int:
             # Several sessions at once: each case is said as one block, or nobody could read them.
             sys.stdout = buf
         try:
-            with queue.claim( { **e.resources, **ask.resources },
-                              exclusive = e.traits[ "exclusive" ] or ask.exclusive,
+            asked = { **e.resources, **ask.resources }
+            # In an allocation errand holds, what says nothing of its needs takes all of it ( ADR 0009 ):
+            # what runs there is exclusive by default, and shares only what it declares.
+            whole = bool( queue.in_allocation() ) and not asked
+            with queue.claim( asked,
+                              exclusive = e.traits[ "exclusive" ] or ask.exclusive or whole,
                               label = ask.label or f"{e.file.name}::{e.name}", enabled = not known.no_queue,
                               echo = lambda m: print( dim( m ), flush = True ) ) as granted:
                 handed = { **granted.env(), **granted.handed_down() } if granted else { }
@@ -100,7 +104,7 @@ def session( req: dict ) -> int:
                 status, error, hint = run_case( e, p.modules, root = root, out_root = out_root,
                                                 overrides = values, env_name = env.name, tags = tags,
                                                 version = __version__, selectors = p.selectors, ask = ask,
-                                                handed = handed, devices = devices )
+                                                handed = handed, devices = devices, marks = True )
         finally:
             sys.stdout = kept
         say( { "op": "ran", "case": [ i, j ], "entry": _entry( e, root ), "status": status,

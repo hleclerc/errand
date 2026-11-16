@@ -352,6 +352,49 @@ if test( "through the hub: two commands, one agent, one stream" ):
         assert len( hubs ) == 1 and ( hubs[ 0 ] / "sock" ).exists(), "the hub did not stay"
 
 
+if test( "a bridge that never answers goes when the command that waited for it goes ( ADR 0009 )" ):
+    with scratch() as home, scratch() as d:
+        env = { **os.environ, "HOME": home, "ERRAND_HUB_KEEP_ALIVE": "30" }
+        pid = Path( d ) / "pid"
+        # an allocation still in Slurm's queue: the bridge says nothing, for long
+        waiter = ( f"import os, sys\nsys.path.insert( 0, {str( ROOT )!r} )\nos.environ[ 'ERRAND_AGENT' ] = 'hub'\n"
+                   f"from errand import agents\n"
+                   f"agents.open( {{ 'kind': 'cmd', 'id': 'here:never', 'keep_alive': 5,"
+                   f" 'argv': [ 'sh', '-c', 'echo $$ > {pid}; exec sleep 60' ] }} )\n" )
+        client = subprocess.Popen( [ sys.executable, "-c", waiter ], env = env, stdout = subprocess.DEVNULL,
+                                   stderr = subprocess.DEVNULL )
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline and not ( pid.exists() and pid.read_text().strip() ):
+            time.sleep( 0.1 )
+        bridge = int( pid.read_text() )
+        assert alive( bridge ), "the bridge did not start"
+        client.kill()
+        client.wait()
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and alive( bridge ):
+            time.sleep( 0.2 )
+        assert not alive( bridge ), "the hub kept waiting for an agent nobody wants any more"
+
+
+if test( "without a hub, a bridge goes with the command that owns it, stopped by a TERM ( ADR 0009 )" ):
+    import signal
+    with scratch() as d:
+        pid = Path( d ) / "pid"
+        waiter = ( f"import os, sys\nsys.path.insert( 0, {str( ROOT )!r} )\nos.environ[ 'ERRAND_AGENT' ] = 'direct'\n"
+                   f"from errand import agents\n"
+                   f"agents.open( {{ 'kind': 'cmd', 'id': 'here:never', 'keep_alive': 5,"
+                   f" 'argv': [ 'sh', '-c', 'echo $$ > {pid}; exec sleep 60' ] }} )\n" )
+        client = subprocess.Popen( [ sys.executable, "-c", waiter ], stdout = subprocess.DEVNULL,
+                                   stderr = subprocess.DEVNULL )
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline and not ( pid.exists() and pid.read_text().strip() ):
+            time.sleep( 0.1 )
+        bridge = int( pid.read_text() )
+        client.send_signal( signal.SIGTERM )
+        assert client.wait( timeout = 10 ) == -signal.SIGTERM, "it should still die of the TERM"
+        assert gone( bridge ), "the bridge outlived the command that owned it"
+
+
 if test( "a hub that goes takes its directory with it once its sources were replaced, not before" ):
     from errand.agents import hub as H, upstream as U
     with scratch() as d:
@@ -501,7 +544,6 @@ if test( "a socket whose path is too long for the platform is reached through a 
 
 if test( "what a process leaves its owner to do on a stop is done: by its agent, and by the next one for an orphan" ):
     import signal
-    from errand import layers as L
     agents = fresh()
     with scratch() as d:
         # a stand-in scancel, which says it was called, on the PATH of what the agent starts
@@ -512,8 +554,9 @@ if test( "what a process leaves its owner to do on a stop is done: by its agent,
                                                    f"echo $$ > {d}/srun; while :; do sleep 0.1; done\n" )
         ( Path( d ) / "bin" / "srun" ).chmod( 0o755 )
         env = { "PATH": f"{d}/bin:{os.environ[ 'PATH' ]}" }
-        line = L.Slurm( time = "5" ).wrap( L.Command( [ "x" ] ), L.Context( root = Path( d ) ) ).argv
-        name = line[ line.index( "--job-name" ) + 1 ]
+        # a process that registers its cancel with its owner ( ADR 0009 ), then waits
+        name = "errand-test"
+        line = [ "sh", "-c", f'echo "$(command -v scancel) --name={name}" > "$ERRAND_PROC_DIR/cancel"; exec srun' ]
         conn = agents.open( local( Path( d ) / "a" ) )
         pid = agents.start( conn, line, env = env )
         srun = wait_for( f"{d}/srun" )

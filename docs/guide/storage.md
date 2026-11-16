@@ -5,14 +5,14 @@ errand writes in three kinds of places, on every machine it works on:
 | place | what | size |
 |---|---|---|
 | **the project**: `errand-outputs/` at its root ( over there, in the project's copy ) | every run's record, what was built, errand's bookkeeping | grows with use |
-| **per user**: `~/.cache/errand/`, or `$ERRAND_CACHE_DIR` | errand's own sources and, if needed, a Python for itself; sockets, locks and pids of what is running | a few MB, plus a Python if errand made one |
-| **per machine**: a directory in `$XDG_RUNTIME_DIR`, else the temporary directory | the claims of [machine sharing](./machine) | a few files |
+| **per user**: `~/.cache/errand/`, or `$ERRAND_CACHE_DIR` | errand's own sources and, if needed, a Python for itself; the agents, the hub, warm allocations and virtual machines; the list of machines work was sent to | a few MB, plus a Python if errand made one |
+| **per machine**: `errand-queue-<uid>-<host>/` in `$XDG_RUNTIME_DIR`, else the temporary directory | the claims of [machine sharing](./machine) | a few files |
 
 Then come the environments your layers build: a micromamba environment, a venv, a container
 image. They go where the declaration says, and each layer has a parameter to choose that.
 
 Everything that grows belongs to a project, so you choose where it goes. The per-user directory holds
-only what is live, and cleans itself up ( see [leaving nothing behind](./agents#leaving-nothing-behind) ).
+only what is live, and cleans itself up ( see [What is running](./status) ).
 
 ## The project: `errand-outputs/`
 
@@ -23,7 +23,7 @@ errand-outputs/
   state/      errand's bookkeeping: plans, history, the output kept for `errand attach`
 ```
 
-What each holds is in [Where the output goes](./output#what-else-is-on-disk).
+What each holds is in [Results and records](./output).
 
 Three settings move it, from the broadest to the most specific:
 
@@ -71,10 +71,24 @@ Each layer that builds something says where it goes:
 
 ## The per-user directory: `~/.cache/errand/`
 
-On a machine reached by `Ssh`, errand puts its sources here ( about 1 MB per checkout that asked ). If
-the machine has no usable Python, it also makes one here for itself, with `uv` and maybe the uv it
-fetched first. That is tens of MB, once. The rest is live: the directories of the agents and of the
-hub, a warm Slurm allocation, the virtual machines that are booted. These go away by themselves.
+```text
+~/.cache/errand/
+  src/<key>/         errand's sources, on a machine reached by Ssh: about 1 MB per checkout that sent them
+  python/            a Python for errand alone, when the machine had no usable one
+  uv/  uv-python/    the uv errand fetched to make it, and the Python uv downloaded
+  agents/<name>/     one directory per agent: its socket, its lock, what it started
+  hub-<key>/         the hub that keeps the connections of this machine's commands
+  alloc/<name>/      a Slurm allocation kept warm, on the cluster
+  vm/  vm-agent/     the virtual machines booted from here: state, locks, the keeper
+  ledger/            the machines this one sent work to: where `errand status` looks
+  seen/              one link per run made on this machine, to the run's directory
+```
+
+The sources are small. The Python errand may make for itself is tens of MB, once. The rest is live
+and goes away by itself: an agent with nothing to do stops, a warm allocation is released, a
+machine nobody used for a day leaves nothing here, and a machine not reached for two weeks is no
+longer asked. Setting up a [`WindowsBox`](./layers/windows-box) also leaves an `msys2-rsync/`: the rsync
+it installs on the Windows machine, downloaded once.
 
 By default it is in the home directory, on purpose: on a cluster, the home is what the login node
 and the compute nodes share, so what errand finds or makes on the login node is what a job uses on

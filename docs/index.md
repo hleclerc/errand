@@ -3,15 +3,15 @@ layout: home
 
 hero:
   name: "errand"
-  text: "Your work, in any environment"
-  tagline: "A conda or uv env, a container, another machine over ssh, a Slurm allocation, any stack of them — errand builds and updates each place from what it declares, syncs your files there and back, and runs whatever you would have typed."
+  text: "Run it there as if it were here"
+  tagline: "Same command, same output in your terminal, Ctrl-C included, whether “there” is a container, a server over ssh, a Slurm allocation or a Windows VM. errand sets the place up, syncs the files both ways, and cleans up after itself."
   actions:
     - theme: brand
-      text: "Get started"
+      text: "Quickstart"
       link: /guide/start
     - theme: alt
-      text: "Tutorials"
-      link: /tutorials/
+      text: "What errand is"
+      link: /guide/what-is-errand
     - theme: alt
       text: "GitHub"
       link: https://github.com/hleclerc/errand
@@ -19,132 +19,110 @@ hero:
 features:
   - icon: 🧭
     title: Any stack of layers
-    details: "micromamba, uv, Apptainer, ssh, Slurm, a Windows VM… Apptainer in Slurm over ssh is three lines. Files go there and come back."
+    details: "A conda or uv env, Apptainer or Docker, a server over ssh, a Slurm allocation, a Windows VM. Apptainer in Slurm over ssh is three lines."
     link: /guide/environments
     linkText: Environments
   - icon: 🔄
-    title: Automatic builds and installs
-    details: "The conda env from its requirements, the Apptainer or Docker image from its recipe: built on first use, rebuilt when what it declares changes."
+    title: Built from what you declare
+    details: "The env from its requirements, the image from its recipe: built on first use, updated when the declaration changes. What already exists is adopted, never rebuilt."
     link: /guide/upkeep
     linkText: Keeping them current
-  - icon: ⚡
-    title: Warm between commands
-    details: "The first run leaves agents behind. The next one over ssh takes a second, not eight; on a cluster, it skips the queue."
-    link: /guide/agents
-    linkText: Fast, and nothing lost
+  - icon: 📦
+    title: Files there and back
+    details: "The project is synced before the run. What you ask for comes back after: a directory, or an output directory per run."
+    link: /guide/output
+    linkText: Results and records
+  - icon: 🧹
+    title: Nothing left behind
+    details: "errand status lists what runs on every machine you sent work to. Ctrl-C stops it through every layer. What an agent leaves when it dies, the next one stops."
+    link: /guide/status
+    linkText: What is running
   - icon: 💻
     title: Close the laptop
     details: "The work goes on over there. errand attach picks it up, results included. --batch gives the shell back at once."
-    link: /guide/agents#close-the-laptop
-    linkText: Close the laptop
-  - icon: 🧩
-    title: Name a target, errand finds the tool
-    details: "A script, a binary, a command, a test... errand reads the content to pick the right tool (e.g. python, pytest, cargo, Catch2)"
-    link: /guide/running
-    linkText: Running it
-  - icon: 🔒
-    title: Resource management
-    details: "-x for a timing nothing disturbs, --cpus and --gpus for a share. What is only kept warm gives way."
-    link: /guide/machine
-    linkText: Sharing the machine
+    link: /guide/detached
+    linkText: Let it run
+  - icon: ⚡
+    title: Warm between commands
+    details: "Connections, allocations and imports are kept for a while, so the next command starts faster. They give way when someone needs the room."
+    link: /guide/agents
+    linkText: Agents
 ---
 
-## One command, through every layer
+## What you would type by hand
 
-Describe a place once, as a stack read from the outside in — *that machine, an allocation on it, a
-container, your command*:
+::: code-group
+
+```bash [By hand]
+rsync -az --exclude .git ./ gpu-box:~/proj/
+ssh gpu-box
+  cd ~/proj
+  salloc -p gpu --gres=gpu:1 -t 2:00:00
+  srun apptainer exec --nv containers/cuda.sif python train.py --lr 1e-3
+  # ...the laptop sleeps, the ssh drops: is it still running?
+exit
+rsync -az gpu-box:~/proj/out/ ./out/
+# a week later: what did I leave running on gpu-box?
+ssh gpu-box 'ps -u $USER; squeue -u $USER'
+```
+
+```bash [With errand]
+errand run --env cluster --pull out python train.py --lr 1e-3
+errand attach          # the laptop slept: pick it up again
+errand status          # what runs, on every machine
+```
+
+:::
+
+The place is declared once, in a file you version:
 
 ```python
 # errand-envs.py
 import errand
 
-errand.envs[ "local" ]   = errand.Env( [ errand.Micromamba( "myproject", python = "3.13", requirements = "requirements.txt" ) ] )
-errand.envs[ "cluster" ] = errand.Env( [ errand.Ssh( host = "gpu-box", root = "~/errand/myproject" ),
+errand.envs[ "cluster" ] = errand.Env( [ errand.Ssh( host = "gpu-box", root = "~/proj" ),
                                          errand.Slurm( partition = "gpu", gpus = 1, time = "2:00:00" ),
-                                         errand.Apptainer( image = "containers/cuda.sif", recipe = "containers/cuda.def" ) ],
-                                       cuda = True )
+                                         errand.Apptainer( image = "containers/cuda.sif", recipe = "containers/cuda.def" ) ] )
 ```
 
-Then go there:
+<Term scene="stack" caption="errand run --env cluster train.py. The ssh, the allocation and the container are the three layers declared above." />
 
-```bash
-errand run --env local pytest                    # micromamba env created and installed first
-errand run --env cluster python train.py         # pushed, allocated, contained, run
-errand run --env cluster --pull out make results # ...and out/ comes back
-errand run --grid=, --env local,cluster ./bench           # in both places
-errand run --batch --env cluster train.py        # and give me the shell back
-errand shell --env cluster                       # be let in, to look around
-errand attach                                    # the laptop closed: pick the run up again
-```
+## Three things you stop doing
 
-The second command to the cluster does not log in again: the [agents](/guide/agents) the first one
-left are still there, and the layers are already entered.
+**Doing the dance.** `errand run --env cluster python train.py` pushes the project, gets an
+allocation, enters the container, runs, and brings `out/` back with `--pull out`. The output is in
+your terminal as it happens.
 
-<Term scene="stack" caption="errand run --env cluster train.py. The ssh, the allocation and the container are the three layers declared above; setting them up, entering them and fetching the files back is errand's part." />
-
-## What you run is yours
-
-errand does not need to know your language: what follows `errand run` is what you would have typed,
-read from the command line alone.
-
-::: code-group
-
-```bash [A command]
-errand run --env cluster make check
-errand run --env cluster ./run_experiment.sh --seed 3
-errand run -x ./my_benchmark             # alone on this machine while it runs
-errand run -o --env cluster ./simulate   # a directory per run, $ERRAND_OUT_DIR, brought back
-```
-
-```bash [pytest]
-errand run --grid=, --env local,cluster 'tests/**::*'   # one entry per test, in both places
-errand run tests/test_api.py::test_ok          # one of them
-errand run -e '!slow' 'tests/**::*'            # @pytest.mark.slow is an entry tag
-```
-
-```bash [C++ · Catch2]
-errand run 'cpp/**::*'                     # built once, in the place, then each case
-errand run cpp/test_geometry.cpp::area     # one Catch2 case, by name
-errand run --env cluster 'cpp/**::*'       # compiled and run over there
-```
-
-```bash [Rust · cargo]
-errand run 'src/**::*'          # one entry per test target
-errand run --env cluster 'src/**::*'
-```
-
-```python [errand's own entries]
-# bench/solvers.py -- for work with no framework of its own: errand run 'bench/solvers.py::*'
-from errand import track, Param
-
-if p := track( "cost", n = Param( 1000, help = "nb of points" ) ):
-    p.results[ "residual" ] = solve( p.n )
-```
-
-:::
-
-Every run is recorded — what ran, where, when, how it ended, what it said — in `errand-outputs/`,
-which is what `errand status`, `errand watch` and the screen read. Each run has a directory you can
-open, at a path you could have written down in advance, and `-o` lets it write its own files there:
+**Wondering what is still running.** `errand status` reads every machine you sent work to and
+lists what runs there, what waits in a queue, and what is kept warm:
 
 ```text
-errand-outputs/runs/<file or command>/<case>/
-  2026-09-25_18h04m11-cluster@gpu-box/result.yaml
-  2026-09-25_18h04m11-local@laptop/result.yaml
-  latest -> the newest of them
-  summary.yaml            <- one row per run, and the extents across them
+running   ( on mac, gpu-box: this machine, and every machine work was sent to from it )
+  proj
+    gpu-box      3f2a9c1e  run train.py  --env cluster  12 min  running
+  other-proj: 1 waiting on gpu-box
+  gpu-box: windows vm 80103674 ready, 8 cpus 16G
 ```
 
-## Where to go next
+**Babysitting the connection.** Close the laptop: the work goes on over there.
+`errand attach` shows the output from the start, waits for the end, and brings the results back.
 
-- **Never used it** → [What errand is](/guide/what-is-errand), then [Getting started](/guide/start).
-- **Want to see the layers work** → [Four environments](/tutorials/environments), then
-  [A run over two machines](/tutorials/two-machines).
-- **Have a pytest, Catch2 or cargo project** → [Adopt an existing suite](/tutorials/adopt-a-suite).
-- **Looking for a flag** → [the command-line reference](/reference/cli).
+## You stay in control
+
+- What runs is **the command you would have typed**. errand does not need to know your language.
+- `-v` prints **every command errand starts**: the ssh, the rsync, the `sbatch`, the `apptainer exec`.
+- `errand shell --env cluster` **lets you in**, in the allocation, in the container.
+- An environment that already exists is **adopted as it is**, never rebuilt behind your back.
+- Everything is **plain files**: `errand-envs.py` is Python, records are in `errand-outputs/`.
+- **Nothing to install** on the other machines.
+
+→ [What errand is](/guide/what-is-errand) · [Quickstart](/guide/start) ·
+[Tutorials](/tutorials/)
+
+errand also runs pytest, Catch2 and cargo suites test by test, in every environment:
+[Running a suite](/guide/runners/).
 
 ::: warning Status
-Everything documented here works and is covered by errand's own suite. It is not released yet: the
-API may still move — in particular errand's own entries, which are being reworked into a protocol
-any program can follow.
+Everything documented here works and is covered by errand's own suite. It is not released as
+stable: the API may still move.
 :::

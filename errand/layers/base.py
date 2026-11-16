@@ -164,7 +164,7 @@ def _how( quiet, capture, input ) -> dict:
         # `-v` keeps what a probe says: when it fails, that is the why.
         how.update( stdout = subprocess.DEVNULL, stderr = subprocess.DEVNULL )
     if input is not None:
-        how.update( input = input, text = True )
+        how.update( input = input, text = not isinstance( input, bytes ) )       # bytes in, bytes out
     elif capture or quiet:
         # Asked, not watched: it must not read the terminal's keystrokes --
         # ssh would, and swallow what was typed for something else.

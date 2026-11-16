@@ -23,6 +23,7 @@ import sys
 import time
 from pathlib import Path
 
+from ..agents import arrival
 from .common import _alive, _lock, _read, BOOT_TIMEOUT
 
 
@@ -73,6 +74,7 @@ def use( request: dict ) -> int:
         use_lock = _lock( live / "use.lock", block = False )
         if use_lock is None:
             say( state = "waiting" )             # another command uses it: they take turns
+            arrival.waiting( f"windows vm {request[ 'name' ][ : 8 ]}: another command uses it", key = "vm" )
             use_lock = _lock( live / "use.lock" )
     finally:
         start.close()
@@ -92,6 +94,7 @@ def _wait_ready( live: Path ) -> bool:
     while True:
         state = _read( live / "state", "stopped" )
         if state == "ready":
+            arrival.arrived( key = "vm" )
             say( ready = int( _read( live / "port", "0" ) ) )
             return True
         if not _alive( _read( live / "keeper.pid" ) ) or state in ( "stopped", "failed", "orphaned" ):
@@ -99,6 +102,7 @@ def _wait_ready( live: Path ) -> bool:
             return False
         if state != said:
             say( state = state )
+            arrival.waiting( f"windows vm {live.name[ : 8 ]} {state}", key = "vm" )      # ADR 0009
             said, since = state, time.monotonic()
         if state == "booting" and time.monotonic() - since > BOOT_TIMEOUT:
             say( failed = f"windows did not answer within {BOOT_TIMEOUT // 60} minutes" )

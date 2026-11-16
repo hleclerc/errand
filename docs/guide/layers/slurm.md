@@ -3,16 +3,14 @@
 ```python
 Slurm( partition = None, nodes = None, cpus = None, gpus = None,
        time = None, account = None, nodelist = None, qos = None, watch = None,
-       ntasks_per_node = None, mpi = None, extra = [ ], keep_alive = None )
+       ntasks_per_node = None, mpi = None, extra = [ ], keep_alive = None, allocation = None )
 ```
 
-`srun` while you wait, `sbatch` under [`--batch`](../detached) — which *is* the detachment: it
-returns as soon as the job is queued.
-
-A job you wait for gets a name (`errand-…`), and the agent that runs `srun` (or `salloc`) is told
-how to cancel it. Ctrl-C, a lost connection, or that agent being killed then ends with a `scancel`
-of that name, so no allocation outlives its command. Name the job yourself (`extra = [ "--job-name",
-… ]`) and cancelling it is yours.
+While you wait, every command runs in an **allocation with an agent on its first node**, shared by
+the commands that fit in it (below). Under [`--batch`](../detached) it is `sbatch`, which *is* the
+detachment: it returns as soon as the job is queued. There is no bare `srun`: what runs in the
+allocation is owned by its agent, stopped by it, and listed by `errand status`.
+→ [ADR 0009](https://github.com/hleclerc/errand/blob/main/docs/adr/0009-arrivals.md)
 
 Not an interpreter-selecting layer: it puts the command inside an allocation and leaves it otherwise
 alone, so it stacks in front of a container or an environment exactly as `Ssh` does in front of it.
@@ -86,8 +84,8 @@ With ranks, what the work asks for is per rank: `cpus` → `--cpus-per-task`, `g
 `--gpus-per-task`, `ram` → `--mem-per-cpu`, with `--ntasks` the number of ranks — and the
 environment's own `cpus` and `gpus` are per rank too.
 
-errand runs once in that allocation, as one task on its first node ( `salloc … srun --nodes 1
---ntasks 1 --overlap`, or the batch script under `--batch` ), and starts the ranks with an `srun` of
+errand runs once in that allocation, as one task on its first node ( through the allocation's
+agent, or the batch script under `--batch` ), and starts the ranks with an `srun` of
 its own, over the whole allocation, without the variables of the step it runs in. The preparation
 stays one task.
 
@@ -99,20 +97,19 @@ errand.envs[ "two-nodes" ] = errand.Env( [ errand.Ssh( host = "login.hpc", root 
 
 ## Waiting from afar: `watch`
 
-`srun` waits over the connection that started it, for the whole time in the queue and then in the
-job. Where that connection does not last as long ( a chain of ssh hops cut after two hours ),
+An allocation is waited for over the connection that started it, for the whole time in the queue. Where that connection does not last as long ( a chain of ssh hops cut after two hours ),
 `watch = 300` waits differently: the job is submitted with `sbatch`, and then asked about every
 5 minutes at most — sooner at first, the intervals doubling from 10 s — each time over a connection
 of its own. What it writes is shown as it comes, and errand returns with its return code once it is
-over, having brought back what the run wrote, as it would after `srun`.
+over, having brought back what the run wrote.
 
 - A connection that drops loses one question, never the job.
-- ctrl-C cancels the job, as it would cancel an `srun`.
+- ctrl-C cancels the job.
 - A job killed by slurm ( its time ran out, it was cancelled ) fails, with slurm's word for why.
 - It is one job: preparing and running happen in the same allocation, sized from what the layer
   declares rather than from the plan — so it needs a `time`, here or
   from `--time`, rather than the partition's default, which is its longest more often than not.
-- `--batch` still lets go at once, and `errand shell` still goes through `srun`.
+- `--batch` still lets go at once, and `errand shell` still goes through an allocation and its agent.
 
 A command run inside the job that calls errand again ( a script driving many runs ) is inside
 that environment already, and runs there directly: one allocation for all of it.
@@ -130,8 +127,8 @@ second.
 
 Without `keep_alive`, the allocation is held for **one minute**: long enough for the run to find the
 allocation its preparation had, and for the next command typed right after. One `errand run` is then
-one job, not one for the preparation and one for the run. `keep_alive = 0` asks for a job per
-command, as `srun` alone would; `watch` is one job of its own, and is never held.
+one job, not one for the preparation and one for the run. `keep_alive = 0` asks for an allocation per
+command, given back seconds after it ends; `watch` is one job of its own, and is never held.
 
 The allocation is named after the machine and the declaration, not after the environment. Two
 environments that go through the same `Ssh` and the same `Slurm` and then differ ( a venv, a
@@ -145,9 +142,28 @@ it: ranks fit when `nodes × ntasks_per_node` is enough for them.
 
 A command runs in it only if it fits: its ranks within the allocation's tasks, its cores and cards
 per task within those declared, `exclusive` only if the allocation is, its `--time` within what the
-job has left. Otherwise it gets a job of its own, sized for it, and the warm allocation is given back
-first if nothing runs in it, since it may hold the very nodes. No `srun` ever asks more than was
-allocated.
+job has left. Otherwise it gets an allocation of its own, sized for it and shared in turn, and the
+warm allocation is given back first if nothing runs in it, since it may hold the very nodes.
+
+**What runs in an allocation takes all of it, unless it says what it needs.** errand's queue, on
+the node, carves the allocation: an entry that declares nothing claims the whole of it, so two such
+commands run one after the other; an entry that declares `cpus = 4` or `gpus = 1` claims that
+much, and another runs beside it. A command that waits for room says so in `errand status`.
+
+**An allocation can be sized apart from its commands**, to land in a priority queue up to its
+threshold and run several computations in it:
+
+```python
+errand.Slurm( gpus = 1, qos = lambda s: "qos_gpu-dev" if s <= 7200 else "qos_gpu-t3",
+              allocation = { "time": "2:00:00" } )
+```
+
+Its keys are this layer's own (`time`, `gpus`, `cpus`, `nodes`, ...); the qos is computed from its
+time. Given back after `keep_alive` without use, it costs only the time it was used.
+
+**Nobody waiting, it goes.** Each command waiting for an allocation keeps a lease beside it
+(`wanted-<pid>`, touched every 2 s). An allocation that starts after its waiters are gone (a Ctrl-C
+during a long queue) finds no fresh lease, and is given back at once.
 
 Once nothing has used it for `keep_alive`, the agent goes, the job ends, and the allocation is
 released; at the latest, its `time` releases it. On a cluster other people share, a short

@@ -8,6 +8,12 @@ them for cmd.exe -- so that what it starts has all of that; and sessions run
 there like anywhere else. What they write comes back to the machine that runs
 QEMU, then here.
 
+The project crosses by manifest ( ADR 0006 ), from here straight into the guest and back, through an
+agent of the guest that no layer starts ( `host_target` ): the copy on the machine that runs QEMU
+plays no part, and the guest needs no rsync. errand's sources go first, as a tar on the stdin of one
+cmd.exe line. `transfer = "rsync"` ( on the `Ssh`, or `ERRAND_TRANSFER` ) keeps the old way, through
+that copy and MSYS2's rsync, until a guest has been seen to work without it.
+
 The stream to the guest agent goes through the host agent of the machine that
 runs QEMU, as `ssh -p <port> Administrator@127.0.0.1 …` from there: no new
 login on that machine, one on the guest's sshd per stream.
@@ -20,17 +26,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import posixpath
+import subprocess
 from pathlib import Path
 
 from .. import agents, bootstrap, config, layers as L
 from ..agents import upstream as U
 from .sessions import Session
-
-
-def usable( env ) -> bool:
-    """A guest errand can run in: every one has a Python ( ADR 0008 )."""
-    return env.vm is not None
 
 
 class Guest:
@@ -50,6 +53,7 @@ class Guest:
         self.key = bootstrap.sources_key()
         self.src = f"C:/errand/src/{self.key}"
         self.boot = f"{self.src}/errand/_boot.py"
+        self.by_rsync = by_rsync( where.ssh )
 
     # -- holding the machine ---------------------------------------------------
 
@@ -67,15 +71,20 @@ class Guest:
             if self.host.shell( ready_line( self.name, keyed = True ), quiet = True ).returncode:
                 raise VmError( f"windows is not installed yet {self.said_where} -- errand setup <name>" )
             self.m = Machine( self.host, Facts.of( self.host ), self.name )
-            need( self.m.facts, ( "rsync", ), package_hint( self.m.facts, [ "rsync" ] ) )
+            if self.by_rsync:
+                need( self.m.facts, ( "rsync", ), package_hint( self.m.facts, [ "rsync" ] ) )
         self._held = self.m.using( self.layer.booted(), self.echo )
         self._held.__enter__()
         try:
-            self.echo( f"  copy in -> windows:{self.there}" )
-            self.m.push( self.there )
-            for other in self.layer.also:
-                self.m.push( posixpath.normpath( f"{self.there}/{other}" ), f"{other}/" )
-            self._ship()
+            if self.by_rsync:
+                self.echo( f"  copy in -> windows:{self.there}" )
+                self.m.push( self.there )
+                for other in self.layer.also:
+                    self.m.push( posixpath.normpath( f"{self.there}/{other}" ), f"{other}/" )
+                self._ship()
+            else:
+                self._ship_tar()
+                self._push_sync()
         except BaseException:
             self._held.__exit__( None, None, None )
             raise
@@ -103,10 +112,63 @@ class Guest:
         if rsync_failed( got ):
             raise VmError( f"could not copy errand into windows:\n{( got.stderr or '' ).strip()[ -800 : ]}" )
 
+    def _ship_tar( self ):
+        """errand's sources into the guest: a tar of this checkout's, on the stdin of one cmd.exe line, unpacked by
+        Windows' own `tar` beside their place and moved into it. Nothing crosses when the guest has them already: a
+        sources key names one content."""
+        from ..vm.common import VmError
+        got = self.m.guest( unpack_line( self.src ), input = bootstrap.package_tar(), capture = True )
+        if got.returncode:
+            said = ( ( got.stderr or b"" ) + ( got.stdout or b"" ) )
+            said = said.decode( errors = "replace" ) if isinstance( said, bytes ) else said
+            raise VmError( f"could not copy errand into windows:\n{said.strip()[ -800 : ]}" )
+
+    def _push_sync( self ):
+        """The project, and its `also` checkouts, from here into the guest, by manifest through the guest's own agent."""
+        from ..agents import syncop
+        from ..vm.common import VmError
+        from .. import sync as S
+        from ..layers import gateways
+        conn = self.host_conn()
+        cache = config.state( self.where.root ) / "sync"
+        for rel in [ None, *self.layer.also ]:
+            local = self.where.root if rel is None else Path( os.path.normpath( self.where.root / rel ) )
+            there = self.there if rel is None else posixpath.normpath( f"{self.there}/{rel}" )
+            self.echo( f"  sync push -> windows:{there}" )
+            try:
+                r = syncop.push( conn, local, there, gateways.selection( local, follow_links = True ),
+                                 src_cache = cache / f"guest-{hashlib.sha1( str( local ).encode() ).hexdigest()[ : 10 ]}.json",
+                                 where = "windows", say = self.echo )
+            except S.SyncError as err:
+                raise VmError( f"could not copy the project into windows: {err}" ) from None
+            for name in r.deleted[ : 20 ]:
+                self.echo( f"    deleted on windows: {name}" )
+            if len( r.deleted ) > 20:
+                self.echo( f"    ...and {len( r.deleted ) - 20} more" )
+            if r:
+                self.echo( f"    {len( r.sent )} sent ( {r.bytes / 1e6:.1f} MB ), {len( r.touched )} touched, "
+                           f"{len( r.deleted )} deleted" )
+
     # -- the agent there, and sessions ------------------------------------------
 
+    def _keep( self ) -> int:
+        return int( getattr( self.env, "keep_alive", None ) or U.KEEP_ALIVE )
+
+    def _target( self, name: str, guest: str ) -> dict:
+        """The stream to an agent of the guest, started there by `guest` ( a cmd.exe line ), from here."""
+        on_host = L.sh( [ *self.m._reach( "ssh", "-p" ), "-T", self.m.address, guest ] )
+        ssh = self.where.ssh
+        if self.box:
+            argv = [ *self.m._reach( "ssh", "-p" ), "-T", self.m.address, guest ]
+        elif ssh is None:
+            argv = [ "sh", "-c", on_host ]
+        else:
+            argv = [ *U.rsh_argv( ssh.host, ssh.options, via = None ), ssh.host, on_host ]
+        return { "kind": "cmd", "id": f"{self.said_where}:{name}:{self.m.port}", "argv": argv, "keep_alive": self._keep() }
+
     def target( self ) -> dict:
-        keep = int( getattr( self.env, "keep_alive", None ) or U.KEEP_ALIVE )
+        """The guest's environment agent: started through the layer and those after it ( `cd`, vcvars, variables )."""
+        keep = self._keep()
         ctx = L.Context( root = Path( self.there ), tags = self.tags, remote = True )
 
         def line_for( where_ ):
@@ -115,18 +177,19 @@ class Guest:
 
         digest = hashlib.sha1( f"{self.env.name}\0{line_for( '@' )}".encode() ).hexdigest()[ : 10 ]
         name = f"env-{self.key}-{digest}"
-        guest = line_for( f"C:/errand/agents/{name}" )
-        on_host = L.sh( [ *self.m._reach( "ssh", "-p" ), "-T", self.m.address, guest ] )
-        ssh = self.where.ssh
-        if self.box:
-            argv = [ *self.m._reach( "ssh", "-p" ), "-T", self.m.address, guest ]
-        elif ssh is None:
-            argv = [ "sh", "-c", on_host ]
-        elif agents.mode() == "hub":
-            argv = [ *U.rsh_argv( ssh.host, ssh.options ), ssh.host, on_host ]
-        else:
-            argv = [ "ssh", "-T", *L.ssh_options( ssh.options ), ssh.host, on_host ]
-        return { "kind": "cmd", "id": f"{self.said_where}:{name}:{self.m.port}", "argv": argv, "keep_alive": keep }
+        return self._target( name, line_for( f"C:/errand/agents/{name}" ) )
+
+    def host_target( self ) -> dict:
+        """An agent of the guest that no layer starts, as the host agent of an `Ssh`: what files cross through. It
+        needs nothing of the project, which is not there yet when it starts."""
+        name = f"host-{self.key}"
+        return self._target( name, subprocess.list2cmdline(
+            [ "python", self.boot, "-m", "errand.agents", "connect", f"C:/errand/agents/{name}", str( self._keep() ) ] ) )
+
+    def host_conn( self ):
+        if getattr( self, "_host_conn", None ) is None:
+            self._host_conn = agents.open( self.host_target() )
+        return self._host_conn
 
     def start( self, request: dict, child: dict ):
         request = { **request, "root": self.there }
@@ -137,7 +200,30 @@ class Guest:
                               cwd = self.there, env = child, store = f"{self.there}/{config.state_rel( Path( self.there ) )}/procs" )
 
     def fetch( self, paths ):
-        if paths:
+        if not paths:
+            return
+        if self.by_rsync:
             self.echo( f"  fetch <- windows:{self.there} [{', '.join( paths )}]" )
             self.m.fetch( list( paths ), self.there )
+            return
+        from ..agents import syncop
+        from ..layers.base import WINDOWS
+        self.echo( f"  sync pull  <- windows:{self.there} [{', '.join( paths )}]" )
+        syncop.pull( self.host_conn(), self.there, self.where.root, [ Path( p ).as_posix() for p in paths ],
+                     where = "windows", say = self.echo, links = not WINDOWS )
+
+
+def by_rsync( ssh = None ) -> bool:
+    """The old way into a guest ( MSYS2's rsync, through the copy on the machine that runs QEMU ), when asked for by
+    name: `ERRAND_TRANSFER=rsync`, or `transfer = "rsync"` on the `Ssh` before it. A sync otherwise ( ADR 0006 )."""
+    return ( os.environ.get( "ERRAND_TRANSFER" ) or getattr( ssh, "transfer", None ) or "sync" ).strip().lower() == "rsync"
+
+
+def unpack_line( src: str ) -> str:
+    """cmd.exe: a tar.gz of errand's package on stdin into `<src>/errand`, unless `<src>` has it already. Unpacked
+    beside it ( `.part` ), then moved into place: an interrupted copy is never taken for one."""
+    d = src.replace( "/", "\\" )
+    return ( f'if exist "{d}\\errand\\_boot.py" ( exit 0 ) else ( '
+             f'( if exist "{d}.part" rmdir /s /q "{d}.part" ) & ( if exist "{d}" rmdir /s /q "{d}" ) & '
+             f'mkdir "{d}.part\\errand" && tar -xzf - -C "{d}.part\\errand" && move "{d}.part" "{d}" >nul )' )
 

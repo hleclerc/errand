@@ -1,112 +1,91 @@
 # What errand is
 
-> **errand runs your work in any environment — a conda or uv env, a container, another machine
-> over ssh, a Slurm allocation, any stack of them — building and updating it from what it
-> declares, and syncing your files there and back.**
+> **Run it there as if it were here.** Same command, same output in your terminal, Ctrl-C included,
+> whether "there" is a container, a server over ssh, a Slurm allocation or a Windows VM. errand
+> sets the place up, syncs the files both ways, and cleans up after itself.
 
 An *errand* is a trip made on someone's behalf: go there, do the thing, come back with what it
-produced. You say what to run and where it may run; errand makes sure that place is ready, goes in
-— through ssh, a Slurm allocation, a container, whatever the way is — runs it, in several places at
-once if you ask, and brings back what you asked for.
+produced.
 
-What you run is **yours**: what follows `errand run` is what you would have typed — `make check`,
-`python train.py`, `./bench`, `pytest`. errand does not need to know what language it is in.
+## Who it is for
 
-## Environments, built and kept current
+You write code that computes: research, simulation, HPC, machine learning. It runs on your laptop,
+on a server or two at the lab, on a national cluster, and now and then on Windows to build a wheel.
+Each place has its own way in (ssh, `module load`, `sbatch`, a container, a conda env), and you
+know all of them by heart.
 
-This is the part that is hard to do by hand and tedious to do twice. An environment is a **stack of
-layers**: micromamba, conda, uv, a venv, Nix or Guix, `module load`, a Docker, Podman or Apptainer
-container, another machine over ssh, a Slurm or OAR allocation, a Windows virtual machine — in any
-combination. Read it outside in: *that machine, an allocation on it, a container, your command.*
+errand is for that work. It is not a production orchestrator (no Kubernetes, no Ansible), and it
+is not a new test runner.
 
-<Term scene="stack" caption="errand run --env cluster train.py: three layers, declared once, crossed by one flag." />
+## Stop babysitting your runs
 
-The shell script that does `ssh`, then `sbatch`, then `apptainer exec`, then rsyncs the results
-back — and that nobody else can run — is replaced by three lines in a file. And each line is more
-than a way in:
+What errand takes off your hands:
 
-- **It is built from what it declares.** A layer says what it needs — a Python version, a
-  `requirements.txt`, a channel list, a container recipe, a pip list — and the first run that needs
-  it creates it, installs into it, builds the image.
-- **It is kept current.** Before every run errand compares a fingerprint of the declaration with
-  what it last built, and brings the place up to date when they have drifted: a new pip spec, an
-  edited recipe. What already exists the first time errand meets it is adopted as it is — an
-  environment somebody has been working in for months is never the collateral of a first command.
-- **Files cross with the work.** Over `Ssh` the project is rsynced there before the command runs;
-  `--pull DIR` brings a directory back afterwards, `-o` gives each run an output directory over
-  there and fetches it, and `also` pushes the sibling checkouts the work needs.
-- **Several at once.** `--grid=, --env local,cluster` is two runs; a tag picks every environment that has
-  it, and one environment can cover several values of a tag.
+- **The way in.** ssh, then the allocation, then the container, then the env: declared once as a
+  [stack of layers](./environments), crossed by one flag, `--env cluster`.
+- **Setting the place up.** A layer declares what it needs (a Python version, a `requirements.txt`,
+  a container recipe), and errand builds it on first use, then updates it when the declaration
+  changes. → [Keeping them current](./upkeep)
+- **Moving files.** The project is synced there before the run; `--pull DIR` and `-o` bring back
+  what you ask for. → [Results and records](./output)
+- **Watching the connection.** Close the laptop: the work goes on, and `errand attach` picks it up.
+  → [Let it run](./detached)
+- **Paying the start again.** Connections, allocations, VMs and imports are kept warm for a while,
+  so the next command starts faster. → [Agents](./agents)
+- **Hunting what was left running.** `errand status` lists what runs on every machine you sent work
+  to; Ctrl-C stops it through every layer; what a crashed agent left, the next one stops.
+  → [What is running](./status)
+- **Taking turns on a machine.** `-x` keeps the machine to itself for a timing; `--cpus`, `--gpus`
+  take a share, and a card is assigned. → [Sharing a machine](./machine)
 
-→ [Environments](./environments), [Keeping them current](./upkeep), [Tags](./tags),
-[Running elsewhere](/guide/layers/ssh)
+## You stay in control
 
-## What you also get
+The usual objection is "I do this by hand, it works, and I don't want to lose control". errand
+hides nothing:
 
-Nothing to declare for any of it:
-
-- **The machine to yourself when it matters.** A queue per host, outside the process, shared by
-  every errand on the machine: `errand run -x ./bench` waits for what is running and holds
-  everything else back. A timing taken while something else was running is not a timing.
-  → [Sharing the machine](./machine)
-- **Warm between commands, and nothing lost.** The first command leaves agents behind, so the next
-  one does not log in, queue or import again. Close the laptop: the work goes on, and
-  `errand attach` picks it up. → [Fast, and nothing lost](./agents)
-- **Let it run.** `--batch` launches the work and gives the shell back; `errand status` and
-  `errand watch` say how it is going. → [Detached runs](./detached)
-- **A record of every run** — what ran, where, when, how it ended, what it said — in
-  `errand-outputs/runs/`, a directory per run whose path is computed from the work, the place and
-  the date, so that comparison between dates and machines falls out of the tree. With `-o`, the run
-  writes its own files there too.
-  → [Where the output goes](./output)
-- **One screen for all of it**: `errand tui`. → [The screen](./tui)
-
-## Suites, and errand's own entries
-
-A plain `errand run tests/` is a directory, not a command. `errand run 'tests/**::*'` is: the `::`
-hands the files to an **entry runner** — pytest, Catch2, cargo — which collects one entry per test
-and records each. A suite keeps everything that makes it itself: `pytest tests/` still works exactly
-as before, and a `@pytest.mark.slow` becomes an entry tag that `-e '!slow'` filters on.
-
-For work that has no framework of its own — a number to follow, a picture to look at — errand has
-a small declaration that sits beside the code, `if track( "cost" ):`. It is one more way to give
-errand something to run, not the way in.
-
-→ [Running it](./running), [Runners](/guide/runners/), [Writing entries](./declaring-work)
+- **What runs is your command.** What follows `errand run` is what you would have typed:
+  `make check`, `python train.py`, `./bench`. errand does not need to know your language.
+- **You can see every step.** `-v` prints every command errand starts, including the ssh, the
+  rsync, the `sbatch`, the `apptainer exec` and what it hands to an agent.
+- **You can get in.** `errand shell --env cluster` is a real terminal in the allocation, in the
+  container, in the env.
+- **Nothing is rebuilt behind your back.** An environment that exists the first time errand meets
+  it is adopted as it is. `errand setup --dry-run` shows what an update would run.
+- **It is all plain files.** The places are Python, in `errand-envs.py`. The records are YAML and
+  logs, in `errand-outputs/`. No database, no daemon to install, no account.
+- **Nothing to install over there.** errand brings itself to the other machines, and needs nothing
+  but a Python 3.8 or later, which it makes if the machine has none.
+- **Stop means stop.** Ctrl-C reaches the work wherever it runs. What errand keeps warm stops on its
+  own when unused, and `errand agents stop` stops it now.
 
 ## What it is not
 
-**It is not a build system.** errand compiles nothing itself. A runner that needs a build runs the
-command you already build with, once, before any of its entries. Your compiler, your flags and your
-layout stay yours.
+**Not a scheduler.** `Slurm` is a layer that asks Slurm for an allocation on your behalf; Slurm
+decides who gets the nodes. errand only shares out what it was given between your own commands.
 
-**It is not a replacement for your test runner.** What a suite gains is everything that happens
-*around* the run.
+**Not a build system.** errand compiles nothing itself. When a run needs a build, it runs the
+command you already build with.
 
-**It is not a scheduler.** Inside a Slurm, PBS, OAR or LSF allocation it does not queue at all —
-the scheduler has already decided what this process may have. Outside one, `Slurm` is a layer that
-*submits* to the scheduler for you.
+**Not a replacement for your test runner.** It can run a pytest, Catch2 or cargo suite test by
+test in every environment, and `pytest` keeps working as before. → [Running a suite](./runners/)
 
-**It does not decide what may be compared to what.** A matrix that spans a laptop and a cluster
-partition will produce numbers that are not comparable, and errand will not stop you. It records
-where each number came from; the judgement is yours.
+**Not a judge of what compares.** Numbers from a laptop and from a cluster are not comparable, and
+errand will not stop you. It records where each one came from.
 
 ## The shape of a project
 
-Nothing is required: `errand run make` works in an empty directory, in the interpreter and on the
-machine you started it from. Once you want to say *where* things run, files at the root say it —
-errand reads every `errand-*.py`:
+Nothing is required: `errand run make` works in an empty directory. Once you want to say *where*
+things run, files at the project root say it. errand reads every `errand-*.py`:
 
 ```
-errand-envs.py         the environments — versioned when it names no machine   ← errand init
-errand-project.py      runners, what a bare `errand run` runs, settings        ← errand init
-errand-vars.py         what only this machine knows — never versioned
-errand-outputs/        what errand did: every run, what it built, its bookkeeping
+errand-envs.py         the places: versioned when it names no machine   ← errand init
+errand-project.py      settings, what a bare `errand run` runs          ← errand init
+errand-vars.py         what only this machine knows (hosts, paths): never versioned
+errand-outputs/        what errand did: runs, builds, bookkeeping
 ```
 
 → [Configuration](./configuration)
 
 ## Next
 
-[Installing](./installing) · [Getting started](./start) · or look at the layers at work in
-[Four environments](/tutorials/environments).
+[Installing](./installing) · [Quickstart](./start) · [Four environments](/tutorials/environments)

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -67,10 +68,29 @@ def pid_runs( pid ) -> bool:
         return False
 
 
+ALLOCATION_MARK = "errand-allocation"
+
+
+def allocation_mark( **said ) -> str:
+    """The first line of a login node's hold on an allocation: who it is for, readable from its argv."""
+    import base64
+    return f": {ALLOCATION_MARK} {base64.urlsafe_b64encode( json.dumps( said ).encode() ).decode()}"
+
+
+def _allocation_mark( text: str ) -> dict:
+    import base64
+    got = re.search( ALLOCATION_MARK + r" ([A-Za-z0-9_=-]+)", text )
+    try:
+        return json.loads( base64.urlsafe_b64decode( got.group( 1 ).encode() ).decode() ) if got else { }
+    except ValueError:
+        return { }
+
+
 def describe( meta: dict ) -> dict:
     """What a person reads of a process: its project, what it does."""
     argv = [ str( a ) for a in meta.get( "argv" ) or [ ] ]
-    out = { "project": None, "what": " ".join( argv )[ : 160 ] }
+    line = " ".join( argv )
+    out = { "project": None, "what": line[ : 160 ] }
     if "errand.agents.ops" in argv and argv[ -2 : -1 ] == [ "session" ]:
         try:
             req = json.loads( argv[ -1 ] )
@@ -81,10 +101,25 @@ def describe( meta: dict ) -> dict:
         label = f" [{known[ 'label' ]}]" if known.get( "label" ) else ""
         out.update( project = req.get( "root" ), env = req.get( "env" ),
                     what = f"{req.get( 'verb', 'run' )} {target}{label}".strip() )
+    elif ALLOCATION_MARK in line:
+        # The login node's hold on a Slurm allocation ( `alive.Allocation.script` ), started through
+        # `rsh` with no directory: its first line says whose it is.
+        said = _allocation_mark( line )
+        out.update( project = said.get( "project" ), env = said.get( "env" ), kind = "allocation",
+                    what = f"slurm allocation {str( said.get( 'name' ) or '' )[ : 8 ]}".strip() )
+    elif "errand.agents connect " in line:
+        # A bridge to an environment agent ( `envs.py`, `alive.env_target` ): `cd <root> && … connect DIR`.
+        root = re.search( r"cd ('[^']*'|\S+) &&", line )
+        where = re.search( r"errand\.agents connect (\S+)", line )
+        name = Path( where.group( 1 ).strip( "'\"" ) ).name if where else ""
+        out.update( project = root.group( 1 ).strip( "'" ) if root else None, kind = "agent",
+                    what = f"environment agent {name}".strip() )
     elif "errand.vm" in argv:
         verb = argv[ argv.index( "errand.vm" ) + 1 ] if argv.index( "errand.vm" ) + 1 < len( argv ) else ""
+        # The keeper is the machine's own ( shown with the machines ); a command's hold is that
+        # command's, under its project, with what it waits for.
         out.update( what = { "keep": "windows vm keeper", "use": "a command's hold on a windows vm" }.get( verb, f"errand.vm {verb}" ),
-                    vm = True )
+                    vm = verb == "keep" )
     if not out[ "project" ] and meta.get( "store" ):
         store = Path( meta[ "store" ] )                         # <root>/errand-outputs/state/procs, or under builds_directory
         out[ "project" ] = str( store.parent.parent.parent ) if store.parent.name == "state" else str( store )
@@ -111,10 +146,30 @@ def procs_of( d: Path, alive: bool ) -> list:
             runs = alive            # an older errand's record: its agent knows, and is there or not
         if not runs:
             continue
+        from .arrival import read as waits
         rows.append( { "agent": d.name, "agent_alive": alive, "id": m.name, "pid": meta.get( "pid" ) or meta.get( "pgid" ),
                        "started": meta.get( "started" ), "keep": bool( meta.get( "keep" ) ),
-                       "state": "running" if alive else "orphaned", **describe( meta ) } )
+                       "state": "running" if alive else "orphaned", "waiting": waits( m ), **describe( meta ),
+                       "dir": str( where ), "mark": str( m ), "leaf": _leaf( m ), "step": _step( m ), "pgid": meta.get( "pgid" ), "since": meta.get( "since" ),
+                       "cwd": meta.get( "cwd" ) } )
     return rows
+
+
+def _leaf( mark: Path ) -> str | None:
+    """The directory of the case it runs now ( `seen.note` ), if it said."""
+    try:
+        return ( mark / "leaf" ).read_text().strip() or None
+    except OSError:
+        return None
+
+
+def _step( mark: Path ) -> dict | None:
+    """Where the case running now is, from its journal ( ADR 0010 ): `steps.summary`."""
+    leaf = _leaf( mark )
+    if not leaf:
+        return None
+    from .. import steps
+    return steps.summary( Path( leaf ) / steps.FILE )
 
 
 def zygotes( dirs ) -> list:
@@ -224,23 +279,84 @@ def roots() -> list:
     return out
 
 
-def scan( guests = True ) -> dict:
+def allocations( cache: Path ) -> list:
+    """The allocations kept warm from this machine whose job runs now: ( agent directory, job, first
+    node ). Their agents run on a compute node, where neither their locks nor their pids can be read
+    from here: each is asked there ( `node_table` )."""
+    import shutil
+    jobs = [ d for d in ( cache / "alloc" ).glob( "*/[0-9]*" ) if d.is_dir() and ( d / "proc" ).is_dir() ] \
+        if ( cache / "alloc" ).is_dir() else [ ]
+    if not jobs or not shutil.which( "squeue" ):
+        return [ ]
+    try:
+        got = subprocess.run( [ "squeue", "-h", "-t", "RUNNING", "-o", "%i %N", "-j", ",".join( d.name for d in jobs ) ],
+                              capture_output = True, text = True, timeout = 30, stdin = subprocess.DEVNULL )
+        running = dict( line.split( None, 1 ) for line in got.stdout.splitlines() if len( line.split() ) == 2 )
+    except ( OSError, subprocess.TimeoutExpired ):
+        return [ ]
+    out = [ ]
+    for d in jobs:
+        nodes = running.get( d.name )
+        if nodes:
+            try:
+                first = subprocess.run( [ "scontrol", "show", "hostnames", nodes ], capture_output = True, text = True,
+                                        timeout = 30, stdin = subprocess.DEVNULL ).stdout.split()[ 0 ]
+            except ( OSError, subprocess.TimeoutExpired, IndexError ):
+                first = nodes
+            out.append( ( d, d.name, first ) )
+    return out
+
+
+def node_table( d: Path, job: str, node: str, timeout = 60 ) -> dict:
+    """What the agents of an allocation run, read on its first node ( `table --only DIR` ) through
+    `srun --overlap`: no agent asked, none started, and nothing new asked of Slurm."""
+    if node.split( "." )[ 0 ] == socket.gethostname().split( "." )[ 0 ]:
+        return scan( guests = False, only = d )
+    import shlex
+    cache = bootstrap.local_cache()
+    boot = cache / bootstrap.boot_rel()
+    then = f"exec \"$py\" {shlex.quote( str( boot ) )} -m errand.agents table --only {shlex.quote( str( d ) )}\n"
+    reader = [ "sh", "-c", bootstrap._script( then, "python3" ) ] if boot.exists() else \
+             [ sys.executable, "-m", "errand.agents", "table", "--only", str( d ) ]
+    argv = [ "srun", "-u", f"--jobid={job}", "--overlap", "-N1", "-n1", "-w", node, *reader ]
+    try:
+        got = subprocess.run( argv, capture_output = True, text = True, timeout = timeout, stdin = subprocess.DEVNULL )
+    except ( OSError, subprocess.TimeoutExpired ) as err:
+        return { "error": f"node {node} did not answer ( {type( err ).__name__} )" }
+    return _parsed( got ) or { "error": ( got.stderr or got.stdout or "" ).strip()[ -300 : ] or f"exit {got.returncode}" }
+
+
+def scan( guests = True, only: Path | None = None ) -> dict:
+    """What runs on this machine. `only`: the agents under one directory ( an allocation's, read on its
+    node ), and nothing else."""
     procs = [ ]
-    dirs = agent_dirs( roots() )
+    if only is not None:
+        dirs = [ only ] if ( only / "lock" ).exists() and ( only / "proc" ).is_dir() else [ ]
+        dirs += [ d for d in agent_dirs( [ only ] ) if d not in dirs ]
+        for d in dirs:
+            procs += procs_of( d, served( d ) )
+        return { "host": socket.gethostname(), "time": time.time(), "procs": procs, "vms": [ ], "guests": [ ],
+                 "nodes": [ ], "zygotes": zygotes( dirs ) }
+    cache = bootstrap.local_cache()
+    held = allocations( cache )
+    elsewhere = { d for d, _, _ in held }
+    dirs = [ d for d in agent_dirs( roots() ) if d not in elsewhere ]
     for d in dirs:
         procs += procs_of( d, served( d ) )
     procs += strays( { int( p[ "pid" ] ) for p in procs if p.get( "pid" ) } )
-    cache = bootstrap.local_cache()
     machines = vms( cache )
     asked = [ ]
     if guests:
         for vm in machines:
             if vm[ "state" ] == "ready" and vm.get( "port" ) and vm.get( "image" ):
                 asked.append( { "vm": vm[ "name" ], **guest_table( vm ) } )
+    nodes = [ { "node": node, "job": job, **node_table( d, job, node ) } for d, job, node in held ]
     return { "host": socket.gethostname(), "time": time.time(), "procs": procs, "vms": machines, "guests": asked,
-             "zygotes": zygotes( dirs ) }
+             "nodes": nodes, "zygotes": zygotes( dirs ) }
 
 
 def main() -> int:
-    print( "errand-table " + json.dumps( scan( guests = "--no-guests" not in sys.argv ) ), flush = True )
+    args = sys.argv[ 1 : ]
+    only = Path( args[ args.index( "--only" ) + 1 ] ) if "--only" in args[ : -1 ] else None
+    print( "errand-table " + json.dumps( scan( guests = "--no-guests" not in args, only = only ) ), flush = True )
     return 0

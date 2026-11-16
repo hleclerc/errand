@@ -36,9 +36,9 @@ from .overlays import Guix, Module, Nix, Vars
 from .launchers import Mpi, Preload, preload_of
 from .interpreters import Conda, fetch_micromamba, Micromamba, MICROMAMBA_URL, Uv, Venv
 from .containers import _BuiltElsewhere, Apptainer, Docker, Podman, relay, replace_line
-from .schedulers import run_on, Slurm, slurm_seconds, unhooked, watch_dir, watch_job
+from .schedulers import run_on, Slurm, slurm_seconds, watch_dir, watch_job
 from .gateways import _remote, _rsh, back_zones, fetch, own_paths, push, RSYNC_EXCLUDES, Ssh, transfer, ssh_options, Unreachable
-from .hosts import _NO_AGENT, host_of, Over
+from .hosts import host_of, Over
 from .missing import Missing, missing_of
 from .stacks import chooses_python, container_of, interpreters_of, mpi_of, NODE_LOCAL, ssh_of, vm_of, warnings_for
 
@@ -94,7 +94,6 @@ __all__ = [
     '_how',
     'Here',
     'Over',
-    '_NO_AGENT',
     'host_of',
     '_install_steps',
     '_quiet',
@@ -104,7 +103,6 @@ __all__ = [
     'slurm_seconds',
     'watch_dir',
     'run_on',
-    'unhooked',
     'watch_job',
     'warnings_for',
     'container_of',

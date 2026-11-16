@@ -372,3 +372,23 @@ if test( "what is only kept warm gives way: a request that would fit without it 
                     os.environ.pop( k, None )
                 else:
                     os.environ[ k ] = v
+
+
+if test( "in an allocation errand holds, its queue carves it: nobody else schedules there ( ADR 0009 )" ):
+    import os
+    from errand import queue as Q
+    kept = { k: os.environ.get( k ) for k in ( "SLURM_JOB_ID", Q.ALLOCATION ) }
+    try:
+        os.environ[ "SLURM_JOB_ID" ] = "81234"
+        os.environ.pop( Q.ALLOCATION, None )
+        assert Q.someone_else_is_scheduling() == "slurm", "a job of somebody else's: Slurm decides"
+        outside = Q.queue_dir()
+        os.environ[ Q.ALLOCATION ] = "81234"
+        assert Q.someone_else_is_scheduling() is None, "errand's own allocation: errand carves it"
+        assert Q.queue_dir() != outside and str( Q.queue_dir() ).endswith( "-alloc81234" ), "one queue per allocation"
+    finally:
+        for k, v in kept.items():
+            if v is None:
+                os.environ.pop( k, None )
+            else:
+                os.environ[ k ] = v

@@ -186,7 +186,8 @@ def _attached( root: Path, keep_alive: float ) -> int:
 
 def bridge( sock, gone = None ) -> int:
     from .client import MARKER
-    stdin, stdout = sys.stdin.buffer.raw, sys.stdout.buffer.raw
+    # unbuffered ( `python -u`, PYTHONUNBUFFERED, as in a run ), `buffer` is already the raw file
+    stdin, stdout = ( getattr( s.buffer, "raw", s.buffer ) for s in ( sys.stdin, sys.stdout ) )
     stdout.write( MARKER )             # what came before this was a login shell talking
 
     def down():                        # agent -> stdout

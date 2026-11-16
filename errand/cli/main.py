@@ -125,7 +125,11 @@ def _main( argv = None ):
         # interpreter carries, and a missing screen must not cost the command
         # line.
         from .. import tui
-        return tui.main( root = root, out_root = out_root )
+        return tui.main( root = root )
+
+    if verb == "web":
+        from .. import web
+        return web.main()
 
     if verb == "init":
         from .. import detect
@@ -261,12 +265,6 @@ def _main( argv = None ):
     report = Report()
     rc, dispatched = 0, 0
     for env, tags in targets:
-        if inside is None and env.vm is not None and verb == "run" and not drive.eligible( env, tags ):
-            # errand does not run inside a virtual machine without a Python: the
-            # command goes in as it is, and what `--pull` names comes back.
-            rc |= run_there( known, [ target, *after ], root = root, targets = [ ( env, tags ) ] )
-            dispatched += 1
-            continue
         if inside is None and env.wraps_anything( tags ):
             # This side only chooses where, and hands the command over as it
             # was typed: what it designates is for that place to say.
@@ -277,10 +275,6 @@ def _main( argv = None ):
                     rc = 1
                     continue
             print( dim( f"\n  -> {env.name}  {env.describe()}" ), flush = True )
-            if not drive.eligible( env, tags ):
-                print( bad( f"  {env.name} is a virtual machine: errand does not list entries in one" ) )
-                rc = 1
-                continue
             # Driven from here, a session over there doing the work: the report is this side's.
             rc |= drive.drive( env, tags, verb, known, root = root, out_root = out_root,
                                report = report, kinds = kinds, pull = known.pull or ( ) )

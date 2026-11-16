@@ -1,11 +1,10 @@
-# 3 · Numbers over two machines
+# 2 · Numbers over two machines
 
-This one is not an example directory — it is the thing the other three were building towards, done
-in a project of your own. The goal: **numbers, taken here and on another machine, in a form you
-can compare a month from now.** Timings are the obvious case; an error or a residual follows the
-same way.
+The goal: **numbers taken here and on another machine, in a form you can still compare a month from
+now.** Timings are the obvious case; an error or a residual works the same way.
 
-You need an ssh host you can reach without a password. That is all.
+This one is not an example directory: do it in a project of your own. You need an ssh host you can
+reach without a password. That is all.
 
 ## The work
 
@@ -23,12 +22,12 @@ if p := bench( "cost", n      = Param( 100_000, help = "number of unknowns" ),
     p.results[ "residual" ] = residual( x )
 ```
 
-`bench` means three things at once: the numbers are [kept](/guide/declaring-work#the-four-traits),
-the entry takes the machine to itself while it runs (these are timings, so it must), and a bare
-`errand run` will not fire it by accident. For numbers that are not timings, `track` is the same without
-the exclusivity.
+This uses errand's own entries. `bench` does three things: the numbers are kept, the entry takes
+the machine to itself while it runs (these are timings), and a bare `errand run` does not fire it by
+accident. For numbers that are not timings, `track` is the same without the exclusivity.
+→ [Writing entries](/guide/declaring-work)
 
-Check that errand sees it before going any further:
+Check that errand sees it:
 
 ```bash
 errand list bench/solvers.py::cost
@@ -52,46 +51,45 @@ errand.envs[ "there" ] = errand.Env( [ errand.Ssh( host = errand.value( "ssh_hos
                                      driver = "cpu", remote = True )
 ```
 
-The project's own settings — `errand.configure( out = …, src = [ "src" ] )` and the like — do not
-belong in that file: they go in `errand-project.py`, which is versioned, while this one is yours.
+The project's own settings (`errand.configure( out = …, src = [ "src" ] )` and the like) go in
+`errand-project.py`, which is versioned. This file is yours.
 
-Two things to notice in it:
+Two things to notice:
 
-**`Ssh` is first**, and everything after it happens over there. The `Venv` layer is the same
-declaration in both environments — the difference between the two is one layer, not two
-configurations.
+**`Ssh` comes first**, and everything after it happens over there. The `Venv` layer is the same in
+both environments: they differ by one layer, not by two configurations. → [Ssh](/guide/layers/ssh)
 
-**The host name is not committed.** `errand.value( "ssh_host", "gpu-box" )` reads a value another `errand-*.py`
-defined, and falls back to a default that works for whoever wrote the file:
+**The host name is not committed.** `errand.value( "ssh_host", "gpu-box" )` reads a value another
+`errand-*.py` defined, with a default for whoever wrote the file:
 
 ```python
-# errand-0-hosts.py -- not tracked; add it to .gitignore ( the 0 makes it sort, and so be read, before errand-envs.py )
+# errand-0-hosts.py -- not tracked; add it to .gitignore ( the 0 makes it load before errand-envs.py )
 ssh_host = "bigbox.lab.example"
 ssh_root = "/home/me/scratch/proj"
 ```
 
 ::: danger If you add Slurm later, the root must be shared
 A batch job runs on a compute node, and `/tmp` there is not the `/tmp` you pushed to. errand checks
-for that before submitting, but a home or a `/scratch` is the right answer from the start.
+before submitting, but a home or a `/scratch` is the right choice from the start.
 :::
 
 ## Get the places ready
 
 ```bash
 errand envs             # what is declared, and the state of each
-errand setup --dry-run  # exactly what building them would run
-errand setup            # do it, and nothing else
+errand setup --dry-run  # what building them would run
+errand setup            # build them, and nothing else
 ```
 
-`errand envs` will say `unknown` for `there`: only the other machine can say what it has. Reach it
-directly to find out:
+`errand envs` says `unknown` for `there`: only the other machine can say what it has. Ask it:
 
 ```bash
 errand run --env there python -c "import sys; print( sys.version )"
 ```
 
-Everything after errand's options is a command to run *in* the environment. It is pushed, run over there and
-reported back — and the environment is prepared first, by the same rules as a run.
+Everything after errand's options is a command to run in the environment. The project is pushed,
+the environment prepared if needed, the command run over there and its output shown here. Add `-v`
+to see every command errand starts, here and over there.
 
 ## Take the number, in both places
 
@@ -100,16 +98,14 @@ errand run --grid=, -o --env here,there bench/solvers.py::cost --n=100000
 ```
 
 ```text
-  → bigbox.lab.example:/home/me/scratch/proj  env=there  tags=driver:cpu,remote
-  rsync push → bigbox.lab.example:/home/me/scratch/proj
+  -> there  ssh:bigbox.lab.example -> venv:.venv/bin/python
+    rsync push -> bigbox.lab.example:/home/me/scratch/proj
   ...
-  rsync pull ← bigbox.lab.example:/home/me/scratch/proj [errand-outputs/runs/bench/solvers.py/cost]
 ```
 
-The comma is a [matrix](/guide/matrices); the two runs share one timestamp because they are one
-command. The remote side never sees a matrix — it is expanded here, into plain runs, and the paths
-to fetch back are worked out **before** anything starts. Every run is recorded, here, in
-`errand-outputs/runs/`:
+The comma makes a [grid](/guide/matrices): two runs, one per place, sharing one timestamp. The grid
+is expanded here, so the paths to bring back are known before anything starts. Every run is
+recorded here, in `errand-outputs/runs/`:
 
 ```text
 errand-outputs/runs/bench/solvers.py/cost/
@@ -122,42 +118,43 @@ errand-outputs/runs/bench/solvers.py/cost/
 cat errand-outputs/runs/bench/solvers.py/cost/summary.yaml
 ```
 
-One row per run, with the extents across them. That file is recomputed from the neighbouring
-`result.yaml` files on every run, so it is always right.
+One row per run, with the extents across them. It is recomputed from the `result.yaml` files beside
+it on every run, so it is always right. → [Results and records](/guide/output)
 
 ## Make it a sweep, and let go of it
 
 ```bash
 errand run --grid=, --batch --env here,there bench/solvers.py::cost --n=100000,1000000 --method=newton,lbfgs
-  submitted 4c1e - 8 run(s) - 4 on bigbox.lab.example, 4 on this machine
+```
+
+```text
+  submitted 4c1e - here on this machine (local 41288), there on bigbox.lab.example (ssh 20114)
   errand status    errand watch
 ```
 
-Eight runs, and the shell back. `--batch` means a detached session locally and a released ssh
-command over there; nothing else about the run changes.
+Eight runs, and your shell back. `--batch` is a detached process here, and a command started and
+let go of over there. Nothing else about the runs changes. → [Let it run](/guide/detached)
 
 ```bash
 errand watch
 ```
 
 ```text
-4c1e  "solvers::cost" --grid=, --env here,there --n=1e5,1e6 --method=newton,lbfgs   6/8 [######  ]
-    here:  local 41288 on this machine - finished
+4c1e  run --grid=, --env here,there bench/solvers.py::cost --n=100000,1000000 --method=newton,lbfgs   2026-10-02 14:30:12   6/8 [######  ]
+    here: local 41288 on this machine - finished
     there: ssh 20114 on bigbox.lab.example - running
-                                   here@laptop         there@bigbox
-      cost  method=newton, n=100000    ok seconds=12.4     ok seconds=7.1
-      cost  method=newton, n=1000000   ok seconds=61.2     ok seconds=34.8
-      cost  method=lbfgs,  n=100000    ok seconds=18.9     ...
-      cost  method=lbfgs,  n=1000000   ...                 ...
+                                  here@laptop             there@bigbox
+      cost  method=lbfgs, n=100000    ok seconds=18.9         ...
+      cost  method=lbfgs, n=1000000   ...                     ...
+      cost  method=newton, n=100000   ok seconds=12.4         ok seconds=7.1
+      cost  method=newton, n=1000000  ok seconds=61.2         ok seconds=34.8
 ```
 
-The matrix reads as a table — parameters down, places across — because that is the shape it has.
-`errand watch` holds no state of its own: kill it, restart it, run two of them.
+Illustrative output. The grid reads as a table: parameters down, places across. `errand watch`
+reads the records and keeps nothing of its own: stop it, restart it, run two.
 
-Close the terminal and come back tomorrow: `errand status` reads the tree, and
-[the arrival of a result file where one was expected is the completion
-signal](/guide/detached#the-output-tree-is-the-state). There is no daemon and nothing to get out of
-sync.
+Close the terminal and come back tomorrow: `errand status` says what still runs, on every machine
+work was sent to, and how each submission is doing. → [What is running](/guide/status)
 
 ## A month later
 
@@ -166,27 +163,27 @@ errand run --grid=, -o --env here,there bench/solvers.py::cost --n=100000
 cat errand-outputs/runs/bench/solvers.py/cost/summary.yaml
 ```
 
-Same command, new rows. The old runs are still there — only the run directory is cleared and
-recreated, everything above it accumulates — and each one records its `date`, its `place`, its
-`host` and the `commit` it was taken at, `dirty: true` included if the tree was not clean.
+Same command, new rows. The old runs are still there: only a run's own directory is cleared,
+everything above it accumulates. Each run records its `date`, its `place`, its `host` and the
+`commit` it was taken at, with `dirty: true` if the tree was not clean.
 
 ::: warning What errand will not decide for you
-A matrix that spans your laptop and a cluster partition at once will produce numbers that are not
-comparable, and errand will not stop you. It runs what you ask where you ask and records where each
-number came from; deciding what may be compared to what is yours.
+A grid that spans your laptop and a cluster partition produces numbers that are not comparable, and
+errand will not stop you. It runs what you ask where you ask, and records where each number came
+from. Deciding what may be compared is yours.
 :::
 
 ## What you have now
 
 - A number declared next to the code that produces it, and nowhere else.
-- Two places, differing by one layer, both built from their own declaration.
-- A path per run that you could have written down in advance — which is exactly why the remote ones
-  could be fetched.
-- A queue that keeps a second terminal from spoiling the measurement, without your having asked for
-  one.
+- Two places that differ by one layer, each built from its own declaration.
+- A path per run that you could have written down in advance, which is why the remote ones could be
+  brought back.
+- A queue that keeps a second terminal from spoiling the measurement, without your asking for one.
 
-## Where to go from here
+## Next
 
-- [Sharing the machine](/guide/machine) — what `exclusive`, `cpus` and `gpus = 1` actually do.
-- [The screen](/guide/tui) — the same matrix, ticked rather than typed.
-- [Runners](/guide/runners/) — the same treatment for a Catch2 or cargo suite.
+- [3 · A cluster, a Windows VM, and what is running](./cluster-and-vm): the same over Slurm, plus a
+  Windows build.
+- [Sharing the machine](/guide/machine): what `exclusive`, `cpus` and `gpus = 1` do.
+- [Adopting a suite](/guide/runners/adopting): the same treatment for a pytest, Catch2 or cargo suite.

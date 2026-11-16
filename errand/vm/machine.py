@@ -7,7 +7,6 @@ import contextlib
 import os
 import posixpath
 import random
-import re
 import signal
 import subprocess
 import sys
@@ -83,41 +82,16 @@ class Machine( Caller, Keeping, Supplies, Talk ):
 
         On this machine ( a keeper, ADR 0008 ), QEMU is this process's child, in its group, and
         dies with it. Over there ( an install driven from elsewhere ), it is a process of that
-        machine's agent, held by this command, stopped if this command goes; with agents off
-        ( `ERRAND_AGENT=off` ) only, it lets go of its shell ( `-daemonize` )."""
-        how, pidfile = accel( self.facts ), f"{log}.pid"
+        machine's agent, held by this command, stopped if this command goes."""
+        how = accel( self.facts )
         for _ in range( 5 ):
             port = random.randint( 20000, 60000 )
             argv = qemu_argv( disk, accel = how, port = port, cpus = cpus, ram = ram, iso = iso, media = media,
                               data = data )
-            if not self.host.remote:
-                got = self._child( argv, log )
-                if got is not None:
-                    self._port = port
-                    return port, got
-                continue
-            from .. import agents
-            if agents.enabled() and getattr( self.host, "ssh", None ) is not None:
-                got = self._owned_there( argv, log )
-                if got is not None:
-                    self._port = port
-                    return port, got
-                continue
-            # QEMU lets go by itself, and only once the machine is set up: a
-            # port taken or a disk locked is its exit code, now, not a death
-            # to notice later -- and the pid is the one IT writes, not a guess
-            # at which process a shell put in the background.
-            got = self.host.shell( _sh( 'p=$1 l=$2; shift 2; rm -f "$p"; "$@" > "$l" 2>&1 < /dev/null; code=$?; '
-                                        'cat "$l"; [ $code -eq 0 ] && echo "errand-pid=$( cat "$p" )"; exit $code',
-                                        pidfile, log, *argv, "-daemonize", "-pidfile", pidfile ),
-                                   capture = True )
-            out = ( got.stdout or "" ) + ( got.stderr or "" )
-            found = re.search( r"errand-pid=(\d+)", out )
-            if got.returncode == 0 and found:
+            got = self._owned_there( argv, log ) if self.host.remote else self._child( argv, log )
+            if got is not None:
                 self._port = port
-                return port, int( found.group( 1 ) )
-            if "hostfwd" not in out and "host forwarding" not in out:
-                raise VmError( f"QEMU did not start {self.facts.where}:\n{out.strip()[ -800 : ]}" )
+                return port, got
         raise VmError( f"no free port for ssh into the machine {self.facts.where}, five tries" )
 
     def _owned_there( self, argv, log: str ):

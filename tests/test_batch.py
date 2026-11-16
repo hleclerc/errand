@@ -34,9 +34,12 @@ def wait_for( predicate, seconds = 120 ):
 if test( "a batch system is its own detachment" ):
     # srun waits for a node; sbatch returns as soon as the job is queued, so
     # there is nothing left to let go of.
-    waiting = L.Slurm( partition = "gpu" ).wrap(
-        L.Command( [ "python", "-m", "errand" ] ), L.Context( root = Path( "/" ) ) )
-    assert L.unhooked( waiting.argv )[ 0 ] == "srun"
+    # waited for, it runs in an allocation with an agent ( ADR 0009 ): nothing comes from wrap
+    try:
+        L.Slurm( partition = "gpu" ).wrap( L.Command( [ "python", "-m", "errand" ] ), L.Context( root = Path( "/" ) ) )
+        raise AssertionError( "a bare srun came out of wrap" )
+    except RuntimeError:
+        pass
 
     letting_go = L.Slurm( partition = "gpu" ).wrap(
         L.Command( [ "python", "-m", "errand" ], { "A": "1" } ),

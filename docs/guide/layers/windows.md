@@ -1,8 +1,9 @@
 # Windows
 
 ```python
-Windows( iso = None, key = None, index = 1, cpus = 4, ram = "8G", disk = "64G",
-         msvc = True, python = "3.13.16", provision = [ ], fetch = [ ], keep = "5m", data = "32G", root = None )
+Windows( iso = None, key = None, index = 1, cpus = 4, ram = "8G", disk = "64G", msvc = True,
+         python = "3.13.16", provision = [ ], fetch = [ ], also = [ ], keep = "5m", data = "32G",
+         root = None, when = None )
 ```
 
 **First, or right after the `Ssh` of the machine that boots it.** A Windows virtual machine under
@@ -28,9 +29,11 @@ in it (cl, link, msbuild, cmake, ninja) and calls `vcvars64` before every comman
 |---|---|
 | `iso`, `key`, `index` | another Windows: a path or a URL, its product key, which image of the ISO |
 | `cpus`, `ram` | the size of the machine — how it is *booted*, so changing it reinstalls nothing |
+| `disk` | the size of the system disk, which grows as it is written up to this |
 | `python` | the python.org release installed and on `PATH`, which errand runs in: `"3.13.16"` by default |
 | `provision` | more to install: a `.ps1` of the project, or a line of PowerShell |
 | `fetch` | paths of the project brought back after each command — `build`, `dist` |
+| `also` | sibling checkouts the work needs ( `../loom` ), copied in beside the project |
 | `keep` | how long it stays up once no command uses it and nothing runs in it any more — `"15m"` to keep it warm between commands |
 | `data` | a disk kept from one boot to the next, as `E:`, where the project lands — so a build is there for the next command. Grows up to this size; `None`: everything on `C:`, reset at each boot |
 | `root` | where the project goes over there; `E:/<project name>`, or `C:/errand/<project name>` without `data` |
@@ -89,6 +92,5 @@ so, and any work that needs its cores asks for them: the machine stops then, wit
 end of `keep`.
 
 Everything the agent starts there is in a Windows Job Object that only the agent holds: a stop ends
-the whole tree, and an agent that dies, however it dies, takes all of it along. With agents off
-(`ERRAND_AGENT=off`), `errand run --env win` hands the guest the command itself, through cmd.exe.
-`--batch` does not reach a virtual machine yet.
+the whole tree, and an agent that dies, however it dies, takes all of it along.
+`--batch` does not reach a virtual machine yet: it says so and stops.

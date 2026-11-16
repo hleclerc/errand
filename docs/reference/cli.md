@@ -9,23 +9,40 @@ what that verb takes. The options that choose environments and paths are everybo
 before the verb or after it — but before the target, for `run` and `list`, since what follows the
 target is the target's: `errand --env gpu run t.py` and `errand run --env gpu t.py` are the same.
 
+**Running**
+
 | verb | |
 |---|---|
-| `run [TARGET [ARGS…]]` | run a file, a command or entries, in one or several environments, and record what came of it |
-| `list [TARGET]` | what the target designates, and the parameters each one takes — a dry run of it |
+| `run [TARGET [ARGS…]]` | run a file or a command (or a suite's entries) in one or several environments, and record it — [Running](/guide/running) |
 | `shell` | an interactive shell in an environment. Nothing is recorded |
-| `envs` | the environments, their tags, their stacks and their state |
-| `setup [NAME,…]` | bring environments up to date now, and do nothing else |
-| `init` | write a starting `errand-project.py` and `errand-envs.py`, with suggestions in comments |
-| `tui` | [the screen](/guide/tui) |
-| `queue` | what the host has, and what is holding it |
+| `attach [ID]` | follow again what a command left running when its connection was lost, and bring its results back — [Let it run](/guide/detached) |
+| `watch` | how the `--batch` work is going, live, until everything has landed |
+| `forget ID`, `forget finished` | drop a `--batch` submission from the list, or every one that is over, keeping their results |
+
+**What is running**
+
+| verb | |
+|---|---|
+| `status [--all]` | what runs on this machine and every machine work was sent to, what waits, what is kept warm, then the `--batch` work — [What is running](/guide/status) |
+| `agents [stop [NAME]]` | the hub and its agents, and stopping them; `--force` even with something running — [Agents](/guide/agents#listing-and-stopping-agents) |
+| `vm stop` | stop the [Windows VMs](/guide/layers/windows) kept warm, here and over every `Ssh` |
+| `queue` | what this machine has, and what holds it — [Sharing a machine](/guide/machine) |
 | `wait` | return once nothing holds the machine and nothing is queued for it |
-| `status` | what was left running by a lost connection, and how the [detached](/guide/detached) work is going; one shot, plain text |
-| `watch` | the same, live, until everything has landed |
-| `forget ID`, `forget finished` | drop a submission from the list, or every one that is over, keeping their results |
-| `attach` | follow again what a command left running when the connection was lost, and bring its results back — [Close the laptop](/guide/agents#close-the-laptop) |
-| `vm stop` | stop the [virtual machines](/guide/layers/windows) kept warm between commands |
-| `agents [stop [NAME]]` | what is kept between commands — the hub, its agents — and stopping it; `--force` even with something running — [agents](/guide/agents#what-is-up-and-stopping-it) |
+| `tui` | the screen, [being redesigned](/guide/tui) |
+
+**Environments**
+
+| verb | |
+|---|---|
+| `envs` | the environments, their tags, their stacks and their state |
+| `setup [NAME,…]` | build or update environments now, and do nothing else |
+| `init` | write a starting `errand-envs.py`, with suggestions in comments |
+
+**Suites**
+
+| verb | |
+|---|---|
+| `list [TARGET]` | what a target designates, and the parameters each entry takes: a dry run — [Running a suite](/guide/runners/) |
 
 ## Everybody's options
 
@@ -46,13 +63,11 @@ says `--batch` is `run`'s.
 
 The first word after errand's options is the target, read from the command line alone:
 
-- `path::name` (globs on both sides) goes to an **entry runner** — errand's own entries, pytest,
-  Catch2, cargo. Which one takes a file is decided by its contents; two claiming it equally is an
-  error, and `-r NAME` settles it.
-- a bare `x` goes to a **file runner**: a `.py` is run by the place's Python, anything else is
-  executed as it is — a file of the project, or a command on the place's `PATH` (`make`, `cmake`,
-  `pytest`). A glob without `::` runs each matching file that can be run, one run each. A directory
-  without `::` is an error: `dir/**::*` is the entries under it.
+- a bare `x`: a `.py` is run by the place's Python, anything else is executed as it is — a file of
+  the project, or a command on the place's `PATH` (`make`, `cmake`, `pytest`). A glob runs each
+  matching file that can be run, one run each. A directory is an error.
+- `path::name` (globs on both sides): the entries of a suite — pytest, Catch2, cargo, errand's own
+  entries. → [Running a suite](/guide/runners/)
 
 Several targets are separated by commas — see [Running it](/guide/running#the-target). With no
 target, `run` runs `errand.default_run`, the targets the project declares in `errand-project.py`
@@ -89,11 +104,11 @@ none declared it prints this help.
 | `-n`, `--label NAME` | its name in `errand queue` |
 | `-l`, `--log FILE` | its output goes there too |
 | `-q` | no banners |
-| `--at FILE:LINE` | run exactly the entry at that call site. This is how errand's own child processes are started; you will not normally type it |
+| `--at FILE:LINE` | run exactly the entry at that call site. This is how errand's own child processes are started; you never type it |
 
-Every run is recorded in `errand-outputs/runs/…`, with or without `-o` — the history, the screen,
-`status` and `--batch` read it there. `-o` and `--out` only give the run a directory to write its own
-files in; see [Output](/guide/output).
+Every run is recorded in `errand-outputs/runs/…`, with or without `-o`; `status`, `attach` and
+`--batch` read it there. `-o` and `--out` only give the run a directory to write its own
+files in; see [Results and records](/guide/output).
 
 ```bash
 errand run --env gpu python -c "import torch; print( torch.cuda.is_available() )"
@@ -127,30 +142,29 @@ errand shell --env gpu
 | `--force` | `setup`: rebuild from scratch. `init`: replace an existing `errand-project.py` |
 | `--dry-run` | `setup`: say what it would run, and run nothing |
 
-`init` writes an `errand-project.py` holding, in comments, the runner lines that would fit what the
-directory holds and a `default_run` suggestion, and a commented `errand-envs.py`. Nothing in them is
+`init` writes a commented `errand-envs.py`, and an `errand-project.py` with, in comments, the runner
+lines that fit what the directory holds and a `default_run` suggestion. Nothing in them is
 active until you uncomment it; `run` itself never guesses. It never overwrites without `--force`. See
 [Keeping environments current](/guide/upkeep).
 
 ## Recipes
 
 ```bash
-errand run                         # errand.default_run, default environment
-errand list "bench/solvers.py::*"  # what would run, and with which parameters
-errand run --grid=, -k bench --env gpu,cluster --fp 32,64 --batch '**::*'
-errand watch
-errand run -j 4 --grid=, bench/solvers.py::cost --n=1000,5000
-errand run -e 'slow & !gpu' -t 'cuda & !remote' '**::*'
 errand run --env cluster nvidia-smi
 errand run -o --env gpu train.py --epochs 3
-errand queue
+errand run --batch --env cluster --pull out python train.py
+errand status --all
+errand agents stop cluster
+errand run --grid=, --env gpu,cluster ./bench
 errand setup --dry-run
+errand queue
+errand run -e '!slow' -t 'cuda' 'tests/**::*'
 ```
 
 ## Exit status
 
 Non-zero when anything failed — including a candidate file that could not be imported, which
-[costs its own row and takes the return code with it](/guide/running#a-file-that-will-not-import).
+costs its own row and takes the return code with it ([Running a suite](/guide/runners/)).
 A [skip](/guide/configuration#what-only-this-machine-can-supply) is its own status and is not a
 failure, but it is never silent either.
 
@@ -158,7 +172,7 @@ failure, but it is never silent either.
 
 | | |
 |---|---|
-| `ERRAND_AGENT` | `hub` (default on a terminal), `direct` (default without one), `off` — [agents](/guide/agents#when-you-want-it-otherwise) |
+| `ERRAND_AGENT` | `hub` (default on a terminal) or `direct` (default without one). There is no mode without agents — [Agents](/guide/agents#modes) |
 | `ERRAND_HUB_KEEP_ALIVE` | seconds the hub stays up with nothing to do. Default 900 |
 | `ERRAND_CACHE_DIR` | errand's per-user directory on this machine, instead of `~/.cache/errand`. Over ssh, set it in your shell profile there — [where errand writes](/guide/storage#the-per-user-directory-cache-errand) |
 | `ERRAND_OUTPUTS_DIR` | the project's `errand-outputs/` elsewhere, on this machine — [where errand writes](/guide/storage#the-project-errand-outputs) |

@@ -1,25 +1,20 @@
 # Tag expressions
 
-One grammar, three readers:
+```bash
+errand run -t 'cuda & fp=64' train.py           # the environments with cuda, in double
+errand run -e 'slow & !gpu' '**::*'             # the slow tests that are not gpu ones
+```
 
-| | over | |
+One grammar, four readers:
+
+| | reads | to decide |
 |---|---|---|
 | `-t`, `--env-tags` | [environment tags](/guide/tags) | which places run it |
-| `-e`, `--entry-tags` | [entry tags](/guide/declaring-work#tags-on-an-entry) | which work runs |
+| `-e`, `--entry-tags` | entry tags: pytest marks, Catch2 `[tags]`, [errand's own](/guide/declaring-work#tags-on-an-entry) | which tests run |
 | `has_tag( … )` | the selected environment, from inside a file | whether this file applies |
+| a layer's `when = …` | the environment's tags, and `phase` ( `prepare` or `run` ) | whether this [layer](/guide/layers/) applies |
 
 ## The grammar
-
-Literals, `&`, `|`, `!`, and `=` for a valued tag. **No parentheses** — an expression that needs
-them is a sign the dimensions are wrong.
-
-Precedence is the usual one: `!` binds tighter than `&`, which binds tighter than `|`. So
-
-```
-a & !b | c
-```
-
-reads as `(a & !b) | c`.
 
 | | |
 |---|---|
@@ -30,8 +25,12 @@ reads as `(a & !b) | c`.
 | `a \| b` | either |
 | *(empty)* | everything matches |
 
-Whitespace around names and operators is ignored. An empty tag name — a stray `&` — is an error
-naming the literal.
+**No parentheses**: an expression that needs them is a sign the dimensions are wrong. `!` binds
+tighter than `&`, which binds tighter than `|`, so `a & !b | c` reads as `(a & !b) | c`.
+
+Whitespace around names and operators is ignored. A literal with no name, such as `=64` or a lone
+`!`, is an error naming it. A stray `&` is ignored; a stray `|` adds an empty alternative, which
+matches everything: `cuda |` selects every environment.
 
 ## Values
 
@@ -40,21 +39,20 @@ naming the literal.
 | declared | matched by |
 |---|---|
 | `cuda = True` | `cuda`, `cuda=True`, `cuda=yes`, `cuda=1` |
-| `cuda = False` | `cuda=False`, `cuda=no`, `cuda=0` — and `cuda` alone matches too, the tag being *present* |
+| `cuda = False` | `cuda=False`, `cuda=no`, `cuda=0`, and `cuda` alone: the tag is *present* |
 | `fp = "64"` | `fp=64` |
-| `fp = 64` | `fp=64` — the int and the string are the same here |
+| `fp = 64` | `fp=64`: the int and the string are the same here |
 
 A tag used **without** `=` asks only whether it is there. That is why `cuda` matches
-`cuda = False`: the environment did mention it. Say `cuda=True` when you mean the value.
+`cuda = False`: the environment did mention it. Write `cuda=True` when you mean the value.
 
 ## Examples
 
 ```bash
 errand run -t 'cuda'                   # every environment that mentions cuda
 errand run -t 'cuda=True'              # every one where it is on
-errand run -t 'jax & fp=64 & !remote'  # here, in double, on jax
-errand run -t 'cuda | boxed'           # either kind of container
-errand run -e 'slow & !gpu'            # the slow entries that are not gpu ones
+errand run -t 'jax & fp=64 & !remote'  # on jax, in double, not remote
+errand run -t 'cuda | boxed'           # either kind
 errand run -e '!legacy' -k bench       # benchmarks, minus the old ones
 ```
 
@@ -64,11 +62,15 @@ if not has_tag( "driver=torch" ):
 import torch
 ```
 
+```python
+errand.Slurm( partition = "gpu", when = "phase=run" )    # the allocation only for the run
+```
+
 ## What an expression does not do
 
-It **selects**; it does not configure. An environment that satisfies `fp=32` is chosen by it, and
-what the child process then *sees* is a [`Vars` layer's](/guide/tags#tags-only-select) business.
+It **selects**; it does not configure. An environment that satisfies `fp=32` is chosen by it; what
+the child process then *sees* is a [`Vars`](/guide/layers/vars) layer's business.
 
-And remember that **saying nothing means every value**: an environment that never mentions `fp` is
-selected by `--fp 32` and by `--fp 64` alike, so `--grid=, --fp 32,64` is two runs in it. An environment that
-pins `fp = "64"` is only ever selected for that one.
+**Saying nothing means every value**: an environment that never mentions `fp` is selected by
+`--fp 32` and by `--fp 64` alike, so `--grid=, --fp 32,64` is two runs in it. One that pins
+`fp = "64"` is only ever selected for that value. See [Tags](/guide/tags).

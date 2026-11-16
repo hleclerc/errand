@@ -9,7 +9,7 @@ import sys
 import time
 import traceback
 
-from .. import config, discovery, entries as E, local, mpi, queue, results as R, runner as P
+from .. import config, discovery, entries as E, local, mpi, queue, results as R, runner as P, steps
 from .style import bad, capture, dim, GREEN, head, RED, RESET, YELLOW
 from .project import _src_paths, _with_env, build_dir_for, TAGS
 from .parsing import shown_params, target_argv
@@ -144,6 +144,17 @@ def run_entries( entries, modules, *, root, out_root, overrides, env_name, tags,
     return report
 
 
+def _followed( journal, marks ):
+    """The case's line at the bottom of the terminal, or said as marks by a session, or nothing."""
+    import contextlib
+    from . import footer
+    if marks:
+        return footer.Followed( journal, footer.mark )
+    if footer.Footer.usable():
+        return footer.Followed( journal, footer.Footer().show )
+    return contextlib.nullcontext()
+
+
 def tally( report, e, status, error, hint ):
     if status == "SKIP":
         report.skipped.append( ( e, error, hint ) )
@@ -152,9 +163,10 @@ def tally( report, e, status, error, hint ):
 
 
 def run_case( e, modules, *, root, out_root, overrides, env_name, tags, version, selectors, ask,
-              handed, devices = None ):
+              handed, devices = None, marks = False ):
     """One entry with one set of values, once the machine is granted: run it, say how it went,
-    and write its record. -> ( status, error, hint )."""
+    and write its record. -> ( status, error, hint ). `marks`: a session's, whose steps are said as
+    marks to the side that drives it ( ADR 0010 )."""
     E.set_tags( tags )
     where = R.place( env_name )
     try:
@@ -167,15 +179,20 @@ def run_case( e, modules, *, root, out_root, overrides, env_name, tags, version,
     leaf, entry_root = R.dirs_for( out_root, e, shown, where, root )
     R.clear( leaf )
     R.point_latest_at( leaf )
+    from ..agents import seen
+    seen.note( leaf, root, f"{e.file.name}::{e.name}" + "".join( f" {k}={v}" for k, v in shown.items() ), env_name )
+    # Where the case says its steps ( ADR 0010 ), and the shell functions that say them.
+    journal = leaf / steps.FILE
+    handed = { **handed, steps.ENV: str( journal ), steps.SH_ENV: steps.SHELL_STEPS }
 
-    site = f"{e.file.name}:{e.line}" if e.line else e.file.name
+    site =f"{e.file.name}:{e.line}" if e.line else e.file.name
     if shown:
         told = ", ".join( f"{k}={v!r}" for k, v in shown.items() )
         print( dim( f"  {e.name} ({site}) -- {told}" ), flush = True )
 
     E.begin_run( e, resolved, leaf )
     status, error, hint = "PASS", None, None
-    with _with_env( handed ):
+    with _with_env( handed ), _followed( journal, marks ):
         if devices:
             print( dim( f"  gpu {','.join( str( d ) for d in devices )}" ), flush = True )
         started = time.perf_counter()
@@ -240,6 +257,7 @@ def run_case( e, modules, *, root, out_root, overrides, env_name, tags, version,
                 status, error = "FAIL", f"{type( exc ).__name__}: {exc}"
                 traceback.print_exc()
         duration = time.perf_counter() - started
+        steps.flush()
     E.end_run()
 
     if status == "PASS":

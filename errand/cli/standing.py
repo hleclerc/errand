@@ -204,10 +204,16 @@ def tables( ) -> list:
 def _rows( machine, table ) -> list:
     """Every process of a table, with where it runs: guests under their host."""
     now = table.get( "time" ) or 0
-    rows = [ { **p, "machine": machine, "age": now - ( p.get( "started" ) or now ) } for p in table.get( "procs", [ ] ) ]
+    rows = [ { **p, "machine": machine, "age": now - ( p.get( "started" ) or now ), "now": now }
+             for p in table.get( "procs", [ ] ) ]
     for g in table.get( "guests", [ ] ):
         for p in g.get( "procs", [ ] ):
-            rows.append( { **p, "machine": f"{machine} > windows {g[ 'vm' ][ : 8 ]}", "age": now - ( p.get( "started" ) or now ) } )
+            rows.append( { **p, "machine": f"{machine} > windows {g[ 'vm' ][ : 8 ]}",
+                           "age": now - ( p.get( "started" ) or now ), "now": now } )
+    for n in table.get( "nodes", [ ] ):                         # an allocation's agents, read on its node
+        for p in n.get( "procs", [ ] ):
+            rows.append( { **p, "machine": f"{machine} > {n[ 'node' ]}",
+                           "age": now - ( p.get( "started" ) or now ), "now": now } )
     return rows
 
 
@@ -225,9 +231,15 @@ def _project_names( root: Path ) -> set:
     return names
 
 
-def _state_of( r ) -> str:
+def _state_of( r, now = None ) -> str:
+    if r[ "state" ] == "running" and r.get( "waiting" ):
+        w = r[ "waiting" ]
+        since = f", {_ago( ( now or 0 ) - w[ 'since' ] )}" if now and w.get( "since" ) else ""
+        return warn( f"waiting: {w.get( 'what' )}" ) + dim( since )
     if r[ "state" ] == "running":
-        return good( "running" )
+        from .. import steps
+        said = steps.line( r.get( "step" ) )            # ADR 0010
+        return good( "running" ) + ( dim( f" · {said}" ) if said else "" )
     if r[ "state" ] == "orphaned":
         return bad( "orphaned: its agent is gone, the next one there stops it" )
     # Found by its environment only: an errand from before records said who a process is.
@@ -248,7 +260,10 @@ def show_running( root: Path, everything = False, got = None ) -> int:
         machines += [ { **vm, "machine": machine } for vm in table.get( "vms", [ ] ) ]
         warm += [ { **z, "machine": machine } for z in table.get( "zygotes", [ ] ) ]
         failed += [ ( f"{machine} > windows {g[ 'vm' ][ : 8 ]}", g[ "error" ] ) for g in table.get( "guests", [ ] ) if g.get( "error" ) ]
-    work = [ r for r in rows if not r.get( "vm" ) ]
+        failed += [ ( f"{machine} > {n[ 'node' ]} ( slurm job {n[ 'job' ]} )", n[ "error" ] ) for n in table.get( "nodes", [ ] ) if n.get( "error" ) ]
+    # The bridges to environment agents are what is kept warm, not work: counted, listed under --all.
+    agents_up = [ r for r in rows if r.get( "kind" ) == "agent" and not r.get( "waiting" ) and r[ "state" ] == "running" ]
+    work = [ r for r in rows if not r.get( "vm" ) and r not in agents_up ]
     mine = _project_names( root )
     projects = { }
     for r in work:
@@ -262,21 +277,27 @@ def show_running( root: Path, everything = False, got = None ) -> int:
     for name in current + sorted( n for n in projects if n not in mine and everything ):
         print( f"  {head( name )}" )
         for r in sorted( projects[ name ], key = lambda r: -r[ "age" ] ):
-            state = _state_of( r )
+            state = _state_of( r, r.get( "now" ) )
             env = f"  --env {r[ 'env' ]}" if r.get( "env" ) else ""
             print( f"    {r[ 'machine' ]:<12} {r[ 'id' ] if r[ 'id' ].startswith( 'pgid' ) else r[ 'id' ][ : 8 ]}  {r[ 'what' ]}{dim( env )}  " + dim( f"{_ago( r[ 'age' ] )}  " ) + state )
     if not everything:
         for name in sorted( n for n in projects if n not in mine ):
             by = { }
             for r in projects[ name ]:
-                by.setdefault( ( r[ "machine" ], r[ "state" ] ), 0 )
-                by[ ( r[ "machine" ], r[ "state" ] ) ] += 1
-            said = ", ".join( f"{n} {s if s == 'running' else bad( s )} on {m}" for ( m, s ), n in sorted( by.items() ) )
+                state = "waiting" if r[ "state" ] == "running" and r.get( "waiting" ) else r[ "state" ]
+                by.setdefault( ( r[ "machine" ], state ), 0 )
+                by[ ( r[ "machine" ], state ) ] += 1
+            said = ", ".join( f"{n} {s if s in ( 'running', 'waiting' ) else bad( s )} on {m}" for ( m, s ), n in sorted( by.items() ) )
             print( f"  {name}: " + said )
     for vm in machines:
         size = f", {vm[ 'cpus' ]} cpus {vm[ 'ram' ]}" if vm.get( "cpus" ) else ""
         state = bad( "orphaned: QEMU without its keeper" ) if vm[ "state" ] == "orphaned" else vm[ "state" ]
         print( f"  {vm[ 'machine' ]}: windows vm {vm[ 'name' ][ : 8 ]} " + state + dim( size ) )
+    if everything:
+        for a in agents_up:
+            print( dim( f"  {a[ 'machine' ]}: {a[ 'what' ]} kept warm for {Path( str( a.get( 'project' ) or '?' ) ).name}" ) )
+    elif agents_up:
+        print( dim( f"  {len( agents_up )} environment agent{'s' if len( agents_up ) > 1 else ''} kept warm ( --all lists them )" ) )
     if everything:
         for z in warm:
             print( dim( f"  {z[ 'machine' ]}: imports kept warm beside {z[ 'agent' ]} ( pid {z[ 'pid' ]} )" ) )

@@ -47,7 +47,9 @@ def selection( local_root: Path, follow_links = False ):
     from .. import config
     from ..sync import Selection, Zone
     rel = config.outputs_rel( local_root )
+    # errand's outputs at any depth: a project that holds others ( a checkout of several ) holds theirs too
     zones = [ Zone( f"/{rel}", "errand" ), Zone( f"/{config.LEGACY}", "errand" ),
+              Zone( "errand-outputs", "errand" ), Zone( config.LEGACY.strip( "/" ), "errand" ),
               *[ Zone( p, kind ) for p, kind in config.settings.zones.items() ],
               *[ Zone( p, "build" ) for p in own_paths() ],
               *[ Zone( p, "build" ) for p in BUILT_THERE ] ]
@@ -91,9 +93,6 @@ class Ssh( Gateway ):
         return Over( self, self.remote_root( ctx ) )
 
     def run( self, inner, cmd: Command, ctx: Context, pull = None, echo = print ):
-        if inner and getattr( inner[ 0 ], "is_box", False ):
-            # Only the way to a Windows box: nothing goes through a POSIX machine, the box does it all.
-            return inner[ 0 ].run( inner[ 1 : ], cmd, ctx, pull = pull, echo = echo )
         there = self.place( ctx )
         remote_ctx = Context( root = there.root, tags = ctx.tags, remote = True, host = there,
                               origin = ctx.origin, interactive = ctx.interactive,
@@ -109,12 +108,9 @@ class Ssh( Gateway ):
                   transfer_by = self.transfer )
 
         if inner and isinstance( inner[ 0 ], Gateway ):
-            # A layer that leads somewhere again -- a machine to boot over
-            # there. It does its own work through `there`, and what it brings
-            # back into the project's copy over there comes back here in turn.
-            code = inner[ 0 ].run( inner[ 1 : ], cmd, remote_ctx, pull = pull, echo = echo )
-            pull = [ *( pull or [ ] ), *getattr( inner[ 0 ], "fetch", [ ] ) ]
-        elif bootstrap.is_errand( cmd.argv ):
+            # A machine to boot over there: errand runs in it through its agent ( `cli.guest` ), never here.
+            raise RuntimeError( f"{inner[ 0 ].describe()} is reached through its agent, not by Ssh.run" )
+        if bootstrap.is_errand( cmd.argv ):
             # errand itself: its sources go over there, and it starts on a
             # Python that is there -- found, or made for it ( `bootstrap` ).
             cache = bootstrap.prepare( self, inner, there, echo = echo )

@@ -74,16 +74,16 @@ def draw_rows( win, rows, cursor, box_inner, active, plain = False ):
 
 
 def _colour( row ):
-    if row.kind == "group":
+    if row.kind in ( "machine", "group" ):
         return curses.color_pair( C_TITLE ) | curses.A_BOLD
-    if row.kind == "broken" or row.mark in ( "FAIL", "lost" ):
+    if row.kind == "broken" or row.mark in ( "FAIL", "lost", "orph" ):
         return curses.color_pair( C_BAD )
-    if row.mark == "ok":
+    if row.mark in ( "ok", "run" ):
         return curses.color_pair( C_OK )
-    if row.mark == "skip":
+    if row.mark in ( "skip", "wait" ):
         return curses.color_pair( C_WARN )
-    if row.checked:
-        return curses.color_pair( C_OK )
+    if row.kind in ( "note", "more", "head" ):
+        return dim()
     return 0
 
 

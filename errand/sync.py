@@ -50,7 +50,8 @@ class Entry( NamedTuple ):
         if self.kind != other.kind:
             return False
         if self.kind == "f":
-            return ( self.size, self.mtime_ns, self.exe ) == ( other.size, other.mtime_ns, other.exe )
+            # to 100 ns: what NTFS keeps of an mtime that was set to the nanosecond
+            return ( self.size, self.mtime_ns // 100, self.exe ) == ( other.size, other.mtime_ns // 100, other.exe )
         if self.kind == "l":
             return self.target == other.target
         return True
@@ -196,6 +197,8 @@ def scan( root, sel: Selection, cache: dict | None = None, hashing = True ) -> M
                 elif stat.S_ISREG( st.st_mode ):
                     exe = bool( st.st_mode & stat.S_IXUSR )
                     prev = old.get( key )
+                    if os.name == "nt" and prev is not None and prev.kind == "f":
+                        exe = prev.exe           # Windows has no such bit ( it reads the extension ): as written
                     digest = prev.digest if prev is not None and prev.kind == "f" and \
                              ( prev.size, prev.mtime_ns ) == ( st.st_size, st.st_mtime_ns ) else ""
                     if hashing and not digest:

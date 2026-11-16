@@ -22,7 +22,7 @@ import shlex
 from pathlib import Path
 
 from .. import bootstrap, layers as L
-from . import mode, upstream as U
+from . import upstream as U
 
 
 def target( env, stack, tags, phase, *, root, ssh = None, cache = None, keep_alive = None ) -> dict:
@@ -58,11 +58,9 @@ def target( env, stack, tags, phase, *, root, ssh = None, cache = None, keep_ali
                  "cwd": str( root ), "keep_alive": keep }
     if ssh is None:
         argv = [ "sh", "-c", line ]
-    elif mode() == "hub":
-        # Through the host agent: its interactive shell, as every remote line is.
-        argv = [ *U.rsh_argv( ssh.host, ssh.options ), ssh.host, f"$SHELL -ic {shlex.quote( line )}" ]
     else:
-        argv = [ "ssh", "-T", *L.ssh_options( ssh.options ), ssh.host, f"$SHELL -ic {shlex.quote( line )}" ]
+        # Through the host agent: its interactive shell, as every remote line is.
+        argv = [ *U.rsh_argv( ssh.host, ssh.options, via = None ), ssh.host, f"$SHELL -ic {shlex.quote( line )}" ]
     where = ssh.host if ssh is not None else "here"
     return { "kind": "cmd", "id": f"{where}:{name}", "argv": argv, "keep_alive": keep }
 

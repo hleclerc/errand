@@ -44,19 +44,17 @@ def say( s ):
     print( dim( s ), flush = True )
 
 
-def eligible( env, tags ) -> bool:
-    """Driven from here: always -- a virtual machine when errand can run in it ( it has a Python )."""
-    return env.vm is None or guest.usable( env )
-
-
-def arrive( env, tags, root ):
-    """The project over there, and errand's sources: -> where it all is."""
+def arrive( env, tags, root, project = True ):
+    """The project over there, and errand's sources: -> where it all is. Without `project`, errand's sources only: a
+    guest that takes the project from here ( `guest.by_rsync` )."""
     ssh = L.ssh_of( env.stack_for( "run", tags ) )
     there = ssh.remote_root( L.Context( root = root ) ) if ssh is not None else root
     for message in L.warnings_for( env.stack_for( "run", tags ), there ):
         print( warn( f"  warning: {message}" ), flush = True )
     cache = None
-    if ssh is not None:
+    if ssh is not None and not project:
+        cache = bootstrap.ship( ssh.host, ssh.options )
+    elif ssh is not None:
         say( f"  {L.transfer( ssh.transfer )} push -> {ssh.host}:{there}" )
         L.push( root, ssh.host, there, ssh.options, echo = say, outputs = ssh.errand_outputs_directory,
                 transfer_by = ssh.transfer )
@@ -100,18 +98,10 @@ class Reach:
         if w.ssh is not None:
             # over there, errand's outputs are the copy's own: not wherever this side keeps them
             child = { **child, config.OUTPUTS_ENV: config.outputs_rel( w.root ) }
-        if self.kind == "alive":
-            self._warm_or_not()
-        if not agents.enabled() and self.kind != "watched":
-            # No agent ( ERRAND_AGENT=off ): the same session, through one ssh of its own, or here.
-            line = self.line( request, child )
-            if w.ssh is None:
-                return LocalSession( [ "sh", "-c", line ], cwd = str( w.root ) )
-            return LocalSession( [ "ssh", "-T", *L.ssh_options( w.ssh.options ), w.ssh.host, f"$SHELL -ic {shlex.quote( line )}" ] )
         if self.kind in ( "agent", "alive" ):
             self.target = ( envs.target( self.env, self.stack, self.tags, self.phase, root = w.there, ssh = w.ssh,
                                          cache = w.cache ) if self.kind == "agent"
-                            else alive.Allocation( self.env, self.tags, w, self.phase ).env_target() )
+                            else self._allocation().env_target() )
             conn = agents.open( self.target )
             return Session.start( conn, envs.ops_argv( envs.python_of( conn ), w.boot, request,
                                                        L.preload_of( self.inner ) ),
@@ -126,20 +116,24 @@ class Reach:
         return Session.start( agents.open( self.target ), [ "sh", "-c", LOGIN, "sh", line ], store = store_of( w ) )
 
 
-    def _warm_or_not( self ):
-        """The allocation held warm, if this command fits in it; else a job of its own ( `srun` ),
-        after giving the warm one back if nothing runs in it -- it may hold the very nodes."""
+    def _allocation( self ):
+        """The allocation this command runs in ( ADR 0009 ): the declaration's, shared, if it fits
+        there; else one of its own size -- shared in turn -- after giving the declaration's back if
+        nothing runs in it: it may hold the very nodes."""
+        if getattr( self, "_alloc", None ) is not None:
+            return self._alloc                 # -j: every session of this command, in the same one
         w = self.where
         alloc = alive.Allocation( self.env, self.tags, w, self.phase )
         host = L.Over( w.ssh, w.there ) if w.ssh is not None else L.Here( w.root )
         needs = { k: v for k, v in ( self.ctx.needs or { } ).items() if k != "time" }
         ok, why = alive.fits( alloc, needs, ( self.ctx.needs or { } ).get( "time" ), host )
-        if ok:
-            return
-        say( f"  not in the allocation kept warm ( {why} ): a job of its own" )
-        if alive.release_if_idle( alloc, host ):
-            say( "  the allocation kept warm was given back first" )
-        self.kind = "command"
+        if not ok:
+            say( f"  not in the allocation of {self.env.name} ( {why} ): one of its own size" )
+            if alive.release_if_idle( alloc, host ):
+                say( "  the allocation of the declaration was given back first" )
+            alloc = alive.Allocation( self.env, self.tags, w, self.phase, needs = self.ctx.needs )
+        self._alloc = alloc
+        return alloc
 
 
 def _requests( env, tags, verb, known, kinds, where ) -> dict:
@@ -216,7 +210,8 @@ def drive( env, tags, verb, known, *, root, out_root, report, kinds, pull = ( ) 
 def _drive_guest( env, tags, verb, known, *, root, report, kinds, pull ) -> int:
     """The same, in a virtual machine: held for as long as this runs, everything through its guest agent."""
     from ..vm.common import VmError
-    where = arrive( env, tags, root )
+    through_copy = guest.by_rsync( L.ssh_of( env.stack_for( "run", tags ) ) )
+    where = arrive( env, tags, root, project = through_copy )
     child = child_env_for( env, tags )
     base = _requests( env, tags, verb, known, kinds, where )
     how_many = job_count( known.jobs )
@@ -242,11 +237,12 @@ def _drive_guest( env, tags, verb, known, *, root, report, kinds, pull ) -> int:
                 return INTERRUPTED
             box.update( next( ( b for b in boxes if b.get( "plan" ) ), { } ) )
             plan = box.get( "plan" ) or { }
-            g.fetch( [ plans_rel( root ), *sorted( { r[ "under" ] for r in plan.get( "runs", [ ] ) } ), *pull ] )
+            g.fetch( [ plans_rel( root ), *sorted( { r[ "under" ] for r in plan.get( "runs", [ ] ) } ), *pull, *L.back_zones() ] )
     except VmError as err:
         say( f"  {err}" )
         return 1
-    _bring_back( where, env.name, box, pull )
+    if through_copy:                # otherwise the guest's results came straight here
+        _bring_back( where, env.name, box, pull )
     return max( rcs ) if rcs else 0
 
 

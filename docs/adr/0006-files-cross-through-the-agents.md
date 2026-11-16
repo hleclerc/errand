@@ -175,6 +175,24 @@ volumes; how far below is measured, not assumed.
    the hub's agent or one ssh. It is unpacked beside the copy and moved into its place, with
    Python, else `tar`. This is not behind the `transfer` option: rsync is no longer needed to start
    errand anywhere. On lmo a ship through a warm hub takes 0.21 s.
-6. The Windows guest: sync through its agent, and MSYS2 goes.
+6. The Windows guest: sync through its agent, and MSYS2 goes. Done, and seen on lmo's guest on
+   2026-11-16 with `win-numpy` (the whole of `~/Projects`, 11 465 files, 4 GB). The first push
+   over the copy rsync had left sent 20 files (187 MB) and touched 11 292; the command ran and its
+   results came back here. The next command, with the machine warm, took 15 s in all and sent
+   1 file. The guest showed three things the tests had not:
+   - paths past 260 characters, in a run directory named after a test. The agent now opens a
+     copy's root as `\\?\E:\…`;
+   - nested projects' `errand-outputs`, which rsync left out anywhere. They are an `errand` zone at
+     any depth now;
+   - NTFS keeps an mtime to 100 ns and has no executable bit. Mtimes are compared to 100 ns, and a
+     walk on Windows keeps the bit errand wrote.
+
+   The project and its `also` cross from here straight into the guest, through an agent of
+   the guest that no layer starts (`host-<key>`, as the host agent of an `Ssh`). The project is
+   then not there when it starts. Results come straight back here too, so the copy on the machine
+   that runs QEMU plays no part. Links are followed. errand's sources are a tar on the stdin of one
+   cmd.exe line, unpacked by Windows' `tar` beside their place and moved into it, and skipped
+   when the sources key is already there. `transfer = "rsync"` (or `ERRAND_TRANSFER=rsync`) keeps
+   the old way. MSYS2 leaves the image only once a guest has been seen to work without it.
 7. Sync becomes the default, rsync the option.
 8. Local watching as a hint.

@@ -1,135 +1,27 @@
-# 2 · Adopt an existing suite
+---
+search: false
+sidebar: false
+aside: false
+---
 
-A pytest suite, a Catch2 suite and a cargo one, none of them modified. Three lines in
-`errand-project.py` put all three under `errand`.
+# Adopt an existing suite
 
-```bash
-cd examples/02-existing-suite
-```
+This page moved: [Adopting a suite](/guide/runners/adopting).
 
-```
-errand-project.py        three runners, and nothing else
-tests/test_api.py        ordinary pytest, still runs under `pytest`
-cpp/test_geometry.cpp    ordinary Catch2, still runs on its own
-cpp/Makefile             whatever you already build with
-rust/                    ordinary cargo
-```
-
-There are no environments here on purpose: this example is about adopting suites, and declaring one
-would have running it build a micromamba environment on your machine. Environments are
-[tutorial 2](./environments).
-
-## The three lines
-
-```python
-# errand-project.py
-import errand
-
-errand.configure( src = [ "src" ] )
-
-errand.runners.replace( errand.Pytest( dirs = [ "tests" ] ) )
-errand.runners.replace( errand.Catch2( dir = "cpp", build = "make -C cpp" ) )
-errand.runners.replace( errand.Cargo( manifest = "rust/Cargo.toml" ) )
-```
-
-That is the whole adoption — and pytest, Catch2 and cargo are runners already, active with no
-configuration: these lines only say where to look and how to build. Nothing below them changes a
-single line of the existing tests.
-
-## Try it
-
-```bash
-errand run '**::*'                      # all three suites
-errand run "tests/test_api.py::*"       # the python ones
-errand run cpp/test_geometry.cpp::area  # one Catch2 case, by name
-errand run -e '!slow' '**::*'           # pytest marks are entry tags
-errand run --grid=, --env local,old '**::*'      # every suite, both python versions
-errand run pytest tests/                # the pytest command itself, in the place, recorded
-```
-
-The `::` is what sends a target to the suites' runners; without it, `pytest` is just a command.
-`errand.default_run = [ "**::*" ]` in `errand-project.py` would make a bare `errand run` mean all
-three.
-
-## What adopting them buys
-
-Each suite keeps its own runner, its own assertions and its own idea of what a test is. What it
-gains is everything that happens around the run:
-
-| | before | after |
-|---|---|---|
-| where it runs | wherever you typed it | any declared environment, several at once |
-| output | scrollback | a directory per run, per place, per date |
-| numbers | printed | `result.yaml`, summarized across dates and machines |
-| on another machine | copy, ssh, remember to fetch | one flag, results rsynced back |
-
-The Catch2 benchmark in `cpp/test_geometry.cpp` is the clearest case: it already measured something,
-and the measurement went to the terminal and died there. Now:
-
-```bash
-errand run --batch -k bench --env local -e '!legacy' '**::*'
-errand watch
-```
-
-and the numbers accumulate per machine and per date, next to the Python ones, in the same tree.
-
-## Guessing, and writing the guess down
-
-`errand run` never guesses: with no `errand-*.py` at all, the built-in runners take these suites
-as they are, pytest's files anywhere, Catch2 sources with no build to run first. What fits this
-layout is for `errand init` to suggest, and for you to write down.
-
-Every framework locates its tests by assuming something about your layout, so there is no version of
-this that does not guess. What `errand-project.py` changes is that the assumption is **visible,
-versioned, and arguable** — `Pytest( dirs = [ "tests" ] )` says exactly what will be looked at, and
-takes arguments to say something else.
-
-Try it. Move the file aside and have errand write one from the bare directory:
-
-```bash
-mv errand-project.py errand-project.bak
-errand init  # errand-project.py again, the runner lines in comments, and an errand-envs.py
-```
-
-What it found is written **in comments**, with a `default_run` to start from: nothing is active until
-you uncomment it. The `errand.configure( src = … )` line is not in what `errand init` writes — it is
-not a thing a directory can tell: it is yours to add.
-
-## Compiling, and finding the binary
-
-errand compiles nothing itself. It runs the command you already build with, once, and then expects
-the binaries where you say they land:
-
-```python
-# errand-project.py
-errand.runners.replace( errand.Catch2( dir = "cpp", build = "make -C cpp" ) )
-errand.runners.replace( errand.Catch2( dir = "cpp", build = "cmake --build build", binary = "build/{stem}" ) )
-```
-
-`build` runs **once before any entry of that runner** — not once per file, and not once per
-parallel process, which under `-j` would have several of them writing the same binary at the same
-time. `binary` says where a source's executable ends up, `{stem}` being the source's name; it
-defaults to `<dir>/<stem>`, which is where the Makefile here puts it. Leave `build` out entirely if
-something else already built them.
-
-Nothing about your build is errand's business. It does not know your compiler, your flags or your
-layout, and asking it to would be asking it to have opinions it has no way to hold.
-
-`cargo` needs none of this: `cargo test` builds what it runs, and `cargo metadata` lists the targets
-without building anything at all.
-
-## What to notice
-
-- **The C++ runner is one entry per test case, after a build.** The build runs during the
-  preparation, where the cases will run, and the binary is then asked for its own cases.
-- **pytest marks become entry tags.** `-e '!slow'` filters them, with the same
-  [expression language](/reference/expressions) that `-t` uses on environments.
-- **A missing tool is installed when the environment is errand's to install into.** A `Pytest`
-  runner whose interpreter has no pytest installs it — into a venv, a micromamba environment, a
-  container — and says so. Into the *system* interpreter it declines and tells you what to run.
-- **Nothing was converted.** `pytest tests/` and `./cpp/test_geometry` still work exactly as before.
-  A runner runs the suite you already have; it does not replace it.
-
-## Next
-
-[3 · A bench over two machines](./two-machines).
+<script setup>
+import { onMounted } from 'vue'
+import { withBase } from 'vitepress'
+// the old anchors, to where each one went
+const moved = {
+  "the-three-lines": "/guide/runners/adopting#the-three-lines",
+  "try-it": "/guide/runners/adopting#running-it",
+  "what-adopting-them-buys": "/guide/runners/#what-adopting-them-buys",
+  "guessing-and-writing-the-guess-down": "/guide/runners/adopting#letting-errand-write-the-lines",
+  "compiling-and-finding-the-binary": "/guide/runners/adopting#building-and-finding-the-binary",
+  "what-to-notice": "/guide/runners/adopting#what-to-notice"
+}
+onMounted( () => {
+  const to = moved[ decodeURIComponent( location.hash.slice( 1 ) ) ] || "/guide/runners/adopting"
+  location.replace( withBase( to ) )
+} )
+</script>

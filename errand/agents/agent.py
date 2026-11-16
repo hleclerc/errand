@@ -17,7 +17,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import endpoint, frames as F
+from . import endpoint, frames as F, look
 from .procs import finished, locate, Proc, sweep
 
 
@@ -29,6 +29,7 @@ class Agent:
         self.clients    = 0
         self.idle_since = time.monotonic()
         self.lock       = threading.Lock()
+        self.web        = None              # the page it serves, a host agent only ( `errand.web` )
 
     # -- one client -----------------------------------------------------------
 
@@ -114,6 +115,10 @@ class Agent:
             elif op in ( "sync", "pull" ):
                 from . import syncop
                 syncop.serve( self, writer, channels, channel, req )      # its own REPLY, from its thread
+            elif op in look.OPS:
+                # What a watcher asks ( `errand tui` ): from a thread, a table may wait on a guest's ssh.
+                threading.Thread( target = lambda: writer.send( channel, F.REPLY, look.answer( req ) ),
+                                  daemon = True ).start()
             elif op == "list":
                 writer.send( channel, F.REPLY, { "ok": True, "procs": finished( self.root, req.get( "store" ),
                                                                                 req.get( "ids" ) ) } )
@@ -152,6 +157,8 @@ class Agent:
             if any( p.code is None for p in self.procs.values() ):
                 self.idle_since = time.monotonic()
                 self._said_on_disk( "running" )       # for a keeper that asks ( a Windows guest's )
+        if self.web is not None and self.web.used( 30.0 ):
+            self.idle_since = time.monotonic()        # a page open on it, asking
         busy = time.monotonic() - self.idle_since <= self.keep_alive
         if busy:
             self._busy()
@@ -222,8 +229,17 @@ class Agent:
         # Swept once the directory is held: another agent's processes are never this one's to kill.
         from . import syncop
         # Going: the copies it synced are checked once more ( ADR 0006 ), for the next push to say.
-        return endpoint.serve( self.root, self.idle, client, starting = lambda: sweep( self.root ),
-                               closing = syncop.closing )
+        def starting():
+            sweep( self.root )
+            from .. import web
+            self.web = web.start( self.root )
+
+        def closing():
+            if self.web is not None:
+                self.web.stop()
+            syncop.closing()
+
+        return endpoint.serve( self.root, self.idle, client, starting = starting, closing = closing )
 
 
 def _cache( ) -> str:

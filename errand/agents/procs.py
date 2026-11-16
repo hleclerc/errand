@@ -61,8 +61,9 @@ class Proc:
             ( d / "meta.json" ).write_text( json.dumps( meta ) )
         if self.dir != self.mark:
             ( self.mark / "where" ).write_text( str( self.dir ) )
-        # Where it can leave its owner a word: `on_stop`, a shell line run when it is stopped ( a
-        # job to cancel, that a kill of its process group would not reach ).
+        # Where it can leave its owner a word ( ADR 0009 ): `cancel`, a shell line run when it is
+        # stopped ( a job that a kill of its process group would not reach ), and `waiting`, what
+        # it waits for ( `arrival` ).
         env = { **( env or { } ), "ERRAND_PROC_DIR": str( self.mark ) }
         self.child = spawn.start( argv, env, cwd, tty )
         # Who it is, for whoever finds the marker once this agent is gone: the group it leads
@@ -99,7 +100,7 @@ class Proc:
     def _wait( self ):
         code = self.child.wait()
         if self.stopping:
-            on_stop( self.mark )
+            cancel( self.mark )
             # Stopped, not ended: what the leader started and left behind in its group ( its job, on
             # Windows ) goes with it. Only then -- a leader that ends by itself may leave work it meant
             # to ( `nohup … &` ).
@@ -173,12 +174,12 @@ class Proc:
             t.start()
 
     def _escalate( self, sig ):
-        # Its `on_stop` comes last, never first: INT and TERM let it end as it means to ( a srun
+        # Its `cancel` comes last, never first: INT and TERM let it end as it means to ( a srun
         # cancels its own job ), and what is cancelled then is only what is left -- a job still
         # queued, an allocation a killed salloc would leave behind. Here, or once it has exited
         # ( `_wait` ), whichever comes first; it runs once.
         if sig == SIGKILL:
-            on_stop( self.mark )
+            cancel( self.mark )
         self.child.signal( sig )
 
     def wait_gone( self, timeout: float ) -> bool:
@@ -309,11 +310,11 @@ def running( root: Path ) -> list:
     return [ m.name for m, _, meta in _recorded( root ) if ours( meta[ "pgid" ], meta.get( "since" ) ) ]
 
 
-def on_stop( mark: Path ):
-    """What a process said must happen when it is stopped ( `on_stop` in its marker ): run once, at
+def cancel( mark: Path ):
+    """What a process said must happen when it is stopped ( `cancel` in its marker, ADR 0009 ): run once, at
     the end of the stop -- once it has exited, or before its SIGKILL --, whoever stops it: its
     agent, or the next one, for an orphan."""
-    word = mark / "on_stop"
+    word = mark / "cancel"
     try:
         line = word.read_text().strip()
         word.unlink()
@@ -334,7 +335,7 @@ def kill_orphans( root: Path ) -> list:
     killed = [ ]
     for m, d, meta in _recorded( root ):
         if end_group( meta[ "pgid" ], meta.get( "since" ) ):
-            on_stop( m )                   # after TERM and KILL: what they left ( a queued job )
+            cancel( m )                    # after TERM and KILL: what they left ( a queued job )
             killed.append( m.name )
             try:
                 ( d / "exit" ).write_text( str( -SIGKILL ) )

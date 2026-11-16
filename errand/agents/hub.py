@@ -39,7 +39,21 @@ class Upstream:
         self.lock   = threading.Lock()
         self.next   = 1
         self.alive  = True
-        self._skip()
+        # Until it answers, it may wait long ( an allocation in Slurm's queue ): the hub kills it
+        # if every command that wanted it went away meanwhile ( ADR 0009 ).
+        key = U.identity( target )
+        with hub.lock:
+            hub.pending[ key ] = self.proc
+        try:
+            self._skip()
+        except BaseException:
+            self.proc.kill()        # never left behind, nor unreaped
+            self.proc.wait()
+            raise
+        finally:
+            with hub.lock:
+                if hub.pending.get( key ) is self.proc:
+                    del hub.pending[ key ]
         threading.Thread( target = self._pump, daemon = True ).start()
 
     def _write( self, data ):
@@ -102,6 +116,8 @@ class Hub:
         self.root, self.keep_alive = Path( root ), keep_alive
         self.upstreams : dict = { }     # identity of target -> Upstream
         self.making    : dict = { }     # identity of target -> the lock of whoever is making it
+        self.pending   : dict = { }     # identity of target -> the bridge being made, not answering yet
+        self.wanting   : dict = { }     # identity of target -> how many commands wait for it
         self.clients = 0
         self.idle_since = time.monotonic()
         self.started = time.time()
@@ -125,6 +141,46 @@ class Hub:
                     self.upstreams[ key ] = up
             return up
 
+    def waited( self, target: dict, conn: socket.socket ) -> Upstream:
+        """`upstream`, for a command that may go away while it waits: a command says nothing until
+        its route is answered, so its socket readable means it is gone. When the last command that
+        wanted a target being made is gone, the bridge being made goes ( and with it, over there, what
+        it waited for: its lease goes stale, ADR 0009 )."""
+        import select
+        key = U.identity( target )
+        with self.lock:
+            self.wanting[ key ] = self.wanting.get( key, 0 ) + 1
+        done, gone = threading.Event(), threading.Event()
+
+        def watch():
+            while not done.is_set():
+                try:
+                    readable = select.select( [ conn ], [ ], [ ], 0.5 )[ 0 ]
+                    if not readable or conn.recv( 1, socket.MSG_PEEK ):
+                        continue
+                except OSError:
+                    pass
+                with self.lock:
+                    if done.is_set():
+                        return
+                    gone.set()
+                    self.wanting[ key ] -= 1
+                    proc = self.pending.get( key ) if not self.wanting[ key ] else None
+                if proc is not None:
+                    proc.terminate()
+                return
+
+        threading.Thread( target = watch, daemon = True ).start()
+        try:
+            return self.upstream( target )
+        finally:
+            with self.lock:
+                done.set()
+                if not gone.is_set():
+                    self.wanting[ key ] -= 1
+                if not self.wanting[ key ]:
+                    del self.wanting[ key ]
+
     def forget( self, up: Upstream ):
         with self.lock:
             for k, v in list( self.upstreams.items() ):
@@ -145,7 +201,7 @@ class Hub:
                 writer.send( channel, F.REPLY, { "error": "route first" } )
                 return
             try:
-                up = self.upstream( req[ "target" ] )
+                up = self.waited( req[ "target" ], conn )
             except Exception as err:
                 writer.send( channel, F.REPLY, { "error": f"cannot reach the agent: {err}" } )
                 return

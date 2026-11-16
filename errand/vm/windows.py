@@ -2,17 +2,14 @@
 """
 from __future__ import annotations
 
-import posixpath
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from .. import layers as L
-from .common import _backslashed, _sh, VmError, where
+from .common import _backslashed, _sh, where
 from .places import images_dir, images_rel
-from .facts import Facts, need, package_hint
-from .datadisk import DATA_DRIVE, FLUSH_SCRIPT, powershell
-from .machine import Machine
+from .datadisk import DATA_DRIVE
 from .install import install
 from .guest import EVALUATION_ISO, VCVARS
 
@@ -118,44 +115,8 @@ class Windows( L.Gateway, L.Artefact ):
         return " && ".join( parts )
 
     def run( self, inner, cmd: L.Command, ctx: L.Context, pull = None, echo = print ):
-        there = self.guest_root( ctx )
-        # PYTHONPATH as computed here names directories of THIS machine.
-        env = { k: v for k, v in cmd.env.items() if k != "PYTHONPATH" }
-        wrapped = L.compose( inner, L.Command( L.under( cmd.argv, "python" ), env ),
-                             L.Context( root = Path( there ), tags = ctx.tags, remote = True ) )
-        if any( "\n" in str( a ) for a in cmd.argv ):
-            # cmd.exe reads one line: the rest would be dropped without a word.
-            echo( "  a command for windows is one line: cmd.exe would drop everything after a newline "
-                  "-- put the script in a file of the project, and run that" )
-            return 1
-        name = self.image_name( ctx )
-        if ctx.host.shell( ready_line( name, keyed = True ), quiet = True ).returncode:
-            echo( f"  windows is not installed yet {where( ctx.host )} -- errand setup <name>" )
-            return 1
-        try:
-            m = Machine( ctx.host, Facts.of( ctx.host ), name )
-            need( m.facts, ( "rsync", ), package_hint( m.facts, [ "rsync" ] ) )
-            with m.using( self.booted(), echo ):
-                echo( f"  copy in -> windows:{there}" )
-                m.push( there )
-                for other in self.also:
-                    m.push( posixpath.normpath( f"{there}/{other}" ), f"{other}/" )
-                line = self.line( wrapped, there )
-                echo( f"  > {line}" )
-                code = m.guest( line ).returncode
-                if self.data:
-                    m.guest( powershell( FLUSH_SCRIPT ), quiet = True )
-                wanted = [ *( pull or [ ] ), *self.fetch ]
-                if wanted:
-                    echo( f"  fetch <- windows:{there} [{', '.join( wanted )}]" )
-                    m.fetch( wanted, there )
-                return code
-        except VmError as err:
-            echo( f"  {err}" )
-            return 1
-        except subprocess.CalledProcessError as err:
-            echo( f"  could not copy the project in: {err}" )
-            return 1
+        # Everything in the guest goes through its agent ( `cli.guest`, ADR 0009 ): no cmd.exe line.
+        raise RuntimeError( "a Windows guest is reached through its agent ( errand run, errand shell )" )
 
 
 class Install:

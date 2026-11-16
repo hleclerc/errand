@@ -14,9 +14,14 @@ is built, so collecting is cheap.
 | `dirs` | the directories its files must be under, relative to the project root. Default: anywhere |
 | `patterns` | the file names it takes |
 | `args` | extra arguments passed to pytest |
-| `python` | the interpreter to run pytest with. Default: the current one |
-| `install` | `"auto"` — install pytest when the environment is errand's to install into; `True`, `False` |
+| `python` | the interpreter to run pytest with. Default: the one errand runs with, in the place |
+| `install` | `"auto"`: install pytest when the environment is errand's to install into; `True`, `False` |
 | `spec` | what to install, when it installs. `"pytest"`, or a pinned spec |
+
+```python
+# errand-project.py
+errand.runners.replace( errand.Pytest( dirs = [ "tests" ] ) )
+```
 
 A `@pytest.mark.slow` **is** an entry tag, so `-e '!slow'` filters it with the same
 [expression language](/reference/expressions) that `-t` uses on environments.
@@ -29,4 +34,5 @@ so. Into the **system** interpreter it declines and tells you what to run: that 
 everything else on the machine, and it is not errand's to change.
 :::
 
-`install = False` turns this off entirely.
+`install = False` turns this off entirely; `install = True` installs even into the system
+interpreter.

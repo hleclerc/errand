@@ -44,10 +44,18 @@ def rsync_line( reach: list, there: str, source: str = "./", address: str = f"{U
     """The project, minus what an `Ssh` push leaves out too, into `there` in the
     guest -- run from its root on the machine that runs QEMU. Links followed, as
     NTFS has none worth the name; no permission, owner or group, which the
-    guest's ACLs would only garble. Nothing deleted: what a command built beside
+    guest's ACLs would only garble. The project's zones left out, as by a push. Nothing deleted: what a command built beside
     the sources is not on this side, and must stay over there."""
     return L.sh( [ "rsync", "-rtL", "-e", L.sh( reach ), "--rsync-path", GUEST_RSYNC,
-                   *[ f"--exclude={e}" for e in EXCLUDES + L.own_paths() ], source, f"{address}:{msys_path( there )}/" ] )
+                   *[ f"--exclude={e}" for e in EXCLUDES + L.own_paths() + _zones() ], source,
+                   f"{address}:{msys_path( there )}/" ] )
+
+
+def _zones() -> list:
+    """The project's zones ( `configure( zones = ... )` ), anchored at its root: what an `Ssh` push
+    leaves out, results to bring back or builds, is no source for the guest either."""
+    from .. import config
+    return [ "/" + p.strip( "/" ) for p in config.settings.zones ]
 
 
 # rsync's 23 ( "some files were not transferred" ) and 24 ( "some vanished" ),

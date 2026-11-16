@@ -47,6 +47,7 @@ if test( "a session says its project and what it runs; anything else, its record
     assert describe( { "argv": [ "sleep", "9" ], "store": "/p/proj/errand-outputs/state/procs" } )[ "project" ] == "/p/proj"
     assert describe( { "argv": [ "sleep", "9" ], "cwd": "/p/other" } )[ "project" ] == "/p/other"
     assert describe( { "argv": [ "py", "-m", "errand.vm", "keep", "/x" ] } )[ "vm" ]
+    assert not describe( { "argv": [ "py", "-m", "errand.vm", "use", "{}" ] } )[ "vm" ], "a command's hold is under its project"
 
 
 if test( "what an agent runs is read from its directory: running while it lives, orphaned once it is killed" ):
@@ -156,3 +157,217 @@ if test( "status: this project in full, one line per other one, --all expands; t
     with contextlib.redirect_stdout( out ):
         S.show_running( Path( "/x/sdot" ), everything = True )
     assert "cccccccc" in out.getvalue() and "kill -- -4242" in out.getvalue(), out.getvalue()
+
+
+if test( "a wait is said in the waiter's record, keeps its start across states, and goes once arrived ( ADR 0009 )" ):
+    from errand.agents import arrival
+    with scratch() as d:
+        os.environ[ arrival.ENV ] = str( d )
+        try:
+            arrival.waiting( "windows vm abc queued", key = "vm" )
+            first = arrival.read( d )
+            time.sleep( 0.05 )
+            arrival.waiting( "windows vm abc booting", key = "vm" )
+            got = arrival.read( d )
+            assert got[ "what" ] == "windows vm abc booting" and got[ "since" ] == first[ "since" ], ( first, got )
+            arrival.arrived( key = "vm" )
+            assert arrival.read( d ) is None
+        finally:
+            del os.environ[ arrival.ENV ]
+        arrival.waiting( "nobody to tell" )               # no agent: nothing written, nothing raised
+        # the shell's version, for the scripts an agent runs
+        line = arrival.SHELL_WAITING + 'waiting "slurm job 7 pending" 7; cat "$ERRAND_PROC_DIR/waiting"; arrived; ls "$ERRAND_PROC_DIR"'
+        out = subprocess.run( [ "sh", "-c", line ], capture_output = True, text = True,
+                              env = { **os.environ, arrival.ENV: str( d ) } ).stdout
+        said = json.loads( out.splitlines()[ 0 ] )
+        assert said[ "what" ] == "slurm job 7 pending" and said[ "job" ] == "7" and said[ "since" ] > 0, out
+        assert "waiting" not in out.splitlines()[ 1 : ], "arrived left the wait behind"
+
+
+if test( "what a process of an agent waits for is read by table, and shown by status" ):
+    from errand import agents
+    from errand.agents import arrival, table as T
+    from errand.cli import standing as S
+    os.environ[ "ERRAND_AGENT" ] = "direct"
+    agents._open.clear()
+    with scratch() as base:
+        d = base / "agents" / "w"
+        conn = agents.open( { "kind": "local", "dir": str( d ), "keep_alive": 5 } )
+        pid = agents.start( conn, [ "sh", "-c", arrival.SHELL_WAITING + 'waiting "slurm job 81234 pending" 81234; exec sleep 60' ] )
+        try:
+            deadline = time.monotonic() + 10
+            rows = [ ]
+            while time.monotonic() < deadline and not any( r.get( "waiting" ) for r in rows ):
+                time.sleep( 0.1 )
+                rows = T.procs_of( d, T.served( d ) )
+            assert rows and rows[ 0 ][ "waiting" ][ "job" ] == "81234", rows
+            now = time.time() + 130
+            out = io.StringIO()
+            with contextlib.redirect_stdout( out ):
+                S.show_running( Path( "/x/proj" ), got = [ ( "here", { "time": now, "procs": [ { **rows[ 0 ], "project": "/x/proj" } ],
+                                                                        "vms": [ ], "guests": [ ] }, None ) ] )
+            assert "waiting: slurm job 81234 pending" in out.getvalue() and "2 min" in out.getvalue(), out.getvalue()
+        finally:
+            agents.client.stop( agents.attach( conn, pid ) )
+            conn.close()
+            agents._open.clear()
+
+
+if test( "a login node's hold on an allocation, started through rsh with no directory, says its project and env" ):
+    import shlex
+    from types import SimpleNamespace
+    import errand
+    from errand.agents.table import describe
+    from errand.cli.alive import Allocation
+    env = errand.Env( [ errand.Ssh( host = "cluster" ), errand.Slurm( keep_alive = "30m" ) ] )
+    env.name = "jz"
+    where = SimpleNamespace( root = Path( "/proj" ), ssh = errand.Ssh( host = "cluster", root = "/scratch/sdot" ),
+                             there = Path( "/scratch/sdot" ), cache = "/home/me/.cache/errand", boot = "/home/me/_boot.py" )
+    a = Allocation( env, { }, where )
+    # what `rsh` hands the login node's agent: sh -c "sh -c '<script>'"
+    got = describe( { "argv": [ "sh", "-c", f"sh -c {shlex.quote( a.script() )}" ] } )
+    assert ( got[ "project" ], got[ "env" ], got[ "kind" ] ) == ( "/scratch/sdot", "jz", "allocation" ), got
+    assert got[ "what" ] == f"slurm allocation {a.name[ : 8 ]}", got
+    bridge = describe( { "argv": [ "sh", "-c", "exec \"${SHELL:-/bin/sh}\" -ic 'cd /scratch/sdot && micromamba run -n x "
+                                               "python /c/_boot.py -m errand.agents connect /c/agents/env-0123456789 900'" ] } )
+    assert ( bridge[ "project" ], bridge[ "kind" ], bridge[ "what" ] ) == ( "/scratch/sdot", "agent", "environment agent env-0123456789" ), bridge
+
+
+if test( "an allocation's agents are read on its node, not from the login node; environment agents are folded" ):
+    from errand.agents import table as T
+    from errand.cli import standing as S
+    with scratch() as base:
+        job = base / "alloc" / "abc" / "81234"
+        for d in ( base / "agents" / "lmo", job, job / "env-0123456789" ):
+            ( d / "proc" ).mkdir( parents = True )
+            ( d / "lock" ).touch()
+        only = T.scan( guests = False, only = job )
+        assert only[ "vms" ] == [ ] and only[ "nodes" ] == [ ]
+        asked = [ ]
+        T.allocations = lambda cache: [ ( job, "81234", "r1i0n3" ) ]
+        T.node_table = lambda d, j, n: asked.append( ( d, j, n ) ) or { "procs": [ ] }
+        T.roots = lambda: [ base ]
+        T.bootstrap.local_cache = lambda: base
+        got = T.scan( guests = False )
+        assert asked == [ ( job, "81234", "r1i0n3" ) ] and got[ "nodes" ][ 0 ][ "node" ] == "r1i0n3", got
+    now = time.time()
+    row = lambda i, **kw: { "agent": "a", "id": i, "pid": 1, "started": now - 60, "keep": False, "state": "running",
+                            "project": "/scratch/sdot", "what": f"run {i}", **kw }
+    table = { "time": now, "procs": [ row( "eeeeeeee5", kind = "agent", what = "environment agent env-0123456789" ) ],
+              "vms": [ ], "guests": [ ],
+              "nodes": [ { "node": "r1i0n3", "job": "81234", "procs": [ row( "ffffffff6" ) ] },
+                         { "node": "r1i0n4", "job": "81235", "error": "srun: error: job 81235 has ended" } ] }
+    out = io.StringIO()
+    with contextlib.redirect_stdout( out ):
+        assert S.show_running( Path( "/x/sdot" ), got = [ ( "here", { "time": now, "procs": [ ], "vms": [ ], "guests": [ ] }, None ),
+                                                           ( "jz", table, None ) ] ) == 1
+    said = out.getvalue()
+    for want in ( "jz > r1i0n3", "ffffffff", "1 environment agent kept warm", "jz > r1i0n4 ( slurm job 81235 ): cannot say" ):
+        assert want in said, f"{want!r} not in:\n{said}"
+    assert "eeeeeeee" not in said and "?" not in said.replace( "( --all", "" ), said
+
+
+if test( "a run says its steps in its journal: merged at 10 Hz, never the last lost, nothing without a run ( ADR 0010 )" ):
+    from errand import steps
+    with scratch() as d:
+        journal = d / steps.FILE
+        kept = os.environ.get( steps.ENV )                 # this test's own run has one
+        os.environ[ steps.ENV ] = str( journal )
+        try:
+            for i in range( 1, 101 ):                       # a tight loop: a few lines, not a hundred
+                steps.step( f"iteration {i}", done = i / 100, residual = 10.0 ** -i )
+            steps.flush()
+            events = steps.read( journal )
+            assert 1 <= len( events ) < 10, events
+            assert events[ -1 ][ "text" ] == "iteration 100" and events[ -1 ][ "residual" ] == 1e-100, events[ -1 ]
+            time.sleep( steps.RATE )
+            steps.step( energy = 2 )                        # a point, the text stays
+            steps.view( "plot.html", title = "convergence", content = "<p>1</p>" )
+            assert ( d / "plot.html" ).read_text() == "<p>1</p>" and not list( d.glob( ".*.tmp" ) )
+            s = steps.summary( journal )
+            assert s[ "text" ] == "iteration 100" and s[ "done" ] == 1.0 and s[ "curves" ][ "energy" ] == [ 2.0 ], s
+            assert s[ "views" ] == [ { "view": "plot.html", "title": "convergence" } ], s
+            line = steps.line( s )
+            assert "iteration 100" in line and "100 %" in line and "energy 2" in line, line
+        finally:
+            del os.environ[ steps.ENV ]
+        steps.step( "nobody to tell", done = 0.5 )          # no run: nothing written, nothing raised
+        if kept:
+            os.environ[ steps.ENV ] = kept
+        try:
+            steps.step( residual = "small" )
+            assert False, "a curve took a word"
+        except ValueError:
+            pass
+        # the end of a fraction is estimated from how fast it went
+        s = steps.summarize( [ { "t": 0, "done": 0.1 }, { "t": 10, "done": 0.2, "text": "x" } ] )
+        assert abs( s[ "eta" ] - 80 ) < 1e-9 and s[ "first" ] == 0, s
+        # a long journal is read by its two ends: the views said early, the state said late
+        long = d / "long.jsonl"
+        with open( long, "w" ) as f:
+            f.write( json.dumps( { "t": 0, "view": "early.html" } ) + "\n" )
+            for i in range( 20000 ):
+                f.write( json.dumps( { "t": i, "text": f"it {i}", "r": i } ) + "\n" )
+        s = steps.summary( long )
+        assert s[ "views" ][ 0 ][ "view" ] == "early.html" and s[ "text" ] == "it 19999" and len( s[ "curves" ][ "r" ] ) == steps.POINTS, s
+        # the shell's version, for scripts
+        out = subprocess.run( [ "sh", "-c", 'eval "$ERRAND_STEPS_SH"; step "iteration 4, \\"ok\\"" done=0.5 residual=3e-7; '
+                                            'step residual=1e-8; view plot.html' ],
+                              capture_output = True, text = True,
+                              env = { **os.environ, steps.ENV: str( d / "sh.jsonl" ), steps.SH_ENV: steps.SHELL_STEPS } )
+        assert out.returncode == 0, out.stderr
+        s = steps.summary( d / "sh.jsonl" )
+        assert s[ "text" ] == 'iteration 4, "ok"' and s[ "done" ] == 0.5 and s[ "curves" ][ "residual" ] == [ 3e-7, 1e-8 ], s
+        assert s[ "views" ] == [ { "view": "plot.html", "title": None } ], s
+
+
+if test( "the bar, the sparkline, the line at the bottom of a terminal" ):
+    from errand import steps
+    from errand.cli.footer import Followed, Footer
+    assert steps.bar( 0.5, 4 ) == "▕██  ▏" and steps.bar( 1, 4 ) == "▕████▏" and steps.bar( 0, 4 ) == "▕    ▏"
+    assert steps.spark( [ 1, 2, 3 ] )[ 0 ] == "▁" and steps.spark( [ 1, 2, 3 ] )[ -1 ] == "█"
+    assert steps.spark( [ 1, 1e-3, 1e-6 ] ) == "█▅▁", steps.spark( [ 1, 1e-3, 1e-6 ] )      # log scale
+    out = io.StringIO()
+    footer = Footer( out )
+    footer.show( "iteration 3" )
+    footer.clear()
+    said = out.getvalue()
+    assert "iteration 3" in said and "r" in said and said.endswith( "\033[r\0338" ), repr( said )
+    with scratch() as d:
+        journal = d / steps.FILE
+        said = [ ]
+        with Followed( journal, said.append ) as f:
+            journal.write_text( json.dumps( { "t": 1, "text": "iteration 1" } ) + "\n" )
+            f.look()
+        assert said == [ "iteration 1", None ], said
+
+
+if test( "what a process of an agent is at is read by table, and shown by status ( ADR 0010 )" ):
+    from errand import agents, steps
+    from errand.agents import table as T
+    from errand.cli import standing as S
+    os.environ[ "ERRAND_AGENT" ] = "direct"
+    agents._open.clear()
+    with scratch() as base:
+        d = base / "agents" / "w"
+        leaf = base / "leaf"
+        leaf.mkdir()
+        ( leaf / steps.FILE ).write_text( json.dumps( { "t": time.time(), "text": "iteration 41", "done": 0.41 } ) + "\n" )
+        conn = agents.open( { "kind": "local", "dir": str( d ), "keep_alive": 5 } )
+        pid = agents.start( conn, [ "sh", "-c", f'echo "{leaf}" > "$ERRAND_PROC_DIR/leaf"; exec sleep 60' ] )
+        try:
+            deadline = time.monotonic() + 10
+            rows = [ ]
+            while time.monotonic() < deadline and not any( r.get( "step" ) for r in rows ):
+                time.sleep( 0.1 )
+                rows = T.procs_of( d, T.served( d ) )
+            assert rows and rows[ 0 ][ "step" ][ "text" ] == "iteration 41", rows
+            out = io.StringIO()
+            with contextlib.redirect_stdout( out ):
+                S.show_running( Path( "/x/proj" ), got = [ ( "here", { "time": time.time(), "procs": [ { **rows[ 0 ], "project": "/x/proj" } ],
+                                                                        "vms": [ ], "guests": [ ] }, None ) ] )
+            assert "running" in out.getvalue() and "iteration 41" in out.getvalue() and "41 %" in out.getvalue(), out.getvalue()
+        finally:
+            agents.client.stop( agents.attach( conn, pid ) )
+            conn.close()
+            agents._open.clear()

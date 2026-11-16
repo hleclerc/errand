@@ -3,17 +3,6 @@ when the rows are rebuilt.
 """
 from __future__ import annotations
 
-import curses
-
-
-PAGES = ( "cases", "runs" )
-
-# **The letters are the search, so the verbs are the function keys.** There are
-# twelve of them; a screen that has to be typed at cannot also be driven by
-# letters, and a verb on a function key is a verb nothing else can claim.
-def _f( n ):
-    return curses.KEY_F0 + n
-
 
 # ── rows and panes ───────────────────────────────────────────────────────────
 

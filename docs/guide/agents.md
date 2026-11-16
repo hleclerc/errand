@@ -1,19 +1,18 @@
-# Fast, and nothing lost: agents
+# Agents and keeping warm
 
-A command used to pay for everything again each time: an ssh login, a shell that reads its rc file,
-an `srun` in the queue, a container entered, a Python that imports torch. Now errand pays once. The
-first command leaves small processes behind (**agents**), and the next commands go through them.
+Without errand, every command pays for its whole path again: an ssh login, a shell reading its rc
+file, an allocation, a container entered, a Python importing torch. errand pays once. The first
+command leaves small processes behind, **agents**, and the next commands go through them.
 
-| | before | with agents |
+| | each time, by hand | through agents |
 |---|---|---|
 | a run on a machine over ssh | 4–8 s | 0.9–1.8 s |
-| a run on a cluster, allocation held warm | the queue's minutes | about 1 s |
 | a session that imports torch (CUDA), with `Preload` | 2.9 s | 1.5 s |
 
-There is nothing to declare: agents are the default on a terminal. They stop on their own when
-nothing uses them, and a closed laptop does not take the work with it.
+Nothing to declare: agents are how errand runs anything. They stop on their own when nobody uses
+them.
 
-## What stays, and where
+## Where they run
 
 ```text
   here                          the machine Ssh leads to             the end of the stack
@@ -22,18 +21,32 @@ nothing uses them, and a closed laptop does not take the work with it.
   errand ──┘                    (rsync, setup, probes)               (micromamba, container, …)
 ```
 
-- **The hub** is one process here, per user. It keeps the streams to the agents open between
-  commands, and several commands share them. The first command to want an agent pays for reaching
-  it; the next ones do not.
-- **A host agent** runs on each machine errand reaches. It started through one ssh, and everything
-  goes through it: the rsyncs, which use it as their remote shell, the checks and builds of `setup`,
-  the probes. Nothing logs in again.
-- **An environment agent** runs past the layers, with the environment's own interpreter: inside
-  the micromamba environment, the module, the container, the allocation. The layers are entered
-  once, not once per command. It collects the entries and runs them.
+- **The hub**: one process here, per user. It keeps the connections to the agents open between
+  commands, and several commands share them.
+- **A host agent** on each machine errand reaches. It is started through one ssh; after that the
+  rsyncs, the builds of `setup` and the probes all go through it. Nothing logs in again.
+- **An environment agent** past the layers, with the environment's own interpreter: inside the
+  micromamba env, the module, the container, the allocation. The layers are entered once, not once
+  per command.
 
-errand itself needs nothing installed over there. Its sources travel, and it finds a Python 3.8 or
-later to start on, or makes one for itself. → [Nothing to install over there](./layers/ssh#nothing-to-install-over-there)
+Nothing is installed over there. errand's sources travel, and it finds a Python 3.8 or later to
+start on, or makes one for itself. → [Nothing to install over there](./layers/ssh#nothing-to-install-over-there)
+
+Each agent also keeps track of everything it starts, on its own machine. That is what
+[`errand status`](./status) reads, and what lets the next agent clean up after one that died.
+
+## Kept warm, for a while
+
+| what | stays up when unused | set by |
+|---|---|---|
+| the hub, a host agent, an environment agent | 15 minutes | `ERRAND_HUB_KEEP_ALIVE` for the hub (seconds) |
+| a Slurm allocation | 1 minute by default; `0`: one job per command | [`Slurm( keep_alive = "30m" )`](./layers/slurm) |
+| a Windows virtual machine | 5 minutes | [`Windows( keep = "5m" )`](./layers/windows) |
+
+An allocation kept warm means the next command that fits in it starts at once, without a new
+`sbatch` and without entering the layers again. "Unused" means no request and nothing running; an
+open connection does not count. So the chain comes down from the far end: the environment agent
+goes, then the node agent, the Slurm job ends, and finally the hub.
 
 ## Warm imports: `Preload`
 
@@ -43,106 +56,43 @@ errand.envs[ "gpu" ] = errand.Env( [ errand.Ssh( host = "gpu-box" ),
                                      errand.Preload( "torch" ) ] )
 ```
 
-With the [`Preload`](./layers/preload) layer at the end of a stack, a session does not start a new
-Python. The environment agent keeps a process beside it that has already imported torch, and each
-session is a fork of that process. The project's own modules are always read again. Without the
-layer, every session is a Python started anew: you choose.
-
-## Held warm, for a while
-
-Each layer that costs something to start says how long it stays up once nobody uses it:
-
-| what | stays up | declared by |
-|---|---|---|
-| the hub, a host agent, an environment agent | 15 minutes with nothing to do | `ERRAND_HUB_KEEP_ALIVE` for the hub (seconds) |
-| a Slurm allocation | `keep_alive`, if given; otherwise 1 minute, so that a run finds its preparation's allocation; `0`: one job per command | [`Slurm( keep_alive = "30m" )`](./layers/slurm#held-warm-keep-alive) |
-| a Windows virtual machine | 5 minutes | [`Windows( keep = "5m" )`](./layers/windows#with-a-python-errand-runs-in-it) |
-
-"Nothing to do" means no request and nothing running. A connection held open does not count, which
-is what lets the chain come down from the far end. When the environment agent has had nothing to do
-for its time, it goes. The node agent above it then has nothing to do either, so the Slurm job ends
-and the allocation is released. The same happens with a virtual machine, and finally with the hub.
+With [`Preload`](./layers/preload) at the end of a stack, a session is a fork of a process that has
+already imported torch. Your project's own modules are always read again. Without the layer, every
+session is a fresh Python: your choice.
 
 ## Giving way
 
-Something only kept warm is a cost to others while it waits. A virtual machine nobody uses holds
-cores and memory, and a process that imported torch holds memory too. They hold their claim in the
-[machine's queue](./machine) as one that **gives way**. A command that needs the room asks for it,
-and gets it without waiting for the end of a `keep`: the machine stops, the process goes. While it
-waits, the command says what it waits for ("…, kept warm, to make room"), and `errand queue` marks
-those claims as kept warm.
+Something kept warm costs others while it waits: an idle VM holds cores and memory, a process with
+torch imported holds memory. Their claim in the [machine's queue](./machine) **gives way**: a command
+that needs the room gets it at once, and the VM or the process goes. `errand queue` marks those
+claims as kept warm.
 
-A Slurm allocation held warm is never stretched to fit. A command runs in it only if it fits: its
-ranks within the allocation's tasks, its cores and cards per task within those declared, its
-`--time` within what the job has left. Otherwise the command gets a job of its own, sized for it.
-If nothing runs in the warm allocation, it is given back first, since it may hold the very nodes.
-No `srun` ever asks for more than was allocated. On a shared cluster, a short `keep_alive` is the
-polite choice.
+A warm Slurm allocation is never stretched. A command runs in it only if it fits: ranks, cores and
+cards per task, and `--time` within what the job has left. Otherwise it gets a job of its own. On a
+shared cluster, a short `keep_alive` is the polite choice.
 
-## Close the laptop
+## Ctrl-C stops the work
 
-What the agents start writes its output to disk where it runs, so a closed laptop or a dropped
-network loses nothing. The work goes on. `errand attach` follows it again: it shows the output from
-the start, waits for the end, and brings the results back.
-
-```bash
-errand run --env gpu 'bench/**::*'      # the laptop closes halfway
-errand attach                            # later: the rest, the report, the results here
-```
-
-## Ctrl-C means stop
-
-Ctrl-C reaches the work wherever it runs, through every layer: over ssh, in a container, in an
-allocation, in a Windows guest. The work gets an interrupt first, as at a terminal. If it is still
-there after 2 seconds it is told to terminate, and after 5 seconds it is killed, with whatever it
-started in its process group. The agent over there does this, not errand, so it happens even if
-errand is already gone. errand then exits with code 130. A Python that catches `KeyboardInterrupt`
-and goes on does not keep errand waiting.
+Ctrl-C reaches the work wherever it runs: over ssh, in a container, in an allocation, in a Windows
+guest. The work gets an interrupt, then a terminate after 2 s, then a kill after 5 s, with everything
+in its process group. The agent over there does this, so it happens even if your connection is
+already gone. errand exits with code 130.
 
 ## A real terminal
 
 `errand shell` gets a real terminal over there: a pty on Linux and macOS, a pseudo-console on
-Windows. Colours, line editing, full-screen programs, Ctrl-C as a key, and the window's size,
-followed as it changes.
+Windows. Colours, line editing, full-screen programs, Ctrl-C as a key, window resizing.
 
 ```bash
 errand shell --env cluster      # a shell in the allocation, the container, the environment
-errand shell --env win          # cmd.exe in the Windows guest, as at its console
+errand shell --env win          # cmd.exe in the Windows guest
 ```
 
-## Leaving nothing behind
-
-What errand keeps per user, here and over there, under `~/.cache/errand` ( or `$ERRAND_CACHE_DIR` ), is only what is live:
-sockets, locks, pids, and a word per running command saying where its output goes. What piles up
-is the project's, in its `errand-outputs/` (over there, in the project's copy):
-
-| what | where | until |
-|---|---|---|
-| a command's output, kept for `errand attach` | `errand-outputs/state/procs/` | it is brought back |
-| run records | `errand-outputs/runs/` | you remove them |
-| Windows images | `errand-outputs/builds/windows/` | a newer one is ready |
-
-Nothing errand starts runs without an owner. An agent writes down the process group of everything
-it starts. Stopped with `errand agents stop --force`, or by a SIGTERM (a logout, a `kill`), it
-stops what it runs before it goes. If it is killed outright (SIGKILL, the OOM killer), the next
-agent in its directory, or the next one beside it, finds that work, which nobody can follow any
-more, and kills it. → [ADR 0008](https://github.com/hleclerc/errand/blob/main/docs/adr/0008-nothing-runs-unowned.md)
-
-Agents and the hub stop when they have had nothing to do for their time, and take their sockets
-with them. A hub started from sources that have since changed also takes its directory with it.
-Errand's directories are named after its sources, so an edit to errand means new ones. When an agent
-or a hub starts, it removes the directories beside its own that nobody serves any more: untouched
-for an hour, and with a lock that no process holds. A Slurm allocation held warm takes its
-directory with it when the job ends; a virtual machine nobody used for a day leaves nothing here.
-What stays in `~/.cache/errand` for good is errand's own: its sources, and the Python it made for
-itself where the machine had none. [Where errand writes](./storage) says how to put all of it
-elsewhere.
-
-## What is up, and stopping it
+## Listing and stopping agents
 
 ```bash
-errand agents              # the hub, and each agent it keeps a stream to
-errand agents stop gpu     # those whose name holds "gpu" go now
+errand agents              # the hub, and each agent it keeps a connection to
+errand agents stop gpu     # those whose name contains "gpu"
 errand agents stop         # all of them, and the hub
 ```
 
@@ -153,43 +103,35 @@ errand agents stop         # all of them, and the hub
 ```
 
 Stopping goes from the far end: an environment before the machine or the allocation it runs in. An
-allocation held warm goes with its agent, and the job ends. An agent with something running is left
-alone, and says so; `--force` stops it anyway.
+agent with something running is left alone and says so; `--force` stops it, and what it runs.
 
-`errand status` starts with what runs, wherever it runs. Each agent writes what it owns to its own
-directory, and `errand status` reads that, without starting an agent. It reads this machine
-directly, and every other machine work was sent to from here (the ledger, `~/.cache/errand/ledger/`)
-over one ssh each. It also covers the guests of the virtual machines that are up. On a machine that
-runs work, such as lmo, `errand status` typed there shows everything its agents run, whoever started
-it and from wherever.
+## What stays on disk
 
-```
-running   ( on mac, lmo: this machine, and every machine work was sent to from it )
-  sdot-ffi
-    lmo          3f2a9c1e  run tests/test_w2.py::*  --env lin  12 min  running
-  guitar_2000: 2 running on lmo
-  lmo: windows vm 80103674 ready, 8 cpus 16G
-```
+Under `~/.cache/errand` (or `$ERRAND_CACHE_DIR`), errand keeps only what is live: sockets, locks,
+pids, the records of running processes. Agents remove the directories nobody serves any more. What
+piles up belongs to the project, in its `errand-outputs/`:
 
-The current project is shown in full, and every other project gets one line (`--all` expands
-them). A process whose agent is gone is **orphaned**: the next agent in that directory stops it. On
-Linux, a process errand started that no record holds any more (an older errand's, for instance) is
-found by its environment and shown as **unowned**, with the `kill` that stops it.
+| what | where | until |
+|---|---|---|
+| a command's output, kept for `errand attach` | `errand-outputs/state/procs/` | it is brought back |
+| run records | `errand-outputs/runs/` | you remove them |
+| Windows images | `errand-outputs/builds/windows/` | a newer one is ready |
 
-Then come the commands left running when their connection was lost. For each, the agent says
-whether the work is still running, or has finished and waits to be brought back with `errand attach`.
+→ [Where errand writes](./storage)
 
-## When you want it otherwise
+## Modes
 
 | `ERRAND_AGENT` | |
 |---|---|
 | `hub` | through the hub. The default on a terminal |
-| `direct` | a connection owned by the command, closed with it. The default without a terminal (cron, CI) |
-| `off` | no agent: one ssh per remote command, as before |
+| `direct` | a connection that belongs to the command and closes with it. The default without a terminal (cron, CI) |
 
-`ERRAND_WARM=0` starts every session anew, even with a `Preload`. And `-v` shows what goes where:
-every command errand starts, including those it hands to an agent.
-→ [When something breaks](./upkeep#when-something-breaks)
+There is no mode without agents: every machine errand runs on has one, so what runs there is
+tracked, listed and stopped the same way everywhere.
 
-The design, and why the local side decides while the agents only execute:
-[ADR 0005](https://github.com/hleclerc/errand/blob/main/docs/adr/0005-the-local-side-orchestrates-agents-execute.md).
+`ERRAND_WARM=0` starts every session anew, even with a `Preload`. `-v` prints every command errand
+starts, including those it hands to an agent. → [When something breaks](./upkeep#when-something-breaks)
+
+The design: [ADR 0005](https://github.com/hleclerc/errand/blob/main/docs/adr/0005-the-local-side-orchestrates-agents-execute.md),
+[ADR 0008](https://github.com/hleclerc/errand/blob/main/docs/adr/0008-nothing-runs-unowned.md),
+[ADR 0009](https://github.com/hleclerc/errand/blob/main/docs/adr/0009-arrivals.md).

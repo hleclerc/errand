@@ -1,89 +1,109 @@
-# Detached runs
-
-`--batch` launches the work and gives you the shell back. It is a **mode, not a layer**: it means
-the same thing in every context, and what changes is only how each one lets go.
+# Let it run: `--batch` and `attach`
 
 ```bash
-errand run --grid=, --batch -k bench --env gpu,cluster --fp 32,64
-  submitted b7f3 - 8 run(s) - 4 on login.hpc (batch 918273), 4 on this machine (local 41288)
-  errand status    errand watch
+errand run --batch --env cluster python train.py   # submitted; the shell is yours again
+errand status                                      # later: how it is going
+errand attach                                      # follow a command whose connection was lost
 ```
 
-| context | waiting | detached |
-|---|---|---|
-| local | subprocess | a session of its own, which survives the terminal |
-| `Ssh` | ssh, output streamed | started over there and released, output to a file |
-| `Slurm` | `srun` | `sbatch`, which *is* the detachment: it returns as soon as the job is queued |
+Two ways to stop watching a run without stopping it. `--batch` launches the work and gives the shell
+back at once. A command you wait for keeps running when your laptop closes, and `errand attach`
+picks it up again.
 
-Nothing else about the run changes — same paths, same queue, same output.
-
-## The output tree is the state
-
-`--batch` prepares first, before giving the shell back: the entries are collected and built where
-the environment is, and the [plan](./environments#preparing-then-running) comes back here. Then the
-run is submitted, sized from that plan, and let go of. **The arrival of a result file where the plan
-said one would be is itself the completion signal.**
-
-Nothing has to stay connected for that, and nothing can get out of sync. The tree is the
-[record](./output) every run leaves in `errand-outputs/runs/`, so a detached
-run needs no output directory of its own to be followed.
-
-What is kept locally is only what the tree cannot say — which runs belong to one submission, and
-what handle each place was given. The side that expanded the matrix is the only one that ever knew
-those runs went together.
-
-### Where a run happened is looked for when it cannot be known
-
-A run detached on this machine has a predictable place, and the record says so. A remote one does
-not — it carries the other machine's name — and neither does a batch job, which carries the name of
-whichever compute node the scheduler picked.
-
-The parameter directory *is* predictable in every case, so that is what gets searched, and the
-result naming this run's environment and parameters is the one.
-
-## Keeping track
+## Close the laptop
 
 ```bash
-errand status       # one shot, plain text
-errand watch        # the same, live, until everything has landed
-errand forget b7f3  # drop a submission from the list, keeping its results
+errand run --env cluster python train.py   # the laptop closes halfway
+errand attach                              # later: the rest of the output, the end, the results here
+```
+
+What the [agents](./agents) start writes its output to disk where it runs, so a closed laptop or a
+dropped network loses nothing. The work goes on, and the command here says so before it gives up:
+
+```text
+  the connection to the environment was lost: the work goes on over there ( errand attach )
+```
+
+`errand attach` follows it again: it shows the output from the start, waits for the end, and brings
+the results back as the command would have. With several left running, it follows each in turn;
+`errand attach ID` picks one, by the start of its name ( `2026-09-25_18h04m11-cluster` ). When the
+work ended long ago and its output was cleaned up over there, `attach` still brings back what it
+wrote in the project.
+
+This is for commands that go through an environment with layers, which is to say through an agent:
+another machine, a container, an allocation. A command run here, with no layer, is a child of your
+terminal and ends with it; Ctrl-C, unlike a lost connection, stops the work everywhere.
+A [Windows virtual machine](./layers/windows) is not followed again yet.
+
+## Launch and come back: `--batch`
+
+```bash
+errand run --grid=, --batch --env gpu,cluster python bench.py
 ```
 
 ```text
-b7f3  --grid=, -k bench --fp 32,64 --env gpu,cluster   2026-09-24 12:04   6/8 [######  ]
-    gpu: local 41288 on this machine - finished
-    cluster: batch 918273 on login.hpc - running
-                        gpu@thishost            cluster@node15
-      cost  fp=32, n=1000   ok seconds=12.4        ok seconds=13.1
-      cost  fp=32, n=5000   ok seconds=61.2        ok seconds=64.8
-      cost  fp=64, n=1000   ok seconds=11.2        ...
-      cost  fp=64, n=5000   ...                    ...
+  submitted b7f3 - gpu on this machine (local 41288), cluster on login.hpc (batch 918273)
+  errand status    errand watch
 ```
 
-Grouped by submission, because that is the unit you launched and the unit you will compare.
+`--batch` is a **mode, not a layer**: the run is the same, with the same paths, the same queue and the
+same records. Only the way each place lets go differs:
 
-Inside one, the matrix reads as a **table** — parameters down, places across — since that is the
-shape it has, and a flat list of eight lines hides the one axis you were varying. A cell shows the
-[kept](./declaring-work#the-four-traits) number once there is one, so a column slower than its
-neighbour is visible without opening anything.
+| place | you wait | `--batch` |
+|---|---|---|
+| here | a process of this terminal | a session of its own, which survives the terminal |
+| `Ssh` | through the agent, output streamed | started over there and released, output to a file |
+| `Slurm` | an allocation errand holds, with its agent | `sbatch`, which returns as soon as the job is queued |
 
-`errand watch` holds no state of its own: it polls the tree and the batch systems, so it can be started,
-killed and restarted at any point, and several can watch at once.
+Before giving the shell back, `--batch` prepares: the target is resolved and built where the
+environment is, and the [plan](./environments#preparing-then-running) comes back here. A mistake in
+the command is said now, not tomorrow morning. Then the run is submitted, sized from that plan.
 
-A launch that is over everywhere and brought back is **settled**: nobody is asked about it again,
-so `status` stays quick however many there are. Those settled more than a day ago are counted on one
-line rather than shown; `errand forget finished` drops them from the list, and their results stay.
+`--batch` does not reach a [Windows virtual machine](./layers/windows) yet: it says so for that
+environment.
 
-## The same thing on a screen
+## Following a submission
 
-[`errand tui`](./tui) shows this table on its runs page, over the same tree. Tick `detach` in the
-launch window, close the window, open it tomorrow: the state was never in the screen.
+```bash
+errand status          # what runs everywhere, then each --batch submission
+errand watch           # the submissions, live, until everything has landed
+errand forget b7f3     # drop a submission from the list; its results stay
+errand forget finished # drop every one that is over
+```
+
+```text
+b7f3  run --grid=, --env gpu,cluster python bench.py   2026-09-24 12:04   1/2 [####    ]
+    gpu: local 41288 on this machine - finished
+    cluster: batch 918273 on login.hpc - running
+```
+
+A submission whose results have all landed and come back is **settled**: it is not asked about
+again, so `errand status` stays quick however many there are. The settled ones older than a day are
+counted on one line.
+
+`errand watch` keeps no state of its own. It reads the tree and asks the batch systems, so it can be
+stopped, restarted, or run twice. → [What is running](./status)
+
+## The output tree is the state
+
+Each place writes its plan before anything runs there, so the record of every run has a known
+path. **A result file arriving where the plan said it would is the completion signal.** Nothing has
+to stay connected for that, and nothing can get out of sync: the [records](./output) every run
+leaves in `errand-outputs/runs/` are all there is to follow.
+
+What is kept here, in `errand-outputs/state/`, is only what the tree cannot say: which runs belong to
+one submission, and the handle each place gave ( a pid, a job id ). Only the side that launched them
+knows they went together.
+
+A run on another machine, or in a batch job on whichever node the scheduler picked, does not know
+its machine's name in advance. Its parameters and its environment are known, so that is what
+`errand status` looks for.
 
 ## Results come back when you ask
 
-A finished remote run sits there until something collects it. `errand status` and `errand watch` are what
-collect it — results are [pulled, not pushed](/guide/layers/ssh#results-are-pulled-not-pushed).
+A finished remote run stays over there until something collects it: `errand status`,
+`errand watch` and `errand attach` do. → [Results are pulled, not pushed](./layers/ssh#results-are-pulled-not-pushed)
 
 ## Next
 
-[The screen](./tui).
+[Several runs: grids](./matrices).

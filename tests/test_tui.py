@@ -1,331 +1,236 @@
-"""The screen itself, driven through a real terminal.
+"""`errand tui`: what runs where, for whom, since when, and what waits.
 
-A curses program cannot be tested by capturing its output: it writes to a
-terminal, and without one it refuses. So it gets a real one -- a pty, with a
-real size -- and the test types at it, clicks in it, turns the wheel, and reads
-what it painted.
-
-What the screen is ABOUT is `test_session.py`, which needs no terminal at all.
-Here is only what a view can get wrong: what the lists hold, what a key does,
-and where a click lands.
+The list is built without a terminal ( `tui.rows` ); the agent's ops ( `agents.look` ) are called as
+the watcher calls them for this machine; and the screen itself is driven through a real terminal,
+over a real agent and a real process, in a cache directory of its own.
 """
+import contextlib
+import os
+import shutil
+import signal
 import tempfile
+import time
 from pathlib import Path
 
-from errand import skip, test
+from errand import test
 
-from _demo import UNREADABLE, WORK, a_project
-from _infra import run_errand
-from _tty import DOWN, HOME, click, fkey, plain, start_tui, wheel
-
-MANY = "from errand import test\n\n" + "\n".join(
-    f"if test( 'case_{i:02}' ):\n    pass\n" for i in range( 60 ) )
+from _tty import DOWN, plain, Term, tui_env
+import sys
 
 
-def until( term, text, timeout = 60 ):
-    assert term.wait_for( text, timeout ), plain( term.buf )[ -3000 : ]
+@contextlib.contextmanager
+def scratch( ):
+    d = tempfile.mkdtemp( dir = "/tmp" )
+    try:
+        yield Path( d )
+    finally:
+        shutil.rmtree( d, ignore_errors = True )
 
 
-if test( "the cases are a tree by file, and what would not import is in it" ):
-    with tempfile.TemporaryDirectory() as tmp:
-        project = a_project( tmp, { "test_demo.py": WORK, "test_absent.py": UNREADABLE } )
-        term = start_tui( project )
+def gone( pid, within = 10 ):
+    deadline = time.monotonic() + within
+    while time.monotonic() < deadline:
         try:
-            until( term, "test_demo.py" )
+            os.kill( pid, 0 )
+        except OSError:
+            return True
+        time.sleep( 0.05 )
+    return False
+
+
+def a_machine( name = "lmo", here = False ):
+    from errand.tui.machines import Machine
+    now = time.time()
+    m = Machine( name, None if here else { "kind": "ssh", "host": name } )
+    m.table = { "time": now, "procs": [
+        { "id": "a1", "project": "/home/h/sdot-ffi", "what": "run test_x.py::solve", "env": "lmo-jax",
+          "started": now - 700, "state": "running", "pgid": 12 },
+        { "id": "b2", "project": "/home/h/otrec", "what": "run grid", "started": now - 9000, "state": "running",
+          "waiting": { "what": "slurm job 81234 pending", "since": now - 120 } },
+        { "id": "c3", "project": "/home/h/otrec", "what": "windows vm keeper", "vm": True, "started": now, "state": "running" } ],
+        "vms": [ { "name": "3fa2c1aa77", "state": "ready", "cpus": 8, "ram": "16G", "keeper": 5 } ],
+        "guests": [ { "vm": "3fa2c1aa77", "procs": [ { "id": "g", "project": "C:/w/sdot-ffi", "what": "run ping",
+                                                        "started": now - 30, "state": "running" } ] } ] }
+    m.read_at = now
+    m.history = { "runs": [ { "leaf": "/x/leaf", "project": "/home/h/sdot-ffi", "what": "a.py::b", "started": now - 3600,
+                              "status": "FAIL", "duration": 12.3 } ], "more": 0 }
+    return m
+
+
+if test( "the list: a machine, what runs there oldest first, its vms with their guests' work, its history folded" ):
+    from errand.tui import rows as R
+    got = [ ( r.depth, r.kind, r.mark, r.label.split()[ 0 ] ) for r in R.build( [ a_machine() ] ) ]
+    assert got == [ ( 0, "machine", None, "lmo" ), ( 1, "proc", "wait", "otrec" ), ( 1, "proc", "run", "sdot-ffi" ),
+                    ( 1, "vm", "", "windows" ), ( 2, "proc", "run", "sdot-ffi" ), ( 1, "group", None, "history" ) ], got
+    head = R.build( [ a_machine() ] )[ 0 ].detail
+    assert "1 running" in head and "1 waiting" in head and "1 vm" in head, head
+    waits = R.build( [ a_machine() ] )[ 1 ].detail
+    assert "waiting: slurm job 81234 pending, 2 min" in waits and waits.startswith( "2 h 30" ), waits
+    opened = R.build( [ a_machine() ], opened = { "lmo" } )
+    assert [ ( r.kind, r.mark ) for r in opened[ -1 : ] ] == [ ( "run", "FAIL" ) ], "an opened history shows its runs"
+    assert [ r.kind for r in R.build( [ a_machine() ], folded = { "lmo" } ) ] == [ "machine" ], "a folded machine hides all"
+
+
+if test( "a step: the row says its text and bar, the detail its curves and views, a finished run its journal ( ADR 0010 )" ):
+    import json
+    from errand import steps
+    from errand.tui import rows as R
+    from errand.tui.machines import Machine
+    from errand.tui.screen import Screen
+    m = a_machine()
+    p = m.table[ "procs" ][ 0 ]
+    p[ "step" ] = steps.summarize( [ { "t": time.time() - 3, "text": "iteration 41", "done": 0.41, "residual": 1e-3 },
+                                     { "t": time.time() - 1, "residual": 1e-7 } ] )
+    row = next( r for r in R.build( [ m ] ) if r.data[ 1 ] is p )
+    assert "iteration 41" in row.detail and "41 %" in row.detail and "▕" in row.detail, row.detail
+    facts = dict( R.facts( row, m ) )
+    assert facts[ "step" ] == "iteration 41" and "41 %" in facts[ "progress" ] and facts[ "said" ] == "1 s ago", facts
+    assert facts[ "residual" ].endswith( "1e-07" ) and facts[ "residual" ][ 0 ] == "█", facts
+    with scratch() as leaf:
+        ( leaf / "output.txt" ).write_text( "converging\n" )
+        ( leaf / "plot.html" ).write_text( "<p>1</p>" )
+        ( leaf / steps.FILE ).write_text( "".join( json.dumps( e ) + "\n" for e in [
+            { "t": 1, "view": "plot.html", "title": "convergence" }, { "t": 2, "text": "iteration 9", "energy": 3 } ] ) )
+        here = Machine( "here" )
+        here.read_at = time.time()
+        here.history = { "runs": [ { "leaf": str( leaf ), "project": "/x/p", "what": "a.py::b", "started": 1 } ] }
+        screen = Screen( [ here ] )
+        run = next( r for r in R.build( [ here ], opened = { "here" } ) if r.kind == "run" )
+        screen.describe( run )
+        deadline = time.monotonic() + 10
+        while R.key( run ) not in screen.seen and time.monotonic() < deadline:
+            time.sleep( 0.05 )
+        shown = [ ( r.kind, r.label, r.detail ) for r in screen.describe( run ) ]
+        assert any( label.startswith( "step" ) and "iteration 9" in label for _, label, _ in shown ), shown
+        assert any( label.startswith( "energy" ) for _, label, _ in shown ), shown
+        view = next( ( r for r in shown if r[ 0 ] == "file" and r[ 1 ] == "convergence" ), None )
+        assert view is not None and view[ 2 ] == "plot.html", shown
+
+
+if test( "the list: the filter, the current project only, and the current project highlighted" ):
+    from errand.tui import rows as R
+    found = R.build( [ a_machine() ], query = "slurm" )
+    assert [ r.label.split()[ 0 ] for r in found ] == [ "lmo", "otrec" ], [ r.label for r in found ]
+    mine = R.build( [ a_machine() ], only = { "sdot-ffi" }, mine = { "sdot-ffi" }, opened = { "lmo" } )
+    assert { r.label.split()[ 0 ] for r in mine if r.kind in ( "proc", "run" ) } == { "sdot-ffi" }, [ r.label for r in mine ]
+    assert all( list( r.hits ) == list( range( 8 ) ) for r in mine if r.kind in ( "proc", "run" ) ), "not highlighted"
+    broken = a_machine()
+    broken.error = "ssh: connect to host lmo port 22: Operation timed out"
+    head = R.build( [ broken ] )[ 0 ]
+    assert head.kind == "broken" and "cannot say: ssh" in head.detail and "last table shown" in head.detail, head.detail
+
+
+if test( "the agent's ops: the files of a leaf newest first, a file's end, a group stopped then its cancel line run" ):
+    from errand.agents import look
+    import subprocess
+    with scratch() as base:
+        ( base / "leaf" ).mkdir()
+        ( base / "leaf" / "result.yaml" ).write_text( "status: PASS\n" )
+        time.sleep( 0.02 )
+        ( base / "leaf" / "output.txt" ).write_text( "".join( f"line {i}\n" for i in range( 1000 ) ) )
+        files = look.answer( { "op": "ls", "path": str( base / "leaf" ) } )[ "files" ]
+        assert [ f[ "name" ] for f in files ] == [ "output.txt", "result.yaml" ], files
+        got = look.answer( { "op": "tail", "path": str( base / "leaf" / "output.txt" ), "size": 9 } )
+        assert got[ "data" ] == "line 999\n" and got[ "end" ] == got[ "size" ], got
+        got = look.answer( { "op": "tail", "path": str( base / "leaf" / "output.txt" ), "offset": 0, "size": 7 } )
+        assert got[ "data" ] == "line 0\n" and got[ "end" ] == 7, got
+        assert look.answer( { "op": "tail", "path": str( base / "nope" ) } ).get( "missing" )
+
+        mark = base / "mark"
+        mark.mkdir()
+        ( mark / "cancel" ).write_text( f"touch {base / 'cancelled'}" )
+        # INT is ignored: TERM ends it, and its cancel line runs after.
+        p = subprocess.Popen( [ "sh", "-c", "trap '' INT; sleep 60 & wait" ], start_new_session = True )
+        from errand.agents.procs import started
+        assert look.answer( { "op": "kill", "pgid": p.pid, "since": started( p.pid ), "mark": str( mark ) } )[ "ok" ]
+        assert gone( p.pid, 10 ) or p.wait( 10 ) is not None
+        deadline = time.monotonic() + 10
+        while not ( base / "cancelled" ).exists() and time.monotonic() < deadline:
+            time.sleep( 0.1 )
+        assert ( base / "cancelled" ).exists(), "the cancel line of a stopped process did not run"
+        assert "not running" in look.answer( { "op": "kill", "pgid": p.pid } ).get( "error", "" )
+
+
+if test( "history: a link per run, newest first, with its result; a link whose leaf is gone goes" ):
+    from errand.agents import seen
+    with scratch() as base:
+        os.environ[ "ERRAND_CACHE_DIR" ] = str( base / "cache" )
+        os.environ[ "ERRAND_PROC_DIR" ] = str( base / "mark" )
+        ( base / "mark" ).mkdir()
+        try:
+            for name in ( "old", "new" ):
+                ( base / name ).mkdir()
+                seen.note( base / name, base / "proj", f"t.py::{name}", "lin" )
+                time.sleep( 0.02 )
+            ( base / "new" / "result.yaml" ).write_text( "status: PASS\nduration_s: 1.5\n" )
+            assert ( base / "mark" / "leaf" ).read_text() == str( ( base / "new" ).resolve() ), "the owner was not told the leaf"
+            got = seen.runs()
+            assert [ ( r[ "what" ], r[ "status" ] ) for r in got[ "runs" ] ] == [ ( "t.py::new", "PASS" ), ( "t.py::old", None ) ], got
+            shutil.rmtree( base / "old" )
+            assert [ r[ "what" ] for r in seen.runs()[ "runs" ] ] == [ "t.py::new" ]
+            assert len( list( ( base / "cache" / "seen" ).glob( "*.json" ) ) ) == 1, "a dead link was kept"
+        finally:
+            del os.environ[ "ERRAND_CACHE_DIR" ], os.environ[ "ERRAND_PROC_DIR" ]
+
+
+if test( "the screen: a process an agent runs here, its output beside it, a run in the history, and `s` stops it" ):
+    from errand import agents
+    from errand.agents import seen
+    os.environ[ "ERRAND_AGENT" ] = "direct"
+    agents._open.clear()
+    with scratch() as base:
+        cache = base / "cache"
+        os.environ[ "ERRAND_CACHE_DIR" ] = str( cache )
+        leaf = base / "proj" / "errand-outputs" / "runs" / "t" / "case" / "2026-11-15_x"
+        leaf.mkdir( parents = True )
+        ( leaf / "output.txt" ).write_text( "the run said this\n" )
+        ( leaf / "result.yaml" ).write_text( "status: PASS\nduration_s: 2.0\n" )
+        seen.note( leaf, base / "proj", "test_t.py::case", "plain" )
+        conn = agents.open( { "kind": "local", "dir": str( cache / "agents" / "a" ), "keep_alive": 30 } )
+        call = conn.open( { "op": "spawn", "argv": [ "sh", "-c", "echo hello-from-the-process; exec sleep 60" ],
+                            "cwd": str( base ), "keep": True, "store": str( base / "proj" / "errand-outputs" / "state" / "procs" ) } )
+        pid = call.reply( 10 )[ "pid" ]
+        call.close()
+        env = { **tui_env( base ), "ERRAND_CACHE_DIR": str( cache ), "PAGER": "cat" }
+        term = Term( [ sys.executable, "-m", "errand", "tui" ], base, env = env )
+        try:
+            assert term.wait_for( "sh -c echo", 30 ), plain( term.buf )[ -2000 : ]
             shown = term.text()
-            # The file is a row of its own, and its cases hang under it.
-            assert "▾ test_demo.py" in shown, shown
-            assert "[ ] quick" in shown and "[ ] slow" in shown, shown
-            # A file that would not import is a row too, not an empty list --
-            # and putting the cursor on it says why, in full.
-            assert "test_absent.py" in shown and "ModuleNotFoundError" in shown, shown
-            for _ in range( 3 ):           # down to the broken row, which is last
-                term.send( DOWN )
-            why = term.text()
-            assert "a_module_that_is_not_installed" in why, why
-            assert "Traceback" in why, why
-            term.send( HOME )              # back to the top of the tree
+            assert "this machine" in shown and "proj" in shown and "running" in shown, shown
+            term.send( DOWN )                      # the process: its output, beside it
+            assert term.wait_for( "hello-from-the-process", 30 ), plain( term.buf )[ -3000 : ]
 
-            term.send( " " )               # space on the file folds it
-            folded = term.frame()
-            assert "▸ test_demo.py" in folded, folded
-            assert "[ ] quick" not in folded, folded
-        finally:
-            term.close()
+            term.send( DOWN )                      # the history row
+            term.send( "\x1bOC" )                   # → opens it
+            assert term.wait_for( "test_t.py::case", 10 ), plain( term.buf )[ -3000 : ]
+            term.send( DOWN )
+            assert term.wait_for( "the run said this", 10 ), plain( term.buf )[ -3000 : ]
 
-
-if test( "the directories are the tree, and a lonely one costs no row" ):
-    with tempfile.TemporaryDirectory() as tmp:
-        project = a_project( tmp, { "bench/gpu/heavy.py": WORK,
-                                    "tests/one.py": WORK,
-                                    "tests/two.py": WORK } )
-        term = start_tui( project )
-        try:
-            until( term, "tests" )
-            shown = term.frame()
-            # `bench` holds one directory holding one file: three rows that
-            # could only be walked through become one that says where it is.
-            assert "▾ bench/gpu/heavy.py" in shown, shown
-            assert "▾ gpu" not in shown, shown
-            # `tests` holds two files, so it is a directory of its own and the
-            # files hang under it, indented.
-            assert "▾ tests" in shown, shown
-            assert "  ▾ one.py" in shown and "  ▾ two.py" in shown, shown
-
-            # Folding the directory takes its files with it.
-            for _ in range( 3 ):           # past heavy.py and its two cases
-                term.send( DOWN )
-            term.send( " " )
-            folded = term.frame()
-            assert "▸ tests" in folded, folded
-            assert "one.py" not in folded and "two.py" not in folded, folded
-            assert "bench/gpu/heavy.py" in folded, "its neighbour is untouched"
-        finally:
-            term.close()
-
-
-if test( "F2 and F3 turn the page, and tab walks the rectangles" ):
-    with tempfile.TemporaryDirectory() as tmp:
-        project = a_project( tmp )
-        term = start_tui( project )
-        try:
-            until( term, "test_demo.py" )
-            assert "[cases]" in term.frame(), term.frame()
-            term.send( fkey( 3 ) )             # the page after
-            assert "[runs]" in term.frame(), term.frame()
-            term.send( fkey( 2 ) )             # and the one before
-            assert "[cases]" in term.frame(), term.frame()
-            # tab stays on the page it is on: it is a neighbour, not a journey.
-            term.send( "\t" ); term.send( "\t" )
-            assert "[cases]" in term.frame(), term.frame()
-        finally:
-            term.close()
-
-
-if test( "enter on a case asks where, and runs it", tags = [ "slow" ] ):
-    with tempfile.TemporaryDirectory() as tmp:
-        project = a_project( tmp )
-        term = start_tui( project )
-        try:
-            until( term, "test_demo.py" )
-            term.send( DOWN )              # onto `quick`
-            term.send( "\n" )              # the window
-            asked = term.text()
-            assert "run: quick" in asked, asked
-            # Where, with which tags, with which parameters -- and not WHICH
-            # CASE, which was the list enter was pressed in.
-            assert "env" in asked and "[ ] plain" in asked and "--fp" in asked, asked
-            # One line each: the flag, the boxes to tick, what it means.
-            assert "[ ] 32" in asked and "[ ] 64" in asked, asked
-            assert "errand run test_demo.py::quick" in asked, asked
-
-            term.send( "\n" )              # and run it
-            until( term, "hello from quick", 90 )
-            ran = term.text()
-            assert "errand run test_demo.py::quick" in ran, ran
-            # Facing it: what it wrote, and the file under the cursor.
-            assert "result.yaml" in ran, ran
-        finally:
-            term.close()
-
-
-if test( "a click chooses a row, and makes its pane the active one" ):
-    with tempfile.TemporaryDirectory() as tmp:
-        project = a_project( tmp )
-        term = start_tui( project )
-        try:
-            until( term, "test_demo.py" )
-            # Line 0 is the two pages, line 1 the search, line 2 the border:
-            # so the file is on 3, `quick` on 4 and `slow` on 5. The cursor
-            # starts on the file; clicking `slow` chooses it without walking.
-            click( term, 5, 8 )
-            term.send( "\n" )
-            asked = term.text()
-            assert "run: slow" in asked, asked
-            term.send( "\x1b", settle = 1.5 )     # give up on the window
-            assert "run: slow" not in term.frame(), "the window is still there"
-
-            # A click on the box itself ticks, rather than only selecting.
-            click( term, 4, 4 )
-            assert "[x] quick" in term.text(), term.text()
-        finally:
-            term.close()
-
-
-if test( "the wheel scrolls what is under the pointer, and chooses nothing" ):
-    with tempfile.TemporaryDirectory() as tmp:
-        project = a_project( tmp, { "test_many.py": MANY } )
-        term = start_tui( project )
-        try:
-            until( term, "case_00" )
-            term.send( DOWN )              # the cursor sits on case_00
-            wheel( term, 5, 10, down = True, times = 5 )
-            after = term.frame()
-            # The ROW is gone from the list. The name itself is still on the
-            # screen, in the pane facing it, because that is where the cursor
-            # still is -- which is the very thing being tested.
-            assert "[ ] case_00" not in after, after
-            assert "[ ] case_1" in after or "[ ] case_2" in after, after
-
-            # The cursor stayed on case_00 while the view moved away from it:
-            # looking is not choosing.
-            term.send( "\n" )
-            asked = term.text()
-            assert "run: case_00" in asked, asked
-        finally:
-            term.close()
-
-
-if test( "typing is a search, and the best answer comes first" ):
-    with tempfile.TemporaryDirectory() as tmp:
-        project = a_project( tmp, { "test_demo.py": WORK, "test_many.py": MANY } )
-        term = start_tui( project )
-        try:
-            until( term, "test_demo.py" )
-            # Not a filter over the letters in order: `sl` has to reach `slow`
-            # past sixty other cases, and land on it.
-            term.send( "sl" )
-            found = term.frame()
-            assert "find: sl" in found, found
-            assert "slow" in found and "case_00" not in found, found
-
-            term.send( "\n" )
-            assert "run: slow" in term.text(), term.text()
-            term.send( "\x1b", settle = 1.0 )
-
-            # While a search is on, space is a word separator -- so the tick is
-            # ctrl-space, and it works on the narrowed list.
-            term.send( "\x00" )
-            ticked = term.frame()
-            assert "[x] slow" in ticked, ticked
-            assert "find: sl" in ticked, "what was typed is still there"
-
-            # And esc starts by clearing what was typed: a filter is the thing
-            # you most want gone, and it was the hardest to get rid of.
+            term.send( "/hello" )                  # a filter that only the process passes
+            term.send( "\r" )
+            assert "test_t.py::case" not in term.frame(), "the filter kept a run it does not match"
             term.send( "\x1b" )
-            cleared = term.frame()
-            assert "find: sl" not in cleared, cleared
-            assert "case_00" in cleared, cleared
+
+            term.send( "\x1bOH" )                  # home: the machine
+            term.send( DOWN )                      # the process
+            term.send( "s" )
+            assert term.wait_for( "y stops it", 10 ), plain( term.buf )[ -2000 : ]
+            term.send( "y" )
+            # Its group is gone ( the pid the agent gave may be a zygote's child, under `errand run` ).
+            assert term.wait_for( "idle · read", 15 ), "s y did not stop the process: " + plain( term.buf )[ -600 : ]
+            from errand.agents.table import procs_of, served
+            assert procs_of( cache / "agents" / "a", served( cache / "agents" / "a" ) ) == [ ]
+            term.send( "q", settle = 0.1 )
+            deadline = time.monotonic() + 10      # read on: leaving curses waits for its output to drain
+            while term.child.poll() is None and time.monotonic() < deadline:
+                term.read( 0.2 )
+            assert term.child.poll() == 0, "q did not leave"
         finally:
             term.close()
-
-
-if test( "runs and history are one list, and a command runs again", tags = [ "slow" ] ):
-    with tempfile.TemporaryDirectory() as tmp:
-        project = a_project( tmp )
-        code, output = run_errand( project, "run", "--env", "other", "test_demo.py::quick" )
-        assert code == 0, output
-
-        term = start_tui( project )
-        try:
-            until( term, "test_demo.py" )
-            term.send( fkey( 3 ) )         # to the runs page
-            shown = term.text()
-            # A command typed in a shell is in the same list as one run here.
-            assert "--env other test_demo.py::quick" in shown, shown
-
-            term.send( "\n" )              # fold it open: what it produced
-            opened = term.text()
-            assert "ok" in opened and "quick" in opened, opened
-
-            term.send( fkey( 5 ) )         # the last command, again
-            until( term, "1 ok", 90 )
-        finally:
-            term.close()
-
-
-if test( "the runs are searched too, by their command", tags = [ "slow" ] ):
-    with tempfile.TemporaryDirectory() as tmp:
-        project = a_project( tmp )
-        for case in ( "quick", "slow" ):
-            code, output = run_errand( project, "run", f"test_demo.py::{case}" )
-            assert code == 0, output
-
-        term = start_tui( project )
-        try:
-            until( term, "test_demo.py" )
-            term.send( fkey( 3 ) )
-            both = term.frame()
-            assert "test_demo.py::quick" in both and "test_demo.py::slow" in both, both
-
-            # A history is only useful once one line of it can be found.
-            term.send( "slo" )
-            found = term.frame()
-            assert "find: slo" in found, found
-            assert "test_demo.py::slow" in found, found
-            assert "test_demo.py::quick" not in found, found
-
-            # And the search of one page is not the search of the other.
-            term.send( fkey( 2 ) )
-            assert "find: slo" not in term.frame(), term.frame()
-        finally:
-            term.close()
-
-
-if test( "a terminal whose terminfo has `rep` still gets whole borders" ):
-    # Ghostty's does, and the ncurses macOS ships answers a run of `─` with nothing at all: every box
-    # collapsed to its title. The terminfo is made here, so that it needs no Ghostty to be tested.
-    import shutil
-    import subprocess
-
-    if not ( shutil.which( "infocmp" ) and shutil.which( "tic" ) ):
-        skip( "no infocmp / tic to make a terminal with" )
-    with tempfile.TemporaryDirectory() as tmp:
-        dump = subprocess.run( [ "infocmp", "-x", "-1", "xterm-256color" ], capture_output = True,
-                               text = True, check = True ).stdout
-        lines = [ l for l in dump.splitlines() if not l.strip().startswith( "rep=" ) ]
-        first = next( i for i, l in enumerate( lines ) if not l.startswith( "#" ) )
-        lines[ first ] = "xterm-withrep|xterm with rep,"
-        lines.insert( first + 1, "\trep=%p1%c\\E[%p2%{1}%-%db," )
-        info = Path( tmp ) / "terminfo"
-        subprocess.run( [ "tic", "-x", "-o", str( info ), "-" ], input = "\n".join( lines ) + "\n",
-                        text = True, check = True, capture_output = True )
-
-        project = a_project( tmp )
-        from _tty import Term, tui_env
-        import sys
-        env = tui_env( project )
-        env[ "TERM" ], env[ "TERMINFO" ] = "xterm-withrep", str( info )
-        term = Term( [ sys.executable, "-m", "errand", "tui" ], project, env = env )
-        try:
-            until( term, "test_demo.py" )
-            shown = term.frame()
-            assert "─" * 10 in shown, shown
-        finally:
-            term.close()
-
-
-if test( "a terminfo that names `\\E[<` as its mouse still gets a wheel, and no stray typing" ):
-    # Ghostty's does: ncurses swallows the three bytes, returns KEY_MOUSE, and leaves `65;10;5M` to arrive
-    # as keys -- which is a search for "65;10;5M" the first time the wheel turns.
-    import shutil
-    import subprocess
-    import sys
-
-    if not ( shutil.which( "infocmp" ) and shutil.which( "tic" ) ):
-        skip( "no infocmp / tic to make a terminal with" )
-    with tempfile.TemporaryDirectory() as tmp:
-        dump = subprocess.run( [ "infocmp", "-x", "-1", "xterm-256color" ], capture_output = True,
-                               text = True, check = True ).stdout
-        lines = [ l for l in dump.splitlines() if not l.strip().startswith( "kmous=" ) ]
-        first = next( i for i, l in enumerate( lines ) if not l.startswith( "#" ) )
-        lines[ first ] = "xterm-sgrmouse|xterm with an SGR kmous,"
-        lines.insert( first + 1, "\tkmous=\\E[<," )
-        info = Path( tmp ) / "terminfo"
-        subprocess.run( [ "tic", "-x", "-o", str( info ), "-" ], input = "\n".join( lines ) + "\n",
-                        text = True, check = True, capture_output = True )
-
-        from _tty import Term, tui_env, mouse, WHEEL_DOWN
-        project = a_project( tmp, { "test_many.py": MANY } )
-        env = tui_env( project )
-        env[ "TERM" ], env[ "TERMINFO" ] = "xterm-sgrmouse", str( info )
-        term = Term( [ sys.executable, "-m", "errand", "tui" ], project, env = env )
-        try:
-            until( term, "case_00" )
-            for _ in range( 5 ):
-                term.send( "\x1b[<65;10;6M" )          # what such a terminal sends for a wheel notch
-            after = term.frame()
-            assert "[ ] case_00" not in after, after
-            assert "find: a case" in after, "nothing was typed into the search\n" + after
-        finally:
-            term.close()
+            try:
+                os.killpg( pid, signal.SIGKILL )
+            except OSError:
+                pass
+            conn.close()
+            agents._open.clear()
+            del os.environ[ "ERRAND_CACHE_DIR" ]

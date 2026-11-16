@@ -11,22 +11,15 @@ you type, and what you import, is `errand`:
 errand --version
 ```
 
-```python
-from errand import test, bench, Param
-```
+Python 3.8 or later, on Linux or macOS. Only on the machine you type on: on a machine reached over
+[`Ssh`](./layers/ssh#nothing-to-install-over-there), in a container, in a Windows guest, errand
+brings itself.
 
-Python 3.8 or later, on a unix. Only on the machine you type on: on another one reached over
-[`Ssh`](./layers/ssh#nothing-to-install-over-there), errand brings itself.
-
-## No dependencies, and it is not going to get any
+## No dependencies
 
 errand's job is to build the environment the work runs in, so it has to be able to run *before any
 environment exists* — including before its own dependencies could have been installed. It writes
-YAML without pyyaml, and draws [its screen](./tui) with the `curses` of the standard library, for
-that reason alone.
-
-This is a property worth keeping, not an accident. An environment-building tool that needs an
-environment first is a tool you cannot use on the machine where you need it most.
+YAML without pyyaml for that reason alone. A tool that builds environments cannot need one first.
 
 ## From a checkout
 
@@ -47,23 +40,18 @@ make dev        # pip install -e . into the interpreter you are using now
 make            # the help, including the release order
 ```
 
-The suite is worth knowing about for a second reason: it is the most thorough example of errand
-there is. Every behaviour documented on this site is exercised by an entry in `tests/`, written the
-way you would write your own.
-
 ## The examples
 
-The three worked examples ship in the sdist and in the checkout, and are meant to be read in order:
+[`examples/`](https://github.com/hleclerc/errand/tree/main/examples) ships in the sdist and in the
+checkout:
 
 ```bash
-cd examples/03-entries     && errand run '**::*'   # no configuration at all
-cd examples/01-environments && errand envs         # four environments over three machines
-cd examples/02-existing-suite && errand run '**::*'  # pytest + Catch2 + cargo, unmodified
+cd examples/01-environments   && errand envs        # four environments over three machines
+cd examples/02-existing-suite && errand run '**::*' # pytest + Catch2 + cargo, unmodified
+cd examples/03-entries        && errand run '**::*' # errand's own entries, no configuration
 ```
 
-The first needs nothing but `errand`. The other two name micromamba environments, Apptainer images,
-ssh hosts and a Slurm partition that do not exist on your machine — they are there to be read and
-adapted, and `errand envs` will tell you honestly that none of them is built.
-
-Each one has a tutorial on this site: [one](/tutorials/first-entry), [two](/tutorials/environments),
-[three](/tutorials/adopt-a-suite).
+The first two name micromamba environments, Apptainer images, ssh hosts and a Slurm partition that
+do not exist on your machine: read them, adapt them, and `errand envs` tells you none is built yet.
+They go with [Four environments](/tutorials/environments),
+[Adopting a suite](/guide/runners/adopting) and [Writing entries](/guide/declaring-work).

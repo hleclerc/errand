@@ -12,7 +12,8 @@
 
     hub      through the hub, started if need be ( the default on a terminal )
     direct   a stream owned by this process, closed with it ( the default without a terminal )
-    off      no agent: `Over.shell` opens an ssh per command, as before
+
+There is no way without agents ( ADR 0009 ): one way to run, stop, list and report on every node.
 """
 from __future__ import annotations
 
@@ -32,7 +33,8 @@ _lock = threading.Lock()
 def mode( ) -> str:
     chosen = os.environ.get( "ERRAND_AGENT", "" ).strip().lower()
     if chosen in ( "0", "off", "no" ):
-        return "off"
+        raise RuntimeError( f"ERRAND_AGENT={chosen}: errand has no mode without agents any more ( ADR 0009 ); "
+                            "`hub` or `direct`" )
     if chosen in ( "hub", "direct" ):
         return chosen
     try:
@@ -41,9 +43,6 @@ def mode( ) -> str:
         tty = False
     return "hub" if tty else "direct"
 
-
-def enabled( ) -> bool:
-    return mode() != "off"
 
 
 def open( target: dict ) -> Connection:

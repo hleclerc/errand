@@ -15,7 +15,8 @@ from .families import batch_of, Scheduler
 
 @dataclass
 class Slurm( Scheduler ):
-    """A batch allocation. `srun` while you wait, `sbatch` under `--batch`.
+    """A batch allocation. While you wait, an allocation with an agent on its first node, shared by
+    the commands that fit in it ( `cli.alive` ); `sbatch` under `--batch` or `watch`.
 
     Not an interpreter-selecting layer: it puts the command inside an
     allocation and leaves it otherwise alone, so it stacks in front of a
@@ -56,6 +57,11 @@ class Slurm( Scheduler ):
     # allocation its preparation had, and the next command typed right after. `0`: one job per command.
     keep_alive: str | float | None = None
     KEEP_WARM = "1m"
+    # What is asked of Slurm for the allocation, apart from the commands it serves ( ADR 0009 ):
+    # `{ "time": "2:00:00" }` lands it in a priority qos up to its threshold ( the qos is computed
+    # from it ), and every command that fits in what is left runs in it, one after the other or
+    # side by side. Its keys are this layer's own ( time, gpus, cpus, nodes, partition, ... ).
+    allocation: dict | None = None
 
     # The flags that say how many processes the job starts: errand runs once in the allocation, and
     # starts the ranks itself. `-n4` and `--ntasks=4` are the same flag.
@@ -136,42 +142,14 @@ class Slurm( Scheduler ):
             log = watch_dir( ctx )
             return Command( [ "sbatch", "--parsable", *flags, "--output", f"{log}/slurm-%j.out",
                               "--wrap", f"{cmd.shell()}; echo $? > {log}/slurm-$SLURM_JOB_ID.rc" ], { } )
-        if int( ( ctx.needs or { } ).get( "ranks" ) or 1 ) > 1 and not ctx.interactive and ctx.phase != "prepare":
-            # The allocation is for every rank, and errand runs in it once, as one task on the first node:
-            # it starts the ranks with an `srun` of its own ( `errand.mpi` ), which the step it runs in
-            # must not hold the cores of ( `--overlap` ).
-            return _cancelled_on_stop( [ "salloc", *self.flags( ctx ), "srun", "--nodes", "1", "--ntasks", "1",
-                                         "--overlap", *cmd.argv ], cmd.env )
-        return _cancelled_on_stop( [ "srun", *self.flags( ctx ), *( [ "--pty" ] if ctx.interactive else [ ] ),
-                                     *cmd.argv ], cmd.env )
+        # Waited for, it runs in an allocation with an agent on its first node ( `cli.alive`, ADR 0009 ):
+        # never a bare `srun` whose stop would depend on how Slurm handles a killed srun.
+        raise RuntimeError( "a Slurm command runs in an allocation, through its agent ( ADR 0009 ): "
+                            "only `sbatch` comes from wrap" )
 
     def describe( self ):
         nodes = self._nodelist()
         return f"slurm:{self.partition or 'default partition'}" + ( f"@{nodes}" if nodes else "" )
-
-
-# A job waited for ( `srun`, `salloc` ) is named, and tells its owner how to cancel it ( ADR 0008 ):
-# a stop reaches the process group of srun, but an srun or a salloc killed outright leaves its
-# allocation behind until slurm notices. The agent that runs it cancels it by that name when it is
-# stopped, and so does the next agent if that one is killed ( `procs.on_stop` ).
-# The path of scancel as this command finds it: the agent's own PATH may lack what a profile adds.
-CANCEL_ON_STOP = ( '[ -n "$ERRAND_PROC_DIR" ] && echo "$(command -v scancel || echo scancel) --quiet --name=$0 --user=$(id -un)" '
-                   '> "$ERRAND_PROC_DIR/on_stop" 2>/dev/null; exec "$@"' )
-
-
-def _cancelled_on_stop( argv: list, env ) -> Command:
-    flags = [ str( a ).split( "=" )[ 0 ] for a in argv ]
-    if "--job-name" in flags or "-J" in flags:
-        return Command( argv, env )          # named by the user: theirs to cancel
-    import uuid
-    name = f"errand-{uuid.uuid4().hex[ : 12 ]}"
-    return Command( [ "sh", "-c", CANCEL_ON_STOP, name, argv[ 0 ], "--job-name", name, *argv[ 1 : ] ], env )
-
-
-def unhooked( argv: list ) -> list:
-    """`argv` without the line that registers its cancel ( `_cancelled_on_stop` ): srun or salloc first."""
-    argv = list( argv )
-    return argv[ 4 : ] if argv[ : 3 ] == [ "sh", "-c", CANCEL_ON_STOP ] else argv
 
 
 def slurm_seconds( time: str ) -> int:

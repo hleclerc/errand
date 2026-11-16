@@ -71,29 +71,18 @@ if test( "the deciding is here: what it asks over there are lines, named from th
     assert "-mtime" in line and "-mtime" not in vm.Windows( key = "K" ).probe_shell( over )
 
 
-if test( "ssh hands a machine to boot its own host, and brings back what it fetched" ):
-    seen, fetched = { }, [ ]
-
-    def run( self, inner, cmd, ctx, pull = None, echo = print ):
-        seen.update( host = ctx.host, root = ctx.root, origin = ctx.origin, pull = pull, argv = cmd.argv )
-        return 7
-
-    from errand.layers import gateways as G          # where Ssh.run finds them
-    kept = vm.Windows.run, G.push, G.fetch
-    vm.Windows.run = run
-    G.push  = lambda *a, **kw: None
-    G.fetch = lambda paths, *a, **kw: fetched.extend( paths )
+if test( "ssh does not hand a machine to boot a command: errand runs in it through its agent ( ADR 0009 )" ):
+    from errand.layers import gateways as G
+    kept = G.push
+    G.push = lambda *a, **kw: None
     try:
-        code = L.Ssh( host = "lmo", root = "/there/proj" ).run(
-            [ vm.Windows( fetch = [ "build" ] ) ], L.Command( [ "cl", "/c", "a.cpp" ] ),
-            ctx(), pull = [ "runs/x" ], echo = lambda s: None )
+        L.Ssh( host = "lmo", root = "/there/proj" ).run( [ vm.Windows() ], L.Command( [ "cl", "/c", "a.cpp" ] ),
+                                                         ctx(), echo = lambda s: None )
+        raise AssertionError( "Ssh.run handed a command to the windows behind it" )
+    except RuntimeError as err:
+        assert "through its agent" in str( err )
     finally:
-        vm.Windows.run, G.push, G.fetch = kept
-    assert code == 7, "the command's own code comes back through both"
-    assert isinstance( seen[ "host" ], L.Over ) and seen[ "host" ].ssh.host == "lmo"
-    assert str( seen[ "root" ] ) == "/there/proj" and seen[ "origin" ] == ROOT
-    assert seen[ "pull" ] == [ "runs/x" ] and seen[ "argv" ] == [ "cl", "/c", "a.cpp" ]
-    assert fetched == [ "runs/x", "build" ], "what windows brought over there comes back here"
+        G.push = kept
 
 
 if test( "what the machine is, asked through its host and read back" ):
@@ -162,6 +151,25 @@ if test( "a machine is up while a command holds it or a session runs in the gues
         assert m._idle( 3600 ) is None, "`keep` still means what it says once nobody uses it"
 
 
+if test( "booted for nobody, a machine goes at once: `keep` is for one that served ( ADR 0009 )" ):
+    from errand.vm.common import _lock
+    with tempfile.TemporaryDirectory() as tmp, cache( tmp ):
+        m = quiet_guest( vm.Machine( L.Here( Path( tmp ) ), facts( cache = tmp ), "img" ) )
+        m.live.mkdir( parents = True )
+        ( m.live / "used" ).touch()                                  # the hold that asked, during the boot
+        m._served = False                                            # what the keeper says once ready
+        held = m._idle( 3600 )
+        assert held is not None, "its command went during the boot: it goes, whatever `keep` says"
+        for lock in held:
+            lock.close()
+
+        m._served = False
+        hold = _lock( m.live / "use.lock" )
+        assert m._idle( 3600 ) is None, "still held once booted: it serves"
+        hold.close()
+        assert m._idle( 3600 ) is None, "it served: now `keep` holds"
+
+
 if test( "kept warm, a machine says so in its claim, and goes as soon as somebody needs the room" ):
     from errand.vm.common import _lock
 
@@ -207,16 +215,12 @@ if test( "the machine's state is named after its image: two projects' copies are
         assert a.live != b.live and a.live.parent == b.live.parent == Path( tmp ) / "errand" / "vm"
 
 
-if test( "no image, no command -- and said so" ):
-    with tempfile.TemporaryDirectory() as tmp, cache( tmp ):
-        said = [ ]
-        here = L.Context( root = Path( tmp ) )
-        assert vm.Windows().run( [ ], L.Command( [ "dir" ] ), here, echo = said.append ) == 1
-        assert "not installed yet here" in said[ 0 ], said
-        said.clear()
-        assert vm.Windows().run( [ ], L.Command( [ "python", "-c", "a = 1\nprint( a )" ] ), here,
-                                 echo = said.append ) == 1
-        assert "one line" in said[ 0 ], "a newline is refused, not silently cut by cmd.exe"
+if test( "a guest is reached through its agent only: no cmd.exe line handed over ssh ( ADR 0009 )" ):
+    try:
+        vm.Windows().run( [ ], L.Command( [ "dir" ] ), L.Context( root = Path( "/" ) ) )
+        raise AssertionError( "Windows.run handed a command over without an agent" )
+    except RuntimeError as err:
+        assert "through its agent" in str( err )
 
 
 if test( "windows refuses to be folded like the others" ):
@@ -277,7 +281,6 @@ if test( "every guest has a Python, and errand runs in it through its agent ( AD
     assert vm.Windows().declared()[ "python" ] == PYTHON
     assert vm.Windows( python = None ).image( ctx() ) == vm.Windows().image( ctx() ), "None is the default release"
     assert f"python-{PYTHON}-amd64.exe" in vm.setup_script( python = vm.Windows().declared()[ "python" ] )
-    assert G.usable( SimpleNamespace( vm = vm.Windows() ) )
 
 
 if test( "a provisioning script is fingerprinted by what it says" ):
@@ -388,17 +391,24 @@ if test( "the project goes in by rsync, to the path the guest's rsync reads" ):
 if shutil.which( "rsync" ) and test( "what is copied in leaves out what an Ssh push would" ):
     with tempfile.TemporaryDirectory() as tmp:
         root, out = Path( tmp ) / "p", Path( tmp ) / "out"
-        for p in ( "src/a.cpp", "errand-outputs/runs/x/result.yaml", ".git/HEAD", "build/a.o", ".errand/env-w.yaml" ):
+        for p in ( "src/a.cpp", "errand-outputs/runs/x/result.yaml", ".git/HEAD", "build/a.o", ".errand/env-w.yaml",
+                   "results/big.h5", "src/results/kept.txt" ):
             ( root / p ).parent.mkdir( parents = True, exist_ok = True )
             ( root / p ).write_text( "x" )
         # The line as the machine that runs QEMU would run it, from its root,
-        # into a directory here rather than the guest.
-        argv = shlex.split( vm.rsync_line( [ "ssh" ], "E:/proj" ) )
+        # into a directory here rather than the guest. A zone of the project stays out, as from a
+        # push; only at the root.
+        from errand import config
+        zones, config.settings.zones = config.settings.zones, { "results": "back" }
+        try:
+            argv = shlex.split( vm.rsync_line( [ "ssh" ], "E:/proj" ) )
+        finally:
+            config.settings.zones = zones
         for flag in ( "-e", "--rsync-path" ):
             del argv[ argv.index( flag ) : argv.index( flag ) + 2 ]
         assert subprocess.run( [ *argv[ : -1 ], f"{out}/" ], cwd = root ).returncode == 0
         names = { str( p.relative_to( out ) ) for p in out.rglob( "*" ) }
-        assert names == { "src", "src/a.cpp" }, names
+        assert names == { "src", "src/a.cpp", "src/results", "src/results/kept.txt" }, names
 
 
 if test( "a link to nothing does not fail the copy; anything else does" ):
