@@ -33,7 +33,7 @@ A target that designates nothing is an error, not an empty run: a file must exis
 on the place's `PATH`. That check happens in the environment, since only the place knows what it has.
 
 Targets of the form `path::name` run tests and entries one by one: see
-[Running a suite test by test](/guide/runners/).
+[Running a suite](/guide/runners/).
 
 ## What follows the target is the target's
 

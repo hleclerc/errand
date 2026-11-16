@@ -80,4 +80,4 @@ on every machine you sent work to, and Ctrl-C on a followed run stops it through
 - [Environments](./environments) and the [layers](./layers/), one by one
 - [Running](./running): targets, options, `errand shell`
 - [Four environments](/tutorials/environments), a guided tour
-- A pytest, Catch2 or cargo suite, test by test: [Running a suite](./runners/)
+- A pytest, Catch2 or cargo suite: [Running a suite](./runners/)

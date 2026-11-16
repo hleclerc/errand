@@ -28,15 +28,14 @@ class _WholeFile( Runner ):
     whole_files   = True
     takes_entries = False
 
-    def command( self, key: str ) -> list:
+    def __init__( self, zones = None ):
+        self.zones = dict( zones or { } )
+
+    def command( self, key: str, ctx: RunContext ) -> list:
         raise NotImplementedError
 
-    def collect( self, specs ):
-        return [ self.entry( name = Path( key ).name, file = Path( key ), key = str( key ) )
-                 for key in self.files_of( specs ) ]
-
     def run( self, entry, ctx: RunContext ) -> Outcome:
-        argv = [ *ctx.wrap, *( str( a ) for a in self.command( entry.key ) ), *ctx.args ]
+        argv = [ *ctx.wrap, *( str( a ) for a in self.command( entry.key, ctx ) ), *ctx.args ]
         # A directory only when one was asked for, which `ctx.env` says.
         env = { **{ k: v for k, v in os.environ.items() if k != OUT_DIR },
                 **( { "ERRAND_BUILD_DIR": str( ctx.build_dir ) } if ctx.build_dir else { } ),
@@ -65,24 +64,28 @@ SKIP_CODE = 77
 
 
 class Python( _WholeFile ):
-    """A `.py`, run by the interpreter of the place it runs in."""
+    """A `.py`, run by the Python of the place it runs in ( `{python}`: the environment's own name
+    for it, or the interpreter errand runs on there )."""
 
     name = "python"
 
-    def command( self, key ):
-        return [ sys.executable, key ]
+    def command( self, key, ctx ):
+        return [ *self.tool( "python", ctx ), key ]
 
 
 class Executable( _WholeFile ):
     """Anything else, run as it is: a file of the project ( `./bench`, a script
     with a shebang ), or a command of the place ( `make`, `cmake`, `pytest` ).
-    A first word that names an interpreter is the interpreter of the place."""
+    A first word that names an interpreter is the Python of the place, and one
+    the environment names in its `tools` is what it names."""
 
     name = "executable"
 
-    def command( self, key ):
+    def command( self, key, ctx ):
         if key in INTERPRETERS:
-            return [ sys.executable ]
+            return self.tool( "python", ctx )
+        if key in ctx.tools:
+            return self.tool( key, ctx )
         path = Path( key )
         if path.parent != Path( "." ) or self._under_root( path ).is_file():
             return [ str( self._under_root( path ).resolve() ) ]

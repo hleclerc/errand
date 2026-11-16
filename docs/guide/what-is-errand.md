@@ -66,8 +66,8 @@ decides who gets the nodes. errand only shares out what it was given between you
 **Not a build system.** errand compiles nothing itself. When a run needs a build, it runs the
 command you already build with.
 
-**Not a replacement for your test runner.** It can run a pytest, Catch2 or cargo suite test by
-test in every environment, and `pytest` keeps working as before. → [Running a suite](./runners/)
+**Not a replacement for your test runner.** It can run a pytest, Catch2 or cargo suite, one run
+of its tool per file, in every environment, and `pytest` keeps working as before. → [Running a suite](./runners/)
 
 **Not a judge of what compares.** Numbers from a laptop and from a cluster are not comparable, and
 errand will not stop you. It records where each one came from.

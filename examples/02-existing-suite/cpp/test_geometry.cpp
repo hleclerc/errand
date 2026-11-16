@@ -14,6 +14,6 @@ TEST_CASE( "perimeter", "[geometry]" ) {
 
 // Catch2's own benchmarks land in result.yaml like any other numbers, dated
 // and per machine -- which is the thing a C++ suite usually never had.
-TEST_CASE( "area is cheap", "[geometry][!benchmark]" ) {
+TEST_CASE( "area is cheap", "[geometry][benchmark]" ) {
     BENCHMARK( "area" ) { return area( 3, 4 ); };
 }

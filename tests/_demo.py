@@ -23,7 +23,7 @@ from errand import test, bench, Param
 if test( "quick" ):
     print( "hello from quick" )
 
-if p := bench( "slow", exclusive = False, n = Param( 1 ),
+if p := bench( "slow", n = Param( 1 ),
                method = Param( "cg", choices = [ "cg", "direct" ] ) ):
     print( f"{p.n} turns of {p.method}" )
     p.results[ "seconds" ] = 0.1 * p.n

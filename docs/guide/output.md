@@ -108,7 +108,6 @@ On a filesystem without symlinks it is simply missing.
 ```yaml
 name: train.py                       # the file, or the entry's name
 file: train.py                       # relative to the root when it is under it
-kind: test                           # test | bench | experiment
 date: 2026-09-25T18:04:11+02:00
 env: gpu
 place: gpu@gpu-box                   # environment and machine, as in the directory name

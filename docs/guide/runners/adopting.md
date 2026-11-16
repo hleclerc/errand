@@ -41,7 +41,7 @@ where to look and how to build. Not a line of the tests changes.
 errand run '**::*'                        # all three suites
 errand run "tests/test_api.py::*"         # the python ones
 errand run cpp/test_geometry.cpp::area    # one Catch2 case, by name
-errand run -e '!slow' '**::*'             # pytest marks are entry tags
+errand run 'tests/**::*' -m "not slow"    # pytest's own filter, after the target
 errand run pytest tests/                  # the pytest command itself, recorded as one run
 errand list '**::*'                       # what is there, and which runner took it
 ```
@@ -90,16 +90,15 @@ errand.runners.replace( errand.Catch2( dir = "cpp", build = "make -C cpp" ) )
 errand.runners.replace( errand.Catch2( dir = "cpp", build = "cmake --build build", binary = "build/{stem}" ) )
 ```
 
-`build` runs once before any Catch2 entry, in the place they run. `binary` defaults to the source
-without its extension, which is where the Makefile here puts it. cargo needs neither: `cargo test`
-builds what it runs.
+`build` runs once, during the preparation, in the place the binaries run. `binary` defaults to the source
+without its extension, which is where the Makefile here puts it. cargo needs neither: the runner
+compiles with `cargo test --no-run` during the preparation.
 
 ## What to notice
 
-- **Catch2 gives one entry per test case, after a build.** The build runs during the preparation,
-  where the cases will run, and the binary is then asked for its own cases.
-- **pytest marks are entry tags.** `-e '!slow'` filters them with the
-  [expression language](/reference/expressions) `-t` uses on environments.
+- **A file is one run of its tool.** pytest gets the file and the `::name` as a node id, the Catch2
+  binary gets it as a test spec, and errand reads their reports back: counts, failed names.
+- **Filters are the tools' own.** `-m "not slow"` for pytest, `::~[slow]` for Catch2.
 - **A missing pytest is installed when the environment is errand's.** Into a venv, a micromamba
   environment or a container, errand installs it and says so. Into the system interpreter it
   declines and tells you what to run.

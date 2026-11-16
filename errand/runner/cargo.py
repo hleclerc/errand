@@ -13,25 +13,34 @@ from .base import FRAMEWORK, NONE, Outcome, RunContext, Runner
 
 
 class Cargo( Runner ):
-    """A Rust crate: one entry per test target.
+    """A Rust crate: one run per test target.
 
-    `cargo metadata` knows the targets without compiling any of them, which is
-    what makes collecting cheap. A
+    `cargo metadata` knows the targets without compiling any of them. A
     target's file is its source root ( `src/lib.rs`, `tests/foo.rs` ), and the
-    crate is the nearest `Cargo.toml` above it. Naming a single test still
-    works: the `::name` part becomes the filter `cargo test` takes after `--`.
+    crate is the nearest `Cargo.toml` above it. The `::name` part becomes the
+    filter `cargo test` takes after `--`.
+
+    The tests are compiled during the preparation ( `cargo test --no-run` ), in
+    the place they will run, into this environment's own target directory
+    ( `{build_dir}/target` ): two environments never share a binary, and the run
+    only runs.
     """
 
     name = "cargo"
     level = FRAMEWORK
     whole_files = True
     takes_selector = True
+    jobs = True                          # `-j N` on one target: `--test-threads N`
 
-    def __init__( self, manifest = None, args = ( ), release = False ):
-        self.manifest = None if manifest is None else Path( manifest )
-        self.args     = list( args )
-        self.release  = release
-        self._targets = { }
+    def __init__( self, manifest = None, args = ( ), release = False, target_dir = "{build_dir}/target",
+                  zones = None ):
+        self.manifest   = None if manifest is None else Path( manifest )
+        self.args       = list( args )
+        self.release    = release
+        # Where cargo builds: per environment by default; None leaves it to cargo ( `target/` ).
+        self.target_dir = target_dir
+        self._targets   = { }
+        self.zones      = dict( zones or { } )
 
     def _manifest_of( self, path: Path ):
         if self.manifest is not None:
@@ -49,9 +58,10 @@ class Cargo( Runner ):
         if manifest in self._targets:
             return self._targets[ manifest ]
         self._targets[ manifest ] = found = { }
-        if shutil.which( "cargo" ) is None or not manifest.is_file():
+        cargo = self.tool( "cargo" )
+        if shutil.which( cargo[ 0 ] ) is None or not manifest.is_file():
             return found
-        got = subprocess.run( [ "cargo", "metadata", "--no-deps", "--format-version", "1",
+        got = subprocess.run( [ *cargo, "metadata", "--no-deps", "--format-version", "1",
                                 "--manifest-path", str( manifest ) ],
                               capture_output = True, text = True, timeout = 300 )
         if got.returncode:
@@ -84,14 +94,47 @@ class Cargo( Runner ):
                                         tags = [ "cargo", target[ "kind" ] ] ) )
         return out
 
+    def _env( self, ctx: RunContext ):
+        """`CARGO_TARGET_DIR` for this environment, in both phases: what was built is what runs."""
+        if self.target_dir is None:
+            return ctx
+        where = Path( self.target_dir.replace( "{build_dir}", str( ctx.build_dir or "build" ) ) )
+        ctx.env = { **ctx.env, "CARGO_TARGET_DIR": str( ctx.root / where if not where.is_absolute() else where ) }
+        return ctx
+
+    def build_lines( self, entries, ctx: RunContext ) -> list:
+        return [ f"{' '.join( self.tool( 'cargo', ctx ) )} test --no-run --manifest-path {m}" + ( " --release" if self.release else "" )
+                 for m in self._manifests( entries ) ]
+
+    @staticmethod
+    def _manifests( entries ):
+        return list( dict.fromkeys( json.loads( e.key )[ "manifest" ] for e in entries ) )
+
+    def prepare( self, entries, ctx: RunContext ):
+        """Compiles every test target of the crates asked for, once, before anything runs."""
+        cargo = self.tool( "cargo", ctx )
+        if shutil.which( cargo[ 0 ] ) is None:
+            return f"{cargo[ 0 ]} is not on this place's PATH ( or name it: Env( tools = {{ \"cargo\": ... }} ) )"
+        ctx = self._env( ctx )
+        for m in self._manifests( entries ):
+            got = self.shell( [ *cargo, "test", "--no-run", "--manifest-path", m,
+                                *( [ "--release" ] if self.release else [ ] ), *self.args ], ctx )
+            if got.returncode:
+                return f"the build failed ( cargo test --no-run, {m} ):\n{( got.stdout + got.stderr )[ -3000 : ]}"
+        return None
+
     def run( self, entry, ctx: RunContext ) -> Outcome:
+        ctx = self._env( ctx )
         target = json.loads( entry.key )
         which = { "lib": [ "--lib" ], "bin": [ "--bin", target[ "name" ] ] }.get(
             target[ "kind" ], [ "--test", target[ "name" ] ] )
-        argv = [ "cargo", "test", "--manifest-path", target[ "manifest" ], *which,
+        argv = [ *self.tool( "cargo", ctx ), "test", "--manifest-path", target[ "manifest" ], *which,
                  *( [ "--release" ] if self.release else [ ] ), *self.args ]
-        if ctx.selector or ctx.args:
-            argv += [ "--", *( [ ctx.selector ] if ctx.selector else [ ] ), *ctx.args ]
+        # After `--`: the test binary's own arguments.
+        tail = [ *( [ ctx.selector ] if ctx.selector else [ ] ),
+                 *( [ "--test-threads", str( ctx.jobs ) ] if ctx.jobs > 1 else [ ] ), *ctx.args ]
+        if tail:
+            argv += [ "--", *tail ]
         got = self.shell( argv, ctx )
         text = got.stdout + got.stderr
 

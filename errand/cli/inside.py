@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import os
 
-from .. import config, discovery, layers as L, results as R, runner as P
+from .. import config, discovery, layers as L, results as R
 from .style import bad, dim, head
-from .project import _put_src_on_path, build_dir_for
+from .project import _put_src_on_path
 from .grid import describe_grid, expand
 from .here import aggregate_needs, Ask, run_entries
 from .parallel import job_count, run_in_processes
@@ -39,23 +39,20 @@ class Prepared:
         self.__dict__.update( kw )
 
 
-def prepare_here( env, tags, verb, known, *, root, out_root, report, kinds ):
+def prepare_here( env, tags, verb, known, *, root, out_root, report ):
     """Resolve, build and collect, in this process, and write the plan: -> ( rc, Prepared or None ).
     None with rc 0 is `list`, which has said what it found and is done."""
     import json
 
     _put_src_on_path( root )
+    # What a runner starts before it has a run to start it for ( listing a crate's targets ).
+    for r in ( config.runners or { } ).values():
+        r.place_tools = dict( env.tools )
 
-    # What can only be listed once built is built now, in this place -- except
-    # in the run phase of two, which finds the preparation's build in place.
-    context = P.RunContext( root = root, out_dir = out_root, env = { },
-                            build_dir = build_dir_for( root, env.name ) )
     try:
         selected, modules, selectors = discovery.select(
-            known.pattern, root, kinds = kinds, entry_tags = known.entry_tags,
-            bulk_only = known.from_default and not kinds, exclude = config.settings.exclude,
-            runners = config.runners, context = context, build = not getattr( known, "from_plan", False ),
-            force = known.runner,
+            known.pattern, root, entry_tags = known.entry_tags, exclude = config.settings.exclude,
+            runners = config.runners, force = known.runner,
         )
     except ValueError as err:
         print( bad( str( err ) ) )
@@ -96,14 +93,20 @@ def prepare_here( env, tags, verb, known, *, root, out_root, report, kinds ):
         _suggest( root )
         return 1, None
 
-    plan = make_plan( env, tags, selected, combos, root = root, out_root = out_root, asked = Ask( known ).resources )
+    ask = Ask( known )
+    plan = make_plan( env, tags, selected, combos, root = root, out_root = out_root,
+                      asked = { **ask.resources, **( { "exclusive": True } if ask.exclusive else { } ) } )
     where = plan_path( root, env.name )
     from_plan = bool( getattr( known, "from_plan", False ) )
     if from_plan:
         # The run phase of two: what is here now must be what was prepared,
         # sized and announced. Otherwise the sources moved in between, or the
         # filesystem the two phases share is not shared.
-        before = read_plan( root, env.name )
+        # Prepared on another machine, the plan came with the request ( ADR 0011 ), and is kept here too.
+        before = getattr( known, "plan", None ) or read_plan( root, env.name )
+        if getattr( known, "plan", None ):
+            where.parent.mkdir( parents = True, exist_ok = True )
+            where.write_text( json.dumps( known.plan, indent = 1 ) )
         if before is None or before[ "entries" ] != plan[ "entries" ] or before[ "runs" ] != plan[ "runs" ]:
             print( bad( f"  {env.name}: what is here is not what was prepared "
                         f"( {_short( where, root )} ) -- the sources changed between the two phases, "
@@ -151,19 +154,31 @@ def combo_banner( i, n, varied ) -> str | None:
     return head( f"\n--- {i + 1}/{n}  {shown} ---" )
 
 
-def here( env, tags, verb, rest, known, *, root, out_root, report, kinds, inside ):
+def here( env, tags, verb, rest, known, *, root, out_root, report, inside ):
     """Resolve, build, collect and run, in this process: the environment is the
     one this process is in -- entered by a dispatch, or one that wraps nothing."""
     from .. import __version__
 
     rc, p = prepare_here( env, tags, verb, known, root = root, out_root = out_root,
-                          report = report, kinds = kinds )
+                          report = report )
     if p is None:
         return rc
     if p.phase == "prepare":
         return 0
 
-    if p.how_many > 1:
+    ask = Ask( known )
+    runs = len( p.selected ) * len( p.combos )
+    if p.how_many > 1 and runs == 1:
+        # One run: `-j N` is its tool's parallelism, when its runner says how ( ADR 0011 ), and the
+        # claim asks for as many cpus. Otherwise there is nothing to run at the same time.
+        runner = p.selected[ 0 ].runner
+        if runner is not None and runner.jobs:
+            ask.jobs = p.how_many
+            ask.resources.setdefault( "cpus", p.how_many )
+        else:
+            print( dim( f"  -j {p.how_many}: a single run, and {runner.name if runner else 'an entry'} "
+                        f"takes no parallelism of its own -- it runs alone" ), flush = True )
+    elif p.how_many > 1:
         run_in_processes( p.selected, p.combos, root = root, out_root = out_root, env = env,
                           tags = tags, how_many = p.how_many, report = report,
                           out_prefix = R.place( env.name ), flags = Ask.flags( known ) )
@@ -176,5 +191,5 @@ def here( env, tags, verb, rest, known, *, root, out_root, report, kinds, inside
         run_entries( p.selected, p.modules, root = root, out_root = out_root,
                      overrides = values, env_name = env.name, tags = tags,
                      version = __version__, report = report,
-                     queued = not known.no_queue, selectors = p.selectors, ask = Ask( known ) )
+                     queued = not known.no_queue, selectors = p.selectors, ask = ask )
     return 0

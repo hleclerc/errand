@@ -1,14 +1,14 @@
 # Writing entries
 
-::: warning Being reworked
-errand's own entries are being reworked into a protocol any program can follow: results written to
-a file, needs in each framework's own vocabulary, exit code 77 for a skip
-( [ADR 0003](https://github.com/hleclerc/errand/blob/main/docs/adr/0003-run-launches-everything-output-on-request.md) ).
-`entry`, `Param`, `need` and `skip` stay; the traits below are the part most likely to change.
+::: info What an entry says, and what the command says
+An entry says what the work is: its name, its parameters, its tags, and `ranks` when the body is
+written for MPI. What the run asks of the machine ( `--cpus`, `--gpus`, `-x` ) and which entries a
+bare `errand run` runs ( `default_run` ) belong to the command
+( [ADR 0011](https://github.com/hleclerc/errand/blob/main/docs/adr/0011-a-run-is-one-invocation-of-a-tool.md) ).
 :::
 
 You do not need entries to use errand: a command, a script or a pytest, Catch2 or cargo suite runs
-as it is ( see [Running a suite test by test](/guide/runners/) ). Entries are for work with no
+as it is ( see [Running a suite](/guide/runners/) ). Entries are for work with no
 framework of its own: a number to follow, a picture to look at, a step to run on a cluster.
 
 ```python
@@ -34,7 +34,7 @@ if p := experiment( "gaps", n = Param( 100_000 ) ):
 ```bash
 errand run test_primes.py::sieve              # one entry, by name
 errand run test_primes.py::sieve --n=1000000  # with another value of its parameter
-errand run -k bench '**::*'                   # every benchmark under here
+errand run -x 'bench/**::*'                  # every benchmark under bench/, each with the machine to itself
 errand list '**::*'                           # what is there, with the parameters each takes
 ```
 
@@ -63,12 +63,14 @@ and write files, all at once. Outside errand, a file run by hand, `out_dir()` an
 
 ## test, bench, track, experiment
 
-| | it is for | `-k` | a bare `errand run` |
-|---|---|---|---|
-| `test` | something that must pass | `test` | runs it |
-| `track` | numbers you want to follow: an error, a residual, a size, a count | `bench` | skips it |
-| `bench` | `track`, measured **alone**: timings, or anything a neighbour would disturb | `bench` | skips it |
-| `experiment` | something to look at: `latest/` is the path to open | `exp` | skips it |
+Four names for one declaration, so that the file says what the work is:
+
+| | it is for |
+|---|---|
+| `test` | something that must pass |
+| `track` | numbers you want to follow: an error, a residual, a size, a count |
+| `bench` | numbers that are timings, or anything a neighbour would disturb |
+| `experiment` | something to look at: `latest/` is the path to open |
 
 ```python
 from errand import test, bench, track, experiment, Param
@@ -77,32 +79,20 @@ if p := track( "accuracy", n = Param( 1000 ) ):
     p.results[ "error" ] = abs( solve( p.n ) - exact( p.n ) )
 ```
 
-A bare `errand run`, the targets of [`errand.default_run`](/guide/configuration#default-run), runs
-only the tests among errand's entries: numbers worth keeping are not produced by accident. Name the
-others, or ask for them with `-k bench` / `-k exp`. A target that names them, `'**::*'` included,
-runs them.
+They behave the same. What differed between them is the command's to say:
 
-`bench` takes the machine to itself because the commonest numbers worth following are timings, and
-a timing taken while something else ran is not a timing. When the numbers are not timings, use
-`track`.
+- **Which ones run.** A target names them, by file and by name. Keep tests, benchmarks and
+  experiments in files or directories of their own ( `tests/`, `bench/`, `experiments/` ), and
+  [`errand.default_run`](/guide/configuration#default-run) names what a bare `errand run` runs.
+- **The machine to itself.** A timing taken while something else ran is not a timing: `-x` asks
+  for the machine alone, for every run of the command ( [Sharing a machine](/guide/machine) ).
+- **Numbers kept.** Every recorded result is kept and comparable, whatever declared it.
+- **`latest/`.** Every entry's directory has it, beside the stamped runs.
 
-## The four traits
-
-The four functions are four lines of Python over `entry`, each setting traits:
-
-| trait | what it decides | `entry` default | set by |
-|---|---|---|---|
-| `bulk` | picked up by a bare `errand run` | `True` | `test` |
-| `keep` | its numbers are kept and compared date to date | `False` | `track`, `bench` |
-| `exclusive` | it needs the machine to itself | `False` | `bench` |
-| `stable_path` | `latest/` is what you are meant to open | `False` | `experiment` |
-
-Override one on the spot, or write a fifth function the same way:
-
-```python
-if p := experiment( "the big one", exclusive = True ):   # a picture that needs the whole GPU
-if p := bench( "cheap probe", exclusive = False ):       # a number that does not
-if entry( "docs", bulk = False ):                       # a task, run when named: errand run tasks.py::docs
+```bash
+errand run 'tests/**::*'                 # the tests
+errand run -x 'bench/**::*'              # the benchmarks, each alone on the machine
+errand run -o experiments/gaps.py::gaps  # an experiment, its files kept: latest/ to open
 ```
 
 ## Parameters: Param
@@ -126,26 +116,24 @@ errand run --grid=, bench/solvers.py::cost --n=1000,5000    # two runs: see Seve
   runs. `choices` is checked the same way.
 - Every parameter takes a value. A yes/no is better written `Param( "no", choices = [ "no", "yes" ] )`
   than as a bool.
-- A keyword that is not a `Param` must be a trait or a resource; anything else is a `TypeError`.
+- A keyword that is not a `Param` must be `tags` or `ranks`; anything else is a `TypeError`.
   That is what catches `n = 1000` written where `n = Param( 1000 )` was meant.
 - Parameters show in `errand list`, and are printed before each run.
 
 Several values of a parameter make a grid only under `--grid=SEP`: see
 [Several runs: grids](/guide/matrices).
 
-## Resources
-
-An entry says what it needs, and [the queue](/guide/machine) holds it to that:
+## Several processes: ranks
 
 ```python
-if p := test( "wide", cpus = 4, ram = "8G" ):        # a share of the machine
-if p := test( "on the card", gpus = 1 ):
 if p := test( "distributed", ranks = 4 ):            # 4 MPI processes, each running the body
 ```
 
-`cpus`, `ram` and `gpus` are counted against what the host has; with `ranks`, they are per rank
-( see [Several processes (MPI)](/guide/mpi) ). A [`Slurm`](/guide/layers/slurm) layer hands them to
-the scheduler. `--cpus`, `--ram`, `--gpus`, `--ranks` on the command line override them.
+A body written for MPI cannot run on one process: `ranks` is the one thing an entry says of how it
+runs. Each rank takes a core, the run is started under the place's MPI launcher, and a
+[`Slurm`](/guide/layers/slurm) layer asks for as many tasks ( see [Several processes (MPI)](/guide/mpi) ).
+`--ranks` on the command line overrides it. What the run asks of the machine otherwise is said on
+the command line: `--cpus 4 --ram 8G`, `--gpus 1`, `-x` ( [Sharing a machine](/guide/machine) ).
 
 ## Tags on an entry
 

@@ -21,6 +21,7 @@ class Errand( Runner ):
     name = "errand"
     level = ERRAND
     in_process = True
+    whole_files = False
 
     # The project's own files mention errand by nature, and re-executing one as
     # if it declared work would register everything it declares a second time.

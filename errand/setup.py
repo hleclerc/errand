@@ -143,6 +143,9 @@ def retried( layer, record: dict ) -> bool:
 
 def status( root: Path, env, ctx ) -> str:
     """ok / adopted / stale / not built / unknown / unreachable -- what `errand envs` prints."""
+    if len( env.places() ) > 1:
+        said = [ status( root, one, ctx ) for one in env.places() ]
+        return next( ( s for s in said if s != OK ), OK )
     if env.missing is not None:
         return UNREACHABLE
     want = wanted( env, ctx )
@@ -214,7 +217,12 @@ def ensure( root: Path, env, ctx, *, force = False, echo = print, dry_run = Fals
 
     A layer that builds on somebody's own machine ( `setup_only`: a `WindowsBox` ) is built only when asked, by
     `errand setup` ( `asked` ): any other command stops, and says so.
+
+    An environment that prepares on another machine is set up machine by machine ( `Env.places` ).
     """
+    if len( env.places() ) > 1:
+        return max( ensure( root, one, ctx, force = force, echo = echo, dry_run = dry_run, asked = asked )
+                    for one in env.places() )
     # Asked of, and built on, the machine the environment lives on: a layer
     # must not answer with what it finds here ( a root prefix, a binary ).
     there = ctx

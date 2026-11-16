@@ -17,7 +17,7 @@ if test( "errand's options, the target, then the target's own arguments" ):
     assert before == [ "--env", "gpu", "-j4", "--fp", "64" ] and target == "t.py"
     # After the target, nothing is errand's -- `--env` included.
     assert after == [ "--n=3", "--env", "x" ]
-    assert cli.split_target( parser(), [ "-k", "bench" ] ) == ( [ "-k", "bench" ], None, [ ] )
+    assert cli.split_target( parser(), [ "-r", "pytest" ] ) == ( [ "-r", "pytest" ], None, [ ] )
 
 
 if test( "a parameter before the target is a mistake worth hearing about" ):

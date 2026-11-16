@@ -317,3 +317,45 @@ if test( "the project declares its zones; a push's selection adds errand's outpu
         assert sel.skips( "pkg/__pycache__", "__pycache__" ) and sel.zone( "pkg/__pycache__" ) is None
     finally:
         C.reset()
+
+
+if test( "a runner says where its tool writes: its zones join the project's, which has the last word" ):
+    import errand
+    from errand import config as C
+    from errand.layers import gateways
+    try:
+        try:
+            errand.runners[ "cov" ] = errand.Pytest( zones = { "/htmlcov": "elsewhere" } )
+            assert False, "a zone of no known kind was taken"
+        except ValueError as err:
+            assert "runners[ 'cov' ].zones" in str( err ), err
+        errand.runners.replace( errand.Pytest( zones = { "/htmlcov": "back", "/.coverage-data": "back" } ) )
+        errand.runners.replace( errand.Cargo( target_dir = None, zones = { "/target/criterion": "back" } ) )
+        errand.configure( zones = { "/.coverage-data": "build" } )
+        assert C.zones()[ "/htmlcov" ] == "back" and C.zones()[ "/.coverage-data" ] == "build"
+        assert gateways.back_zones() == [ "htmlcov", "target/criterion" ], "brought back after a command"
+        sel = gateways.selection( Path( tempfile.mkdtemp() ) )
+        assert sel.zone( "htmlcov" ) == S.Zone( "/htmlcov", "back" )
+        assert sel.zone( "target/criterion" ).kind == "back" and sel.zone( "target" ).kind == "build", \
+               "brought back from inside what is built"
+    finally:
+        C.reset()
+
+
+if test( "a zone may name the environment: its build directory, its name" ):
+    import errand
+    from errand import config as C
+    from errand.layers import gateways
+    try:
+        errand.envs[ "gpu" ] = errand.Env( [ ] )
+        errand.envs[ "cpu" ] = errand.Env( [ ] )
+        errand.runners.replace( errand.Cargo( zones = { "/{build_dir}/target/criterion": "back" } ) )
+        errand.configure( zones = { "/results/{env}": "back" } )
+        assert gateways.back_zones( "gpu" ) == [ "build/gpu/target/criterion", "results/gpu" ]
+        # without an environment, every one's: they share the copy over there
+        assert gateways.back_zones() == [ "build/cpu/target/criterion", "build/gpu/target/criterion",
+                                          "results/cpu", "results/gpu" ]
+        sel = gateways.selection( Path( tempfile.mkdtemp() ) )
+        assert sel.zone( "build/gpu/target/criterion" ).kind == "back"
+    finally:
+        C.reset()

@@ -23,7 +23,7 @@ cd examples/02-existing-suite
 errand run '**::*'                      # all three suites
 errand run "tests/test_api.py::*"       # the python ones
 errand run cpp/test_geometry.cpp::area  # one Catch2 case, by name
-errand run -e '!slow' '**::*'           # pytest marks are entry tags
+errand run 'tests/**::*' -m "not slow"  # pytest's own filter, after the target
 errand run --grid=, --env local,old '**::*'      # every suite, both python versions
 errand run pytest tests/                # the pytest command itself, in the place, recorded
 ```
@@ -46,7 +46,7 @@ The Catch2 benchmark in `cpp/test_geometry.cpp` is the clearest case: it already
 and the measurement went to the terminal and died there. Now:
 
 ```bash
-errand run --batch -k bench --env local -e '!legacy' '**::*'
+errand run --batch cpp/test_geometry.cpp
 errand watch
 ```
 
@@ -75,7 +75,7 @@ errand.runners.replace( errand.Catch2( dir = "cpp", build = "make -C cpp" ) )
 errand.runners.replace( errand.Catch2( dir = "cpp", build = "cmake --build build", binary = "build/{stem}" ) )
 ```
 
-`build` runs **once before any entry of that runner** — not once per file, and not once per
+`build` runs **once, during the preparation, before any run of that runner** — not once per file, and not once per
 parallel process, which under `-j` would have several of them writing the same binary at the same
 time. `binary` says where a source's executable ends up, `{stem}` being the source's name; it
 defaults to `<dir>/<stem>`, which is where the Makefile here puts it. Leave `build` out entirely if
@@ -84,14 +84,15 @@ something else already built them.
 Nothing about your build is errand's business. It does not know your compiler, your flags or your
 layout, and asking it to would be asking it to have opinions it has no way to hold.
 
-`cargo` needs none of this: `cargo test` builds what it runs, and `cargo metadata` lists the targets
-without building anything at all.
+`cargo` needs none of this: `cargo metadata` lists the targets without building anything, and the
+runner compiles them with `cargo test --no-run` during the preparation.
 
 ## Notice
 
-- **The C++ runner is one entry per test case, after a build.** The build runs during the
-  preparation, where the cases will run, and the binary is then asked for its own cases.
-- **pytest marks become entry tags.** `-e '!slow'` filters them, with the same expression language
-  that `-t` uses on environments.
+- **A file is one run of its tool.** pytest gets the file and the `::name`, the Catch2 binary gets
+  it as a test spec, `cargo test` as its filter; errand reads their reports back.
+- **The build comes first.** It runs during the preparation, where the tests will run, before any
+  of them starts. [`04-catch2`](../04-catch2/) and [`05-cargo`](../05-cargo/) show it on a real
+  CMake build and a real crate.
 - **Nothing was converted.** `pytest tests/` and `./cpp/test_geometry` still work exactly as before.
   A runner runs the suite you already have; it does not replace it.

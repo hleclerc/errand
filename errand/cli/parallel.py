@@ -59,7 +59,7 @@ def run_in_processes( entries, combos, *, root, out_root, env, tags, how_many, r
         child = dict( os.environ )
         child[ PARAMS ] = json.dumps( values )
         child[ "PYTHONUNBUFFERED" ] = "1"
-        argv = [ sys.executable, "-m", "errand", "run", "--at", f"{e.file}:{e.line}",
+        argv = [ sys.executable, "-m", "errand", "run", "--at", at_of( e, root ),
                  "--root", str( root ), "--env", env.name, *flags ]
         return ( e, values,
                  subprocess.Popen( argv, cwd = root, env = child, text = True,
@@ -88,12 +88,31 @@ def run_in_processes( entries, combos, *, root, out_root, env, tags, how_many, r
     return report
 
 
-def run_one( at, *, root, out_root, env_name, tags, version, report, queued, ask = None ):
-    """The child side of the above: exactly the entry at FILE:LINE."""
-    from .. import yamlish
+RUNNER_AT = "runner:"
 
-    path, _, line = at.rpartition( ":" )
-    entries, modules = discovery.select_at( Path( path ), int( line ), root )
+
+def at_of( e, root ) -> str:
+    """What a child is told to run: errand's own entry by its call site ( FILE:LINE ), a runner's run
+    by the runner and its target ( `runner:NAME:path[::selector]` )."""
+    if e.runner is None:
+        return f"{e.file}:{e.line}"
+    path = os.path.relpath( e.file, root ) if Path( e.file ).is_absolute() else str( e.file )
+    if e.runner.takes_entries:
+        path += f"::{e.selector or '*'}"
+    return f"{RUNNER_AT}{e.runner.name}:{path}"
+
+
+def run_one( at, *, root, out_root, env_name, tags, version, report, queued, ask = None ):
+    """The child side of the above: exactly the entry at FILE:LINE, or the one run of a runner."""
+    from .. import config
+
+    if at.startswith( RUNNER_AT ):
+        name, _, target = at[ len( RUNNER_AT ) : ].partition( ":" )
+        entries, modules, _ = discovery.select( target, root, exclude = config.settings.exclude,
+                                                runners = config.runners, cwd = root, force = name )
+    else:
+        path, _, line = at.rpartition( ":" )
+        entries, modules = discovery.select_at( Path( path ), int( line ), root )
     if not entries:
         print( bad( f"no entry at {at}" ) )
         return 1

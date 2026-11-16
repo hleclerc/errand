@@ -1,4 +1,4 @@
-"""Declaring work: presets, traits, parameters and matrices."""
+"""Declaring work: its four names, parameters and matrices."""
 from errand import test, bench, experiment, entry, track, Param
 from errand import entries as E
 from errand.cli import expand
@@ -11,26 +11,20 @@ def collected_of( fn ):
     return list( E.collected )
 
 
-if test( "the presets are traits, nothing more" ):
-    got = collected_of( lambda: ( test( "a" ), bench( "b" ), experiment( "c" ) ) )
-    by_name = { e.name: e for e in got }
-    assert by_name[ "a" ].traits == { "bulk": True,  "keep": False, "exclusive": False,
-                                      "stable_path": False }
-    assert by_name[ "b" ].traits == { "bulk": False, "keep": True,  "exclusive": True,
-                                      "stable_path": False }
-    assert by_name[ "c" ].traits == { "bulk": False, "keep": False, "exclusive": False,
-                                      "stable_path": True }
+if test( "test, bench, track and experiment are one declaration under four names" ):
+    got = collected_of( lambda: ( test( "a" ), bench( "b" ), track( "t" ), experiment( "c" ) ) )
+    assert [ e.name for e in got ] == [ "a", "b", "t", "c" ]
+    assert all( e.resources == { } and e.params == { } for e in got )
 
 
-if test( "a preset can be contradicted on the spot" ):
-    got = collected_of( lambda: bench( "b", exclusive = False ) )
-    assert got[ 0 ].traits[ "exclusive" ] is False
-    assert got[ 0 ].traits[ "keep" ] is True       # the rest of the preset stands
-
-
-if test( "kinds follow from traits" ):
-    got = collected_of( lambda: ( test( "a" ), bench( "b" ), experiment( "c" ) ) )
-    assert [ e.kind for e in got ] == [ "test", "bench", "experiment" ]
+if test( "what an entry used to say of the machine is the command's now, and it is told so" ):
+    for word, where in ( ( "exclusive", "-x" ), ( "cpus", "--cpus" ), ( "bulk", "default_run" ),
+                         ( "keep", "comparable" ), ( "stable_path", "latest/" ) ):
+        try:
+            collected_of( lambda: bench( "b", **{ word: True } ) )
+            raise AssertionError( f"{word} was taken" )
+        except TypeError as err:
+            assert word in str( err ) and where in str( err ), err
 
 
 if test( "an entry is its call site, so two may share a name" ):
@@ -45,10 +39,9 @@ if test( "an entry is its call site, so two may share a name" ):
 
 
 if test( "a Param is a parameter; anything else must be a known word" ):
-    got = collected_of( lambda: entry( "e", n = Param( 10 ), cpus = 2, keep = True ) )
+    got = collected_of( lambda: entry( "e", n = Param( 10 ), ranks = 4 ) )
     assert list( got[ 0 ].params ) == [ "n" ]
-    assert got[ 0 ].resources == { "cpus": 2 }
-    assert got[ 0 ].traits[ "keep" ] is True
+    assert got[ 0 ].resources == { "ranks": 4 }
 
     try:
         collected_of( lambda: entry( "e", nonsense = 3 ) )
@@ -123,9 +116,3 @@ if test( "choices are checked before anything runs" ):
         assert "newton" in str( err )
     else:
         assert False, "a value outside choices must not reach the body"
-
-
-if test( "track keeps the numbers without taking the machine" ):
-    got = collected_of( lambda: track( "t" ) )[ 0 ]
-    assert got.traits[ "keep" ] and not got.traits[ "bulk" ] and not got.traits[ "exclusive" ]
-    assert got.kind == "bench"           # numbers followed over time: one kind for -k

@@ -82,7 +82,7 @@ if test( "a round trip brings the results back", tags = [ "ssh", "slow" ] ):
             PROJECT.format( host = host, root = remote_root, options = options ),
             { "bench_work.py": WORK }, vendor = True,
         )
-        code, output = run_errand( project, "run", "-o", "-k", "bench", "--env", "over-there", "--grid=,", "**::*", "--n", "3,4" )
+        code, output = run_errand( project, "run", "-o", "--env", "over-there", "--grid=,", "**::*", "--n", "3,4" )
         assert code == 0, output
 
         # The run happened over there -- and what it produced is HERE, at the
@@ -123,7 +123,7 @@ if test( "only what this invocation asked for comes back", tags = [ "ssh", "slow
                           f"mkdir -p {stale} && echo 'name: old' > {stale}/result.yaml" ],
                         check = True )
 
-        code, output = run_errand( project, "run", "-o", "-k", "bench", "--env", "over-there", "**::*" )
+        code, output = run_errand( project, "run", "-o", "--env", "over-there", "**::*" )
         assert code == 0, output
         assert not ( project / "errand-outputs" / "runs" / "someone_elses__run" ).exists(), \
             "the pull must name the paths it wants, not drag the whole tree home"

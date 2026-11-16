@@ -130,10 +130,10 @@ if test( "inside another batch system, mpiexec starts the ranks here, not throug
 
 if test( "an allocation is sized from the ranks, the entry's or the command line's" ):
     from errand.cli import aggregate_needs
-    from errand.entries import Entry, TRAITS
-    entry = lambda **res: Entry( "e", [ ], { }, dict( TRAITS ), res, "f.py", 1, "m" )
+    from errand.entries import Entry
+    entry = lambda **res: Entry( "e", [ ], { }, res, "f.py", 1, "m" )
     assert aggregate_needs( [ entry( ranks = 4 ) ] ) == { "ranks": 4.0 }
-    assert aggregate_needs( [ entry( cpus = 2 ) ], { "ranks": 6 } ) == { "ranks": 6.0, "cpus": 2.0 }   # ( per rank )
+    assert aggregate_needs( [ entry() ], { "ranks": 6, "cpus": 2 } ) == { "ranks": 6.0, "cpus": 2.0 }   # ( per rank )
 
 
 if test( "Slurm asks for one task per rank, and errand runs once in the allocation" ):

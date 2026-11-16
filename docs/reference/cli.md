@@ -71,14 +71,12 @@ The first word after errand's options is the target, read from the command line 
 
 Several targets are separated by commas — see [Running it](/guide/running#the-target). With no
 target, `run` runs `errand.default_run`, the targets the project declares in `errand-project.py`
-(from the project root), keeping only what is [`bulk`](/guide/declaring-work#the-four-traits); with
-none declared it prints this help.
+(from the project root); with none declared it prints this help.
 
 | flag | |
 |---|---|
 | `TARGET` | `path::name` or a file or command, comma-separated outside braces; `*` `?` `[…]` `{a,b}` on both sides, `**` on the path |
 | `-r`, `--runner NAME` | the runner that takes every target, by its name in `errand.runners`, claiming nothing |
-| `-k`, `--kind` | `test`, `bench` (every entry whose numbers are kept: `bench` and `track`) or `experiment` (`exp` is accepted). Repeatable |
 | `-e`, `--entry-tags` | an [expression](./expressions) over the tags written on an entry |
 | after the target | the target's own arguments: its `sys.argv`, or its command line, passed as written, `--env` and `--` included. A parameter an errand entry declares is read out of them ( `--n=5`, `--n 5` ), and there a comma is a [matrix](/guide/matrices) ( `\,` is a comma, `,,` an empty value ). Anything else is not gridded |
 
@@ -86,7 +84,7 @@ none declared it prints this help.
 
 | flag | |
 |---|---|
-| `-j N`, `--jobs N` | N entries at a time, one process each. `auto` means as many as the machine has cores. Default 1 |
+| `-j N`, `--jobs N` | N runs at a time, one process each. A single run whose runner takes it gets N workers of its tool instead ( pytest-xdist, `--test-threads` ). `auto` means as many as the machine has cores. Default 1 |
 | `--grid SEP` | several values, split on SEP, make a [matrix](/guide/matrices) — of environments, tags and declared parameters: `--grid=+ --env a+b t.py::x --n=1+2` is four runs. Without it a value is one value, commas included. `run`, `list`, `setup`, `shell` |
 | `--batch` | launch and give the shell back — [detached](/guide/detached) |
 | `-o` | an output directory of its own for each run — the run's directory under `errand-outputs/runs/` — exported as `$ERRAND_OUT_DIR`, and what it holds brought back |

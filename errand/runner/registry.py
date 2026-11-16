@@ -20,6 +20,8 @@ class Runners( dict ):
     def __setitem__( self, name, runner ):
         if not isinstance( runner, Runner ):
             raise TypeError( f"runners[ {name!r} ] must be a runner, not {type( runner ).__name__}" )
+        from ..config import _check_zones
+        _check_zones( runner.zones, f"runners[ {name!r} ].zones" )
         runner.name = name
         super().__setitem__( name, runner )
 

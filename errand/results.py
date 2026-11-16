@@ -118,11 +118,13 @@ def label( entry, root: Path ) -> str:
     except ValueError:
         parts = ( f.name, )
     where = "/".join( slug( p ) for p in parts )
-    # A file run as a whole IS the case: a level named after it again would only
-    # say the same thing twice ( `runs/scripts/plot.py/plot.py/` ).
+    # A file run as a whole IS the run: a level named after it again would only
+    # say the same thing twice ( `runs/scripts/plot.py/plot.py/` ). What its tool
+    # was asked to select is the level below, when something was ( ADR 0011 ).
     runner = getattr( entry, "runner", None )
-    if runner is not None and runner.whole_files and not runner.takes_selector:
-        return where
+    if runner is not None and runner.whole_files:
+        selector = getattr( entry, "selector", None )
+        return f"{where}/{slug( selector )}" if selector else where
     return f"{where}/{slug( entry.name )}"
 
 
@@ -275,7 +277,6 @@ def write_result( leaf: Path, *, entry, root, env_name, where, tags, status, err
         "name"       : entry.name,
         "file"       : _under( entry.file, root ),
         "line"       : entry.line,
-        "kind"       : entry.kind,
         "date"       : now(),
         "stamp"      : stamp(),           # the command it belongs to ( a --batch submission's )
         "env"        : env_name,

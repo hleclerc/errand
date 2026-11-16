@@ -11,8 +11,6 @@ WORK = '''
 from errand import test
 if test( "hello" ):
     print( "said hello" )
-if test( "aside", bulk = False ):
-    print( "said aside" )
 '''
 
 
@@ -26,7 +24,6 @@ if test( "a bare `errand run` runs what the project says, and says so when it sa
             "import errand\nerrand.default_run = [ 'tests/**::*' ]\n" )
         code, output = run_errand( project / "tests", "run", "--no-queue" )
         assert code == 0 and "said hello" in output, output
-        assert "said aside" not in output, "what is not bulk waits to be named"
 
 
 if test( "`--out` takes a pattern, and the run lands where it says" ):

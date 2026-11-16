@@ -170,7 +170,7 @@ if test( "a run inside a container comes back out", tags = [ "container", "slow"
             files = { "bench_work.py": WORK }
 
         project = write_project( root, config, files, vendor = True )
-        code, output = run_errand( project, "run", "-o", "-k", "bench", "--env", "boxed", "--grid=,", "**::*", "--n=2,3" )
+        code, output = run_errand( project, "run", "-o", "--env", "boxed", "--grid=,", "**::*", "--n=2,3" )
         assert code == 0, output
 
         leaves = sorted( ( project / "errand-outputs" / "runs" ).rglob( "result.yaml" ) )
@@ -203,17 +203,17 @@ if test( "an image is built from its recipe when it is missing", tags = [ "conta
                                  { "bench_work.py": WORK, "image.def": RECIPE }, vendor = True )
         assert not ( project / "image.sif" ).exists()
 
-        code, output = run_errand( project, "run", "-o", "-k", "bench", "--env", "boxed", "**::*" )
+        code, output = run_errand( project, "run", "-o", "--env", "boxed", "**::*" )
         assert code == 0, output
         assert ( project / "image.sif" ).exists(), f"the recipe was never built\n{output}"
 
         # ...and having been built, it is not built again
-        code, again = run_errand( project, "run", "-o", "-k", "bench", "--env", "boxed", "**::*" )
+        code, again = run_errand( project, "run", "-o", "--env", "boxed", "**::*" )
         assert code == 0, again
         assert "apptainer build" not in again, "a fresh image must not be rebuilt"
 
         # ...until the recipe changes
         ( project / "image.def" ).write_text( RECIPE + "\n%environment\n    export EXTRA=1\n" )
-        code, third = run_errand( project, "run", "-o", "-k", "bench", "--env", "boxed", "**::*" )
+        code, third = run_errand( project, "run", "-o", "--env", "boxed", "**::*" )
         assert code == 0, third
         assert "apptainer build" in third, "an edited recipe must be noticed"

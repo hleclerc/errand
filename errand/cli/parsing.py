@@ -7,7 +7,6 @@ import argparse
 from pathlib import Path
 
 
-KINDS = { "test": "test", "bench": "bench", "experiment": "experiment", "exp": "experiment" }
 
 
 # ── entry point ──────────────────────────────────────────────────────────────
@@ -18,11 +17,11 @@ KINDS = { "test": "test", "bench": "bench", "experiment": "experiment", "exp": "
 # verb or after it.
 VERBS = {
     "run"   : ( "run a file, a command or entries, in one or several environments",
-                [ "runner", "kind", "entry_tags", "jobs", "no_queue", "no_setup", "batch", "keep_out",
+                [ "runner", "entry_tags", "jobs", "no_queue", "no_setup", "batch", "keep_out",
                   "out", "grid", "pull", "exclusive", "cpus", "ram", "gpus", "ranks", "time", "mem", "label", "quiet", "log",
                   "at" ] ),
     "list"  : ( "what a target designates, with its parameters",
-                [ "runner", "kind", "entry_tags", "grid", "no_setup" ] ),
+                [ "runner", "entry_tags", "grid", "no_setup" ] ),
     "shell" : ( "an interactive shell in an environment", [ "grid", "pull", "no_setup" ] ),
     "envs"  : ( "the declared environments, and the state they are in", [ ] ),
     "setup" : ( "build or update environments now, and nothing else", [ "grid", "force", "dry_run" ] ),
@@ -61,8 +60,6 @@ def build_parser( tag_names = ( ) ):
     # run, list
     p.add_argument( "-r", "--runner", default = None,
                     help = "the runner that takes every target, by name ( errand.runners )" )
-    p.add_argument( "-k", "--kind", action = "append", default = [ ],
-                    help = "test, bench, experiment (repeatable)" )
     p.add_argument( "-e", "--entry-tags", default = None, help = "filter entries by tag expression" )
     p.add_argument( "-j", "--jobs", default = "1",
                     help = "how many entries at once: a number, or `auto`" )

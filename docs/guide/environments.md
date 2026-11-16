@@ -148,11 +148,47 @@ errand.envs[ "cluster" ] = errand.Env(
 )
 ```
 
-Both lists start from the same place: the same `Ssh`, or none. At most one scheduler per list, and
-errand checks it. With a single `Slurm`, the
+At most one scheduler per list, and errand checks it.
+
+The preparation can also be on **another machine**: a build server, or here when the run is over
+there. Its list starts with its own `Ssh`, or none:
+
+```python
+errand.envs[ "gpu" ] = errand.Env(
+    [ errand.Ssh( host = "gpu-box" ), errand.Apptainer( image = "cuda.sif" ) ],
+    prepare = [ errand.Ssh( host = "build-box" ), errand.Apptainer( image = "cuda.sif" ) ],
+)
+```
+
+- Each machine is set up with its own list: `errand setup` builds what each one declares, where it
+  is used.
+- The preparation compiles on its machine, into `build/<env>/`, which is then **carried** to the
+  copy that runs, through here: the two machines need not reach each other. Only what changed
+  crosses, and dates are kept.
+- What runs there must be able to run what was built: the same image in both lists is the simplest
+  way to make sure of it. A build tool that records absolute paths ( cargo ) may build again when
+  run elsewhere; a binary ( Catch2 ) just runs. With a single `Slurm`, the
 allocation is [held warm](./layers/slurm#held-warm-keep-alive) and the preparation and the run go
 into the same job. With `keep_alive = 0`, the preparation is one task and the run a job of its own,
 sized from the plan. When no layer is a scheduler, preparing and running are one pass, one process.
+
+## Tools an environment names
+
+What a runner starts has a name that depends on the place: `python3` here, `python` there, a cmake
+that is not the system's. An environment says it once:
+
+```python
+errand.envs[ "old" ] = errand.Env( [ errand.Ssh( host = "old-box" ) ],
+                                   tools = { "python": "python3.9", "cmake": "/opt/cmake/bin/cmake" } )
+```
+
+- The runners start what is named: the pytest runner and a `.py` target run on `tools[ "python" ]`,
+  the cargo runner on `tools[ "cargo" ]`.
+- A target whose first word is a named tool runs as named: `errand run --env old cmake --version`.
+- A build line writes it in braces: `build = "{cmake} --build {build_dir}"`.
+
+Without `tools`, `python` is the interpreter errand runs on in that place, and anything else is
+looked for on its `PATH` under its usual names.
 
 ## Environments a package provides
 

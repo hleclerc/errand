@@ -24,17 +24,16 @@ errand.configure( src = [ "src" ] )
 errand.runners.replace( errand.Pytest( dirs = [ "tests" ] ) )
 
 # errand run compiles nothing itself. `build` is whatever YOU already build with,
-# run once before any entry of this runner ( not once per file, and not once
-# per parallel process ); `binary` says where the result lands, defaulting to
-# beside the source -- which is where this Makefile puts it.
+# run once during the preparation ( not once per file, and not once per parallel
+# process ); `binary` says where the result lands, defaulting to beside the
+# source -- which is where this Makefile puts it.
 #
 #   errand.runners.replace( errand.Catch2( dir = "cpp", build = "cmake --build build",
 #                     binary = "build/{stem}" ) )
 #
-# One entry per test case: the build runs during the preparation, where the
-# cases will run, and the binary is then asked for its own cases.
+# A source is one run of its binary; `::name` is handed to it as a Catch2 test spec.
 errand.runners.replace( errand.Catch2( dir = "cpp", build = "make -C cpp" ) )
 
-# `cargo metadata` knows the targets without compiling any of them, so there is
-# nothing to declare: one entry per test target.
+# `cargo metadata` knows the targets without compiling any of them; `cargo test
+# --no-run` compiles them during the preparation. One run per test target.
 errand.runners.replace( errand.Cargo( manifest = "rust/Cargo.toml" ) )

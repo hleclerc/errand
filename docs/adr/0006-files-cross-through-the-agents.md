@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-11-13
 ---
 
@@ -92,6 +92,13 @@ How this is framed:
   what it found next to the trusted manifest, with the time it first saw each change. The next sync
   says it, then puts it back. Each such message ends with the zones and how to declare one, since a
   run that writes outside them most likely needs a zone.
+- **Nothing is overwritten that errand did not write.** Between two walks, the trusted manifest can
+  be wrong: a run changed a file, and the next push replaces it. So before the agent replaces or
+  removes a file, it checks that one file against the manifest, a `stat`. A file that differs, or
+  that errand never wrote, is moved to `.errand-copy-kept/<when>/` instead of being lost. The push
+  says so, and what is kept goes after 30 days. On a first sync (no manifest, a copy rsync made),
+  nothing is known to be errand's, so whatever is removed or replaced with other contents is kept.
+  A file that only needs its mtime set is not kept.
 
 **What is copied.** Regular files keep their contents, their mtime and their executable bit. Owner,
 group, ACLs and xattrs are dropped. Symlinks stay links, except toward Windows, where they are
@@ -206,4 +213,11 @@ volumes; how far below is measured, not assumed.
    (`lmo-sif`, `test_loss.py`, 11 entries) passed with nothing set. errand started on Windows needs
    MSYS2's rsync and ssh only when rsync is asked for. jz is still not measured, and neither is a
    large file that changes a little.
-8. Local watching as a hint.
+8. Local watching as a hint. Measured first, on 2026-11-16, from the Mac. The warm local walk,
+   which is all a watcher can spare, costs 34 ms (otrec, 2807 entries), 52 ms (sdot-ffi, 4476) and
+   135 ms (`~/Projects`, 12 853). About half of it is pattern matching. A warm push of sdot-ffi to
+   lmo through a warm hub takes 119 ms in all: the copy's manifest (647 kB) crosses in 19 ms, and
+   the walk is most of the rest. The 0.6–0.9 s of step 3 were the whole command around the push.
+   A watcher would save tens of milliseconds, at the price of a process that watches, merges and
+   overflows. Stopped there on 2026-11-16: no watcher. "Watching only says where to look" above
+   stays the rule, should one be written someday.

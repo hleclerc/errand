@@ -158,7 +158,7 @@ WORK = '''
 import os, socket
 from errand import entry, Param
 
-if p := entry( "allocated", keep = True, bulk = False, n = Param( 1 ) ):
+if p := entry( "allocated", n = Param( 1 ) ):
     p.results[ "n" ]   = p.n
     p.results[ "node" ] = socket.gethostname()
     # Set by slurm itself in the environment of the job it starts: proof that

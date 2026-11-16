@@ -168,16 +168,15 @@ if test( "a batch system already decides, so errand does not" ):
         del os.environ[ "SLURM_JOB_ID" ]
 
 
-if test( "what an allocation is asked for is what the work needs" ):
+if test( "what an allocation is asked for is what the command asks" ):
     from errand import layers as L
     from errand.cli import aggregate_needs
-    from errand.entries import Entry, TRAITS
+    from errand.entries import Entry
 
-    def an_entry( exclusive = False, **resources ):
-        traits = dict( TRAITS, exclusive = exclusive )
-        return Entry( "e", [ ], { }, traits, resources, "f.py", 1, "m" )
+    def an_entry( **resources ):
+        return Entry( "e", [ ], { }, resources, "f.py", 1, "m" )
 
-    needs = aggregate_needs( [ an_entry( cpus = 4 ), an_entry( cpus = 16, ram = "8G" ) ] )
+    needs = aggregate_needs( [ an_entry(), an_entry() ], { "cpus": 16, "ram": "8G" } )
     assert needs == { "cpus": 16.0, "ram": 8192.0 }, needs
 
     flags = L.Slurm( partition = "gpu" ).flags( L.Context( root = Path( "/" ), needs = needs ) )
@@ -185,8 +184,8 @@ if test( "what an allocation is asked for is what the work needs" ):
     assert "--cpus-per-task" in flags and flags[ flags.index( "--cpus-per-task" ) + 1 ] == "16"
     assert "--mem" in flags and flags[ flags.index( "--mem" ) + 1 ] == "8192M"
 
-    # one exclusive entry makes the whole allocation exclusive
-    needs = aggregate_needs( [ an_entry( cpus = 1 ), an_entry( exclusive = True ) ] )
+    # `-x` makes the whole allocation exclusive
+    needs = aggregate_needs( [ an_entry() ], { "cpus": 1, "exclusive": True } )
     assert "--exclusive" in L.Slurm().flags( L.Context( root = Path( "/" ), needs = needs ) )
 
 
@@ -219,7 +218,7 @@ if p := bench( "greedy" ):
         env[ "PYTHONPATH" ] = str( Path( __import__( "errand" ).__file__ ).resolve().parent.parent )
 
         started = time.perf_counter()
-        both = [ subprocess.Popen( [ sys.executable, "-m", "errand", "run", "-k", "bench", "**::*" ],
+        both = [ subprocess.Popen( [ sys.executable, "-m", "errand", "run", "-x", "**::*" ],
                                    cwd = project, env = env,
                                    stdout = subprocess.PIPE, stderr = subprocess.STDOUT,
                                    text = True ) for _ in range( 2 ) ]

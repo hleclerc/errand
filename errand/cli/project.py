@@ -65,6 +65,12 @@ def ssh_root( env, root ):
     return env.ssh.remote_root( L.Context( root = root ) ) if env.ssh else root
 
 
+def tools_for( env_name ) -> dict:
+    """The tools the environment names ( `Env( tools = … )` ), for its runners."""
+    env = config.envs.get( env_name ) if env_name else None
+    return dict( env.tools ) if env is not None else { }
+
+
 def build_dir_for( root, env_name ) -> Path:
     """`build/<env>/`: where the runners' builds go for that environment."""
     return Path( root ) / config.settings.build / R.slug( env_name or "default" )

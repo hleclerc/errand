@@ -7,12 +7,11 @@ from errand import Level
 class Mine( errand.Runner ):
     name           = "mine"
     level          = Level.FRAMEWORK   # the highest `suitability` can answer
-    whole_files    = False             # True when an entry IS a whole file
-    takes_selector = False             # ...and it hands a `::name` on to it
+    takes_selector = True              # it hands a `::name` on to its tool
+    jobs           = False             # True: `run` hands `ctx.jobs` to its tool
 
     def suitability( self, path ) -> Level: ...   # how well it fits this file
-    def collect( self, specs ): ...               # -> the entries of the files it was given
-    def prepare( self, entries, ctx ):            # once, before any of them. -> None, or why not
+    def prepare( self, entries, ctx ):            # once, during the preparation. -> None, or why not
         return None
     def run( self, entry, ctx ) -> Outcome: ...
 ```
@@ -22,14 +21,19 @@ Registered with `errand.runners[ "mine" ] = Mine( )`, under which name `-r mine`
 
 `level` is the highest `Level` it can answer ( `NONE`, `FALLBACK`, `LANGUAGE`, `FRAMEWORK`,
 `ERRAND` ): it lets a walk over a whole tree ask only the runners that could make a file
-discoverable. A runner with `builds_to_collect = True` has `prepare` called before `collect`, during
-the preparation, with `self.context.build_dir` saying where the build goes. `specs` are
-`( files, name_glob )` pairs over the files this runner won; `self.root` is the project root, and
-`self.entry( name =, file =, key = )` makes an entry of this runner's.
+discoverable. `self.root` is the project root.
 
-With `whole_files = True`, the `::name` of a target belongs to the file rather than to the entry, so
-the core does not filter entries by it: with `takes_selector = True` it reaches `run` as
-`ctx.selector`, and without it is refused.
+A file is one run ( ADR 0011 ): `run` gets an entry whose `key` is the file, and the `::name` of the
+target as `ctx.selector`, to hand to its tool in the tool's own words. Without `takes_selector`, a
+`::name` is refused. A runner whose run is not one per file ( cargo: one per test target ) overrides
+`collect( specs )`, and makes its entries with `self.entry( name =, file =, key = )`.
+
+What it starts, it starts with `self.tool( "name", ctx )`: the environment's own name for the tool
+( `Env( tools = … )` ), or the place's. A command line written by the user fills `{name}` with
+`self.fill_tools( line, ctx )`.
+
+A tool that writes a JUnit report gives its verdict with `errand.runner.junit_outcome( path )`:
+counts by status, the failed cases by name.
 
 **Building belongs in `prepare`, not in `run`**: a suite is built once, not once per file, and `-j`
 would otherwise have several processes writing the same binary at the same time.
@@ -43,8 +47,9 @@ class Outcome:
     output : str = ""
 ```
 
-`RunContext` carries the `root`, the `out_dir` this entry is writing into, its `params`, the `env`
-for the child, and the `selector` — the `::name` part, when there was one.
+`RunContext` carries the `root`, the `out_dir` this run is writing into, its `params`, the `env`
+for the child, the `build_dir`, the `selector` — the `::name` part, when there was one —, the
+environment's `tools`, and `jobs`, the workers `-j` gives a single run.
 
 ## Still to ship
 

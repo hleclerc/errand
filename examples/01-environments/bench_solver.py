@@ -37,15 +37,15 @@ if test( "it converges" ):
 
 # --- the benchmark ----------------------------------------------------------
 #
-#   errand run -k bench                                     the default environment
+#   errand run -x bench_solver.py                           the default environment, the machine to itself
 #   errand run --env gpu bench_solver.py                    one, by name
 #   errand run --grid=, --fp 32,64 bench_solver.py          a matrix over a tag
 #   errand run --grid=, --env local,gpu bench_solver.py --n=1e4,1e5
 #                                                           two axes, four runs
 #   errand run -t 'cuda=True' bench_solver.py               every cuda environment
 #
-# `bench` takes the machine to itself while it runs. Other errands on this host
-# wait, whichever terminal or project they came from.
+# `-x` gives each run the machine to itself. Other errands on this host wait,
+# whichever terminal or project they came from.
 
 if p := bench( "solve", n = Param( 10_000, help = "number of unknowns" ),
                         method = Param( "cg", choices = [ "cg", "direct" ] ) ):
@@ -56,9 +56,11 @@ if p := bench( "solve", n = Param( 10_000, help = "number of unknowns" ),
     p.results[ "ftype" ]    = FTYPE          # recorded, so the rows say which is which
 
 
-# An entry can ask for something short of the whole machine.
+# A command can ask for something short of the whole machine:
+#
+#   errand run --cpus 2 --ram 1G bench_solver.py::warm*
 
-if p := bench( "warm cache probe", exclusive = False, cpus = 2, ram = "1G" ):
+if p := bench( "warm cache probe" ):
     t = time.perf_counter( )
     solve( n = 500 )
     p.results[ "seconds" ] = time.perf_counter( ) - t
@@ -66,7 +68,7 @@ if p := bench( "warm cache probe", exclusive = False, cpus = 2, ram = "1G" ):
 
 # --- something to look at ---------------------------------------------------
 #
-#   errand run --grid=, -k exp --env local,gpu
+#   errand run --grid=, --env local,gpu bench_solver.py::convergence
 #
 # Two environments, two directories, two pictures to put side by side -- and a
 # `latest/` symlink in each, so the tabs stay valid.

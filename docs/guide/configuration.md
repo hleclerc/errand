@@ -89,9 +89,8 @@ errand are ignored with a warning: what they named is in `errand-outputs/` now.
 errand.default_run = [ "tests/**::*", "bench/solvers.py::*", "make" ]
 ```
 
-What a bare `errand run` runs: targets written from the project root, as on the command line. Among
-errand's own entries, only the [bulk](/guide/declaring-work#the-four-traits) ones are kept. With
-none, `errand run` alone prints the help.
+What a bare `errand run` runs: targets written from the project root, as on the command line, and
+everything they name. With none, `errand run` alone prints the help.
 
 ## envs, default_env and runners
 
@@ -109,7 +108,7 @@ The default environment is `errand.default_env`, else the first one declared, el
 errand runs with. Naming one that does not exist is an error.
 
 `errand.runners` says what runs which file; `errand.runners.replace( … )` puts a configured runner
-in place of a default one. See [Running a suite test by test](/guide/runners/).
+in place of a default one. See [Running a suite](/guide/runners/).
 
 ## What only this machine can supply
 

@@ -32,7 +32,7 @@ from ..agents import envs, upstream as U
 from ..agents.ops import KNOWN
 from .parallel import job_count
 from .plans import plans_rel, read_plan
-from .project import child_env_for
+from .project import build_dir_for, child_env_for
 from . import alive, guest
 from .sessions import follow_all, INTERRUPTED, LocalSession, Session, WatchedSession
 from .style import bad, dim, head, warn
@@ -44,12 +44,13 @@ def say( s ):
     print( dim( s ), flush = True )
 
 
-def arrive( env, tags, root, project = True ):
+def arrive( env, tags, root, project = True, phase = "run" ):
     """The project over there, and errand's sources: -> where it all is. Without `project`, errand's sources only: a
-    Windows guest takes the project from here, through its own agent ( `guest.Guest` )."""
-    ssh = L.ssh_of( env.stack_for( "run" ) )
+    Windows guest takes the project from here, through its own agent ( `guest.Guest` ). `phase` says whose machine:
+    the run's, or the preparation's when it has one of its own ( `Env( prepare = … )` )."""
+    ssh = L.ssh_of( env.stack_for( phase ) )
     there = ssh.remote_root( L.Context( root = root ) ) if ssh is not None else root
-    for message in L.warnings_for( env.stack_for( "run" ), there ):
+    for message in L.warnings_for( env.stack_for( phase ), there ):
         print( warn( f"  warning: {message}" ), flush = True )
     cache = None
     if ssh is not None and not project:
@@ -136,38 +137,70 @@ class Reach:
         return alloc
 
 
-def _requests( env, tags, verb, known, kinds, where ) -> dict:
-    return { "root": str( where.there ), "env": env.name, "tags": tags, "verb": verb, "kinds": sorted( kinds ),
+def _carry( env, src, dst, root ):
+    """What the preparation built ( `build/<env>/` ), carried from its copy to the copy that runs it, when
+    they are on two machines ( ADR 0011 ). Through here: the two need not reach each other."""
+    rel = os.path.relpath( build_dir_for( root, env.name ), root )
+    name = lambda w: f"{w.ssh.host}:{w.there}" if w.ssh is not None else "here"
+    say( f"  carry {rel}: {name( src )} -> {name( dst )}" )
+    staging = root
+    if src.ssh is not None:
+        if dst.ssh is not None:
+            staging = config.state( root ) / "carry" / R.slug( env.name )
+        L.fetch( [ rel ], src.ssh.host, src.there, staging, src.ssh.options, transfer_by = src.ssh.transfer )
+    local = staging / rel
+    if dst.ssh is not None and local.is_dir():
+        L.put( local, dst.ssh.host, L.remote_path( posixpath.join( str( dst.there ), rel ) ), dst.ssh.options,
+               transfer_by = dst.ssh.transfer, echo = say )
+
+
+def _prepare_for_run( env, tags, verb, known, where, report, box ):
+    """The preparation, on its own machine when it has one, and what it built carried to the run's copy.
+    -> ( its return code, where it was prepared, what the run must be told of it )."""
+    elsewhere = env.prepares_elsewhere()
+    there = arrive( env, tags, where.root, phase = "prepare" ) if elsewhere else where
+    rc = _prepare( env, tags, verb, known, there, report, box )
+    told = { }
+    if elsewhere and not rc and box.get( "plan" ) and verb != "list":
+        _carry( env, there, where, where.root )
+        # The plan the run checks itself against was written over there: it travels with the request.
+        told = { "plan": box[ "plan" ] }
+    return rc, there, told
+
+
+def _requests( env, tags, verb, known, where ) -> dict:
+    return { "root": str( where.there ), "env": env.name, "tags": tags, "verb": verb,
              "known": { **{ k: getattr( known, k, None ) for k in KNOWN }, "from_plan": False, "phase": None } }
 
 
-def _prepare( env, tags, verb, known, kinds, where, report, box ) -> int:
+def _prepare( env, tags, verb, known, where, report, box ) -> int:
     """The preparation on its own, through the preparation's layers. -> its return code."""
-    base = _requests( env, tags, verb, known, kinds, where )
+    base = _requests( env, tags, verb, known, where )
     req = { **base, "prepare_only": True, "known": { **base[ "known" ], "phase": None if verb == "list" else "prepare" } }
     rcs = follow_all( [ Reach( env, tags, "prepare", where ).start( req, child_env_for( env, tags ) ) ], report, [ box ] )
     return INTERRUPTED if rcs is None else rcs[ 0 ]
 
 
-def drive( env, tags, verb, known, *, root, out_root, report, kinds, pull = ( ) ) -> int:
+def drive( env, tags, verb, known, *, root, out_root, report, pull = ( ) ) -> int:
     if env.vm is not None:
-        return _drive_guest( env, tags, verb, known, root = root, report = report, kinds = kinds, pull = pull )
+        return _drive_guest( env, tags, verb, known, root = root, report = report, pull = pull )
     where = arrive( env, tags, root )
     child = child_env_for( env, tags )
-    base = _requests( env, tags, verb, known, kinds, where )
+    base = _requests( env, tags, verb, known, where )
     how_many = job_count( known.jobs )
     single = env.single_pass() and how_many == 1 and verb != "list"
     box : dict = { }
 
+    told = { }
     if not single:
-        rc = _prepare( env, tags, verb, known, kinds, where, report, box )
+        rc, prepared_at, told = _prepare_for_run( env, tags, verb, known, where, report, box )
         if verb == "list" or rc or not box.get( "plan" ):
-            _bring_back( where, env.name, box, [ ] )
+            _bring_back( prepared_at, env.name, box, [ ] )
             return rc
 
     reach = Reach( env, tags, "run", where, needs = ( box.get( "plan" ) or { } ).get( "needs" ),
                    time = getattr( known, "time", None ) )
-    runs = { **base, "known": { **base[ "known" ], "from_plan": not single, "phase": "run" } }
+    runs = { **base, "known": { **base[ "known" ], **told, "from_plan": not single, "phase": "run" } }
     if single:
         sessions = [ reach.start( runs, child ) ]
     else:
@@ -207,12 +240,12 @@ def drive( env, tags, verb, known, *, root, out_root, report, kinds, pull = ( ) 
     return max( rcs ) if rcs else 0
 
 
-def _drive_guest( env, tags, verb, known, *, root, report, kinds, pull ) -> int:
+def _drive_guest( env, tags, verb, known, *, root, report, pull ) -> int:
     """The same, in a virtual machine: held for as long as this runs, everything through its guest agent."""
     from ..vm.common import VmError
     where = arrive( env, tags, root, project = False )
     child = child_env_for( env, tags )
-    base = _requests( env, tags, verb, known, kinds, where )
+    base = _requests( env, tags, verb, known, where )
     how_many = job_count( known.jobs )
     box : dict = { }
     try:
@@ -236,7 +269,7 @@ def _drive_guest( env, tags, verb, known, *, root, report, kinds, pull ) -> int:
                 return INTERRUPTED
             box.update( next( ( b for b in boxes if b.get( "plan" ) ), { } ) )
             plan = box.get( "plan" ) or { }
-            g.fetch( [ plans_rel( root ), *sorted( { r[ "under" ] for r in plan.get( "runs", [ ] ) } ), *pull, *L.back_zones() ] )
+            g.fetch( [ plans_rel( root ), *sorted( { r[ "under" ] for r in plan.get( "runs", [ ] ) } ), *pull, *L.back_zones( env.name ) ] )
     except VmError as err:
         say( f"  {err}" )
         return 1
@@ -283,7 +316,7 @@ def _bring_back( where, env_name, box, pull ):
     plan = box.get( "plan" ) or read_plan( where.root, env_name )
     if plan:
         fetch( sorted( { r[ "under" ] for r in plan[ "runs" ] } ) )
-    fetch( [ *pull, *L.back_zones() ] )
+    fetch( [ *pull, *L.back_zones( env_name ) ] )
 
 
 def attach( root, ident = None, *, report ) -> int:
@@ -325,20 +358,20 @@ def attach( root, ident = None, *, report ) -> int:
 
 # ── letting go ───────────────────────────────────────────────────────────────
 
-def submit( env, tags, known, *, root, kinds, report, log: Path ) -> dict:
+def submit( env, tags, known, *, root, report, log: Path ) -> dict:
     """`--batch`: prepared here, then the run submitted and let go of. -> the place of the record."""
     where = arrive( env, tags, root )
     box : dict = { }
-    rc = _prepare( env, tags, "run", known, kinds, where, report, box )
-    if where.ssh is not None:                          # the plan, here, for `status`
-        L.fetch( [ plans_rel( root ) ], where.ssh.host, where.there, root, where.ssh.options )
+    rc, prepared_at, told = _prepare_for_run( env, tags, "run", known, where, report, box )
+    if prepared_at.ssh is not None:                    # the plan, here, for `status`
+        L.fetch( [ plans_rel( root ) ], prepared_at.ssh.host, prepared_at.there, root, prepared_at.ssh.options )
     if rc or not box.get( "plan" ):
         return { "kind": "failed", "handle": "", "error": "the preparation did not succeed" }
 
     reach = Reach( env, tags, "run", where, needs = box[ "plan" ].get( "needs" ),
                    time = getattr( known, "time", None ), batch = True )
-    base = _requests( env, tags, "run", known, kinds, where )
-    line = reach.line( { **base, "known": { **base[ "known" ], "from_plan": True, "phase": "run" } },
+    base = _requests( env, tags, "run", known, where )
+    line = reach.line( { **base, "known": { **base[ "known" ], **told, "from_plan": True, "phase": "run" } },
                        child_env_for( env, tags ) )
     logs = f"{where.there}/{batch.batch_rel( root )}"
     remote_log = f"{logs}/{log.name}"

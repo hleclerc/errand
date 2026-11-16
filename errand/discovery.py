@@ -179,8 +179,6 @@ def import_file( path: Path, root: Path ):
 # Not silence either: what could not be read is reported, and it fails the run.
 broken: list = [ ]
 
-# The runners `select` built to collect, so that nothing builds them twice.
-built: list = [ ]
 
 
 def collect( files: list[ Path ], root: Path, reset = True ):
@@ -286,8 +284,8 @@ def _bare_one( text, root, cwd, runners, exclude, suggest ):
     return [ ( r, T.Spec( [ Path( path_part ) ], None, text ) ) ]
 
 
-def select( pattern, root, kinds = None, entry_tags = None, bulk_only = False, exclude = ( ),
-            runners = None, cwd = None, context = None, build = True, force = None ):
+def select( pattern, root, entry_tags = None, exclude = ( ),
+            runners = None, cwd = None, force = None ):
     """Everything the command line asked for: ( entries, modules, selectors ).
 
     `force` names the runner that takes every target, claiming nothing.
@@ -302,7 +300,6 @@ def select( pattern, root, kinds = None, entry_tags = None, bulk_only = False, e
     runners = _runners( runners )
     cwd = Path( cwd or os.getcwd() )
     broken.clear()
-    built.clear()
 
     forced = None
     if force:
@@ -384,21 +381,7 @@ def select( pattern, root, kinds = None, entry_tags = None, bulk_only = False, e
             got, modules = collect( files, root, reset = False )
             all_entries += got
             continue
-        r.context = context
-        if r.builds_to_collect and build and context is not None:
-            # What it holds can only be listed once it is built: so it is
-            # built now, here, once -- and a failed build costs its files'
-            # rows, not the run.
-            if context.build_dir is not None:
-                Path( context.build_dir ).mkdir( parents = True, exist_ok = True )
-            why = r.prepare( [ ], context )
-            built.append( r )
-            if why:
-                broken.extend( ( f, f"{r.name}: {why.splitlines()[ 0 ]}", why ) for f in files )
-                continue
         all_entries += r.collect( mine( files ) )
-        broken.extend( ( f, f"{r.name}: {why.splitlines()[ 0 ]}", why )
-                       for f, why in getattr( r, "broken", [ ] ) )
 
     selectors = { }
 
@@ -433,19 +416,23 @@ def select( pattern, root, kinds = None, entry_tags = None, bulk_only = False, e
                               + ( "did you mean:  " if near else "there:  " )
                               + "  ".join( repr( n ) for n in shown ) )
 
+    if entry_tags:
+        # Tags are errand's own entries'. A tool's own filter is the tool's, written after the target.
+        tools = sorted( { e.runner.name for e in all_entries if e.runner is not None } )
+        if tools:
+            raise ValueError( f"-e filters errand's own entries; {' and '.join( tools )} filter their own "
+                              f"tests: write it after the target ( pytest: -m \"not slow\", "
+                              f"Catch2: ::~[slow] )" )
+
     out = [ ]
     for e in all_entries:
         for matched, name_glob in specs:
             if e.file not in matched or not named( e, name_glob ):
                 continue
-            if kinds and e.kind not in kinds:
-                continue
-            if bulk_only and not e.traits[ "bulk" ]:
-                continue
             if entry_tags and not matches( entry_tags, e.tags ):
                 continue
             out.append( e )
             if e.runner is not None:
-                selectors[ e.name ] = R.selector_of( specs, e.file )
+                e.selector = selectors[ e.name ] = R.selector_of( specs, e.file )
             break
     return out, modules, selectors

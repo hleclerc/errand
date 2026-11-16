@@ -50,7 +50,7 @@ def selection( local_root: Path, follow_links = False ):
     # errand's outputs at any depth: a project that holds others ( a checkout of several ) holds theirs too
     zones = [ Zone( f"/{rel}", "errand" ), Zone( f"/{config.LEGACY}", "errand" ),
               Zone( "errand-outputs", "errand" ), Zone( config.LEGACY.strip( "/" ), "errand" ),
-              *[ Zone( p, kind ) for p, kind in config.settings.zones.items() ],
+              *[ Zone( p, kind ) for p, kind in config.zones().items() ],
               *[ Zone( p, "build" ) for p in own_paths() ],
               *[ Zone( p, "build" ) for p in BUILT_THERE ] ]
     return Selection( list( NOT_COPIED ), follow_links, zones )
@@ -303,7 +303,7 @@ def push( local_root: Path, host: str, remote_root: Path, options = ( ), echo = 
     own = [ f"/{rel}", f"/{config.LEGACY}", "/.errand-copy*" ]
     done = subprocess.run( [ *rsync(), "-a", "--delete", "-i", *_rsh( options, host ),
                              *[ f"--exclude={e}" for e in RSYNC_EXCLUDES + own + own_paths()
-                                                          + list( config.settings.zones ) ],
+                                                          + list( config.zones() ) ],
                              here( f"{local_root}/" ), f"{host}:{remote_root}/" ],
                            check = True, stdout = subprocess.PIPE, text = True, errors = "replace" )
     # Whatever is only over there goes, and it may be the one copy of something
@@ -332,12 +332,12 @@ def _push_sync( local_root: Path, host: str, remote_root, options, echo ):
     return r
 
 
-def back_zones( ) -> list:
-    """The project's zones written over there to be brought back ( `configure( zones = ... )` ), that
-    name one path: those a command brings back. One named anywhere ( no leading `/` ) is not
-    looked for."""
+def back_zones( env_name = None ) -> list:
+    """The project's zones written over there to be brought back ( `configure( zones = ... )`, a runner's
+    `zones` ), that name one path: those a command brings back. One named anywhere ( no leading `/` )
+    is not looked for."""
     from .. import config
-    return sorted( p.strip( "/" ) for p, kind in config.settings.zones.items()
+    return sorted( p.strip( "/" ) for p, kind in config.zones( env_name ).items()
                    if kind == "back" and p.startswith( "/" ) and not any( c in p for c in "*?[" ) )
 
 
@@ -347,6 +347,21 @@ def _fetch_sync( paths, host: str, remote_root, local_root: Path, options ):
     conn = agents.open( upstream.of_host( host, options ) )
     return syncop.pull( conn, remote_root, local_root, [ Path( p ).as_posix() for p in paths ],
                         where = host, links = not WINDOWS )
+
+
+def put( local_dir: Path, host: str, remote_dir, options = ( ), transfer_by = None, echo = print ):
+    """`remote_dir` over there made the same as `local_dir` here, and nothing else touched: what a
+    preparation built, carried to the copy that runs it ( ADR 0011 ). Dates are kept, so a build tool
+    there finds it up to date."""
+    if transfer( transfer_by ) == "sync":
+        from .. import sync as S
+        from ..agents import syncop, upstream
+        conn = agents.open( upstream.of_host( host, options ) )
+        return syncop.push( conn, local_dir, remote_dir, S.Selection( [ ], False, [ ] ), where = host, say = echo )
+    remote = str( remote_dir )
+    subprocess.run( [ *rsync(), "-a", "--delete", *_rsh( options, host ),
+                      f"--rsync-path=mkdir -p {shlex.quote( remote )} && rsync",
+                      here( f"{local_dir}/" ), f"{host}:{remote}/" ], check = True )
 
 
 def fetch( paths, host: str, remote_root: Path, local_root: Path, options = ( ), transfer_by = None ):

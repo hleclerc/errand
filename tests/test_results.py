@@ -4,14 +4,14 @@ from pathlib import Path
 
 from errand import test
 from errand import results as R
-from errand.entries import Entry, Param, TRAITS
+from errand.entries import Entry, Param
 
 
 ROOT = Path( "/proj" )
 
 
 def an_entry( name = "cost", file = "bench/solvers.py", line = 42 ):
-    return Entry( name, [ ], { "n": Param( 1000 ) }, dict( TRAITS ), { }, file, line, "m" )
+    return Entry( name, [ ], { "n": Param( 1000 ) }, { }, file, line, "m" )
 
 
 if test( "the path is a function of the run, not of an invocation" ):

@@ -7,7 +7,7 @@ import os
 
 from .. import config, discovery, entries as E, layers as L, queue, runner as P, setup
 from .style import bad, dim, good, head, warn
-from .project import build_dir_for
+from .project import build_dir_for, tools_for
 
 
 # ── listing ──────────────────────────────────────────────────────────────────
@@ -37,18 +37,26 @@ def prepare_runners( entries, *, root, out_root, tags, env_name = None ):
     out = [ ]
     seen = [ ]
     for e in entries:
-        if e.runner is not None and not any( e.runner is p for p in seen + discovery.built ):
+        if e.runner is not None and not any( e.runner is p for p in seen ):
             seen.append( e.runner )
     for p in seen:
         mine = [ e for e in entries if e.runner is p ]
         ctx = P.RunContext( root = root, out_dir = out_root, env = { },
-                            build_dir = build_dir_for( root, env_name ) )
-        if p.builds_to_collect or getattr( p, "build", None ):
+                            build_dir = build_dir_for( root, env_name ), tools = tools_for( env_name ) )
+        lines = p.build_lines( mine, ctx )
+        if lines:
             # Only for what builds: a command run here leaves no `build/` behind.
             ctx.build_dir.mkdir( parents = True, exist_ok = True )
+            for line in lines:
+                shown = line.replace( str( root ).rstrip( os.sep ) + os.sep, "" )
+                print( dim( f"  build ( {p.name} ): {shown}" ), flush = True )
+        import time
+        start = time.monotonic()
         why = p.prepare( mine, ctx )
         if why:
             out.append( ( p.name, why ) )
+        elif lines:
+            print( dim( f"  built in {time.monotonic() - start:.1f} s" ), flush = True )
     return out
 
 
@@ -86,14 +94,11 @@ def print_entries( entries ):
     for e in entries:
         site = f"{os.path.relpath( e.file )}:{e.line}" if e.line else os.path.relpath( e.file )
         runner = f"  {e.runner.name}" if e.runner is not None else ""
-        print( head( f"\n{e.name}" ) + dim( f"  ({site})  [{e.kind}]{runner}" ) )
+        print( head( f"\n{e.name}" ) + dim( f"  ({site}){runner}" ) )
         if e.tags:
             print( dim( f"  tags: {', '.join( e.tags )}" ) )
-        traits = [ k if v else f"!{k}" for k, v in e.traits.items() if v != E.TRAITS[ k ] ]
-        if traits:
-            print( dim( f"  traits: {' '.join( traits )}" ) )
         if e.resources:
-            print( dim( f"  needs: {', '.join( f'{k}={v}' for k, v in e.resources.items() )}" ) )
+            print( dim( f"  {', '.join( f'{k}={v}' for k, v in e.resources.items() )}" ) )
         for name, p in e.params.items():
             flag = f"--{name.replace( '_', '-' )}"
             extra = f"  choices: {p.choices}" if p.choices else ""

@@ -33,7 +33,7 @@ def project( d: Path ) -> Path:
 
 
 def session( p: Path, agent: Path, warm = "1" ):
-    req = { "root": str( p ), "env": "default", "tags": { }, "verb": "run", "kinds": [ ], "keep_alive": 20,
+    req = { "root": str( p ), "env": "default", "tags": { }, "verb": "run", "keep_alive": 20,
             "known": { "pattern": "hello.py::*", "target_args": [ ], "no_queue": True, "from_default": False,
                        "phase": "run" } }
     env = { **os.environ, "PYTHONPATH": str( ROOT ), "ERRAND_AGENT_DIR": str( agent ), "ERRAND_WARM": warm }

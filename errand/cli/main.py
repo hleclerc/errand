@@ -15,7 +15,7 @@ from . import drive
 from .there import run_there
 from .batches import show_batches, submit
 from .listing import _epilogue, print_envs, print_queue
-from .parsing import build_parser, KINDS, misplaced, own_part, split_target, split_verb, VERBS
+from .parsing import build_parser, misplaced, own_part, split_target, split_verb, VERBS
 from .help import print_help
 from .inside import here
 
@@ -232,13 +232,6 @@ def _main( argv = None ):
         target = ",".join( _from_root( t, root ) for t in ( [ default ] if isinstance( default, str ) else default ) )
         known.pattern, known.from_default = target, True
 
-    kinds = set()
-    for k in known.kind:
-        if k not in KINDS:
-            print( bad( f"unknown kind {k!r}; expected one of {', '.join( sorted( KINDS ) )}" ) )
-            return 2
-        kinds.add( KINDS[ k ] )
-
     # Which environments, and with which tags. On the child side of a dispatch
     # there is exactly one, already entered.
     inside = os.environ.get( IN_ENV )
@@ -260,7 +253,7 @@ def _main( argv = None ):
 
     if inside is None and verb == "run" and known.batch:
         forward = [ a for a in before if a != "--batch" ] + ( [ target ] if target else [ ] ) + after
-        return submit( targets, forward, argv, root = root, known = known, kinds = kinds )
+        return submit( targets, forward, argv, root = root, known = known )
 
     report = Report()
     rc, dispatched = 0, 0
@@ -277,10 +270,10 @@ def _main( argv = None ):
             print( dim( f"\n  -> {env.name}  {env.describe()}" ), flush = True )
             # Driven from here, a session over there doing the work: the report is this side's.
             rc |= drive.drive( env, tags, verb, known, root = root, out_root = out_root,
-                               report = report, kinds = kinds, pull = known.pull or ( ) )
+                               report = report, pull = known.pull or ( ) )
             continue
         rc |= here( env, tags, verb, rest, known, root = root, out_root = out_root,
-                    report = report, kinds = kinds, inside = inside )
+                    report = report, inside = inside )
 
     # The child of a dispatch has already said how it went, in full. Saying it
     # again here -- out of a report that ran nothing and knows nothing -- is an

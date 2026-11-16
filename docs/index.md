@@ -119,7 +119,7 @@ running   ( on mac, gpu-box: this machine, and every machine work was sent to fr
 → [What errand is](/guide/what-is-errand) · [Quickstart](/guide/start) ·
 [Tutorials](/tutorials/)
 
-errand also runs pytest, Catch2 and cargo suites test by test, in every environment:
+errand also runs pytest, Catch2 and cargo suites, one run of the tool per file, in every environment:
 [Running a suite](/guide/runners/).
 
 ::: warning Status

@@ -48,10 +48,15 @@ class Env:
         base = [ errand.Ssh( host = "login.hpc", root = "/scratch/me/proj" ) ]
         errand.Env( base + [ errand.Slurm( gpus = 1 ) ], prepare = base + [ errand.Slurm( cpus = 16 ) ] )
 
+    `tools` names what the runners start in this environment, where its usual name is wrong:
+    `tools = { "python": "python3.12", "cmake": "/opt/cmake/bin/cmake" }`. A runner's command and a
+    build line write `{python}`, `{cmake}`; a target whose first word is a tool named here is run
+    as named.
+
     The name is the key it is stored under; `Env` does not take one.
     """
 
-    def __init__( self, stack = ( ), prepare = None, **tags ):
+    def __init__( self, stack = ( ), prepare = None, tools = None, **tags ):
         for k, v in tags.items():
             # A comma on the command line is several values: a tag value holding
             # one could never be asked for.
@@ -62,6 +67,10 @@ class Env:
         self.stack   = list( stack )
         self.prepare = None if prepare is None else list( prepare )
         self.tags    = dict( tags )
+        self.tools   = dict( tools or { } )
+        for name, argv in self.tools.items():
+            if not isinstance( argv, ( str, list, tuple ) ) or not argv:
+                raise ValueError( f"tools[ {name!r} ]: a command, as a string or a list of words" )
         for layers in ( self.stack, self.prepare ):
             for i, layer in enumerate( layers or ( ) ):
                 # A `WindowsBox` is reached by the `Ssh` before it: its own copy knows which.
@@ -73,14 +82,13 @@ class Env:
         check_stack( self.stack, "run" )
         if self.prepare is not None:
             check_stack( self.prepare, "prepare" )
-            # Preparing on another machine means carrying what was built to the one that runs
-            # ( ADR 0011 ), which is not there yet: both phases start from the same place.
-            for find in ( L.ssh_of, L.vm_of ):
-                a, b = find( self.stack ), find( self.prepare )
-                if not ( a is b or a == b ):
-                    what = lambda l: l.describe() if l is not None else "this machine"
-                    raise ValueError( f"`prepare` starts at {what( b )}, the run at {what( a )}: both phases "
-                                      f"must start from the same place for now -- copy the first layer" )
+            # Another machine to prepare on is an `Ssh` of its own: what it builds is carried to the
+            # run's copy ( ADR 0011 ). A machine errand boots is one place for both phases.
+            a, b = L.vm_of( self.stack ), L.vm_of( self.prepare )
+            if not ( a is b or a == b ):
+                what = lambda l: l.describe() if l is not None else "no machine to boot"
+                raise ValueError( f"`prepare` boots {what( b )}, the run {what( a )}: a machine errand boots "
+                                  f"is the same for both phases -- copy the first layer" )
 
     # -- the stack of one phase ----------------------------------------------
 
@@ -89,6 +97,21 @@ class Env:
         if phase not in PHASES:
             raise ValueError( f"phase {phase!r}: one of {', '.join( PHASES )}" )
         return list( self.prepare if phase == "prepare" and self.prepare is not None else self.stack )
+
+    def prepares_elsewhere( self ) -> bool:
+        """Is the preparation on another machine than the run ( another `Ssh`, or one and not the other )?
+        Then what it builds is carried to the run's copy."""
+        if self.prepare is None:
+            return False
+        a, b = L.ssh_of( self.stack ), L.ssh_of( self.prepare )
+        return not ( a is b or a == b )
+
+    def places( self ):
+        """One environment per machine it uses, each with that machine's layers: what `setup` builds, place
+        by place. Just this one when both phases are on one machine."""
+        if not self.prepares_elsewhere():
+            return [ self ]
+        return [ Env.make( self.name, layers, self.tags, tools = self.tools ) for layers in ( self.stack, self.prepare ) ]
 
     def layers( self ):
         """( index, layer ) for every layer of either phase, once each: what `setup` builds and keeps
@@ -110,8 +133,8 @@ class Env:
         return same and not any( L.is_scheduler( l ) and not getattr( l, "watch", None ) for l in run )
 
     @classmethod
-    def make( cls, name: str, stack = ( ), tags = None, prepare = None ):
-        e = cls( stack, prepare, **( tags or { } ) )
+    def make( cls, name: str, stack = ( ), tags = None, prepare = None, tools = None ):
+        e = cls( stack, prepare, tools, **( tags or { } ) )
         e.name = name
         return e
 
@@ -374,20 +397,44 @@ def configure( **kw ):
             raise TypeError( f"configure(): unknown setting {k!r}; "
                              f"expected one of { ', '.join( vars( settings ) ) }" )
         if k == "zones":
-            _check_zones( v )
+            _check_zones( v, "configure( zones = ... )" )
         setattr( settings, k, v )
 
 
-def _check_zones( zones ):
+def _check_zones( zones, who = "zones" ):
     kinds = ( "back", "build" )               # `errand`, errand's own outputs, is not declared
     if not isinstance( zones, dict ):
-        raise TypeError( f"configure( zones = ... ): a dict, path -> kind ( {' or '.join( kinds )} ), "
+        raise TypeError( f"{who}: a dict, path -> kind ( {' or '.join( kinds )} ), "
                          f"not {type( zones ).__name__}" )
     for path, kind in zones.items():
         if kind not in kinds:
-            raise ValueError( f"configure( zones = ... ): {path!r} is {kind!r}; a zone is {' or '.join( kinds )}" )
+            raise ValueError( f"{who}: {path!r} is {kind!r}; a zone is {' or '.join( kinds )}" )
         if not isinstance( path, str ) or not path.strip( "/" ) or ".." in path.split( "/" ):
-            raise ValueError( f"configure( zones = ... ): {path!r} is not a path in the project" )
+            raise ValueError( f"{who}: {path!r} is not a path in the project" )
+
+
+def zones( env_name = None ) -> dict:
+    """The project's zones ( ADR 0006 ): what its runners say their tools write ( `Pytest( zones = … )` ),
+    then `configure( zones = ... )`, which has the last word on a path both name.
+
+    A path may name the environment: `{env}`, its name, and `{build_dir}`, its build directory from the
+    root ( `build/<env>` ) -- `{ "/{build_dir}/target/criterion": "back" }`. For one environment, that
+    one's; without, every declared environment's: environments share one copy over there."""
+    declared = { }
+    for r in ( runners or { } ).values():
+        declared.update( getattr( r, "zones", None ) or { } )
+    declared.update( settings.zones )
+    names = [ env_name ] if env_name else ( list( envs ) or [ "default" ] )
+    out = { }
+    for path, kind in declared.items():
+        if "{env}" not in path and "{build_dir}" not in path:
+            out[ path ] = kind
+            continue
+        for name in names:
+            from .results import slug
+            out[ path.replace( "{build_dir}", f"{settings.build.strip( '/' )}/{slug( name )}" )
+                     .replace( "{env}", name ) ] = kind
+    return out
 
 
 def reset( ):

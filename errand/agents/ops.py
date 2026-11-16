@@ -61,7 +61,7 @@ def session( req: dict ) -> int:
     report = Report()
 
     rc, p = prepare_here( env, tags, req[ "verb" ], known, root = root, out_root = out_root,
-                          report = report, kinds = set( req.get( "kinds" ) or ( ) ) )
+                          report = report )
     say( { "op": "prepared", "rc": rc, "plan": p.plan if p else None,
            "combos": [ list( c ) for c in p.combos ] if p else [ ],
            "entries": [ _entry( e, root ) for e in p.selected ] if p else [ ],
@@ -96,7 +96,7 @@ def session( req: dict ) -> int:
             # what runs there is exclusive by default, and shares only what it declares.
             whole = bool( queue.in_allocation() ) and not asked
             with queue.claim( asked,
-                              exclusive = e.traits[ "exclusive" ] or ask.exclusive or whole,
+                              exclusive = ask.exclusive or whole,
                               label = ask.label or f"{e.file.name}::{e.name}", enabled = not known.no_queue,
                               echo = lambda m: print( dim( m ), flush = True ) ) as granted:
                 handed = { **granted.env(), **granted.handed_down() } if granted else { }

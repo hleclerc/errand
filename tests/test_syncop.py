@@ -201,3 +201,15 @@ if test( "what a push would lose over there is moved aside, even between two wal
         assert S.scan( dst, S.Selection() ).get( r.spared_in.split( "/" )[ 0 ] ) is None, "never part of the copy"
         r, said = push( other, src, dst )
         assert not r and not said, ( r, said )
+
+
+if test( "a first sync over a copy errand never wrote keeps what it removes or replaces, not what it only touches" ):
+    with scratch() as d:
+        src = tree( d / "src", { "a.py": "a", "same.py": "s" } )
+        dst = tree( d / "copy", { "a.py": "an older a", "same.py": "s", "old.py": "only there", "results/r.txt": "zone" } )
+        r, said = push( agent( d / "ag" ), src, dst )
+        kept = dst / r.spared_in
+        assert sorted( k for k, _, _ in r.spared ) == [ "a.py", "old.py" ], r.spared
+        assert ( kept / "a.py" ).read_text() == "an older a" and ( kept / "old.py" ).read_text() == "only there"
+        assert not ( kept / "same.py" ).exists() and ( dst / "results/r.txt" ).exists()
+        assert any( "old.py: not written by errand" in s for s in said ), said

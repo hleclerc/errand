@@ -1,4 +1,4 @@
-"""Declaring work: `entry` and the three presets over it.
+"""Declaring work: `entry`, and the four names it goes by ( `test`, `bench`, `track`, `experiment` ).
 
 The guard works in two phases, driven by the runner.
 
@@ -19,18 +19,22 @@ import sys
 from pathlib import Path
 from typing import Any
 
-# Traits: how an entry should be treated, as opposed to what it does.
-TRAITS = {
-    "bulk"       : True,    # picked up by a bare `errand`, with no pattern
-    "keep"       : False,   # its numbers are kept and compared date to date
-    "exclusive"  : False,   # it needs the machine to itself
-    "stable_path": False,   # `latest/` is what you are meant to open
-}
+# What an entry can say of how it runs. Only `ranks`: the body runs in that many processes, under
+# the MPI launcher of the place ( `errand.mpi` ), and takes as many cores -- something a body
+# written for MPI cannot do without. What a run asks of the machine otherwise ( `--cpus`, `--gpus`,
+# `-x` ) belongs to the command, not to the entry ( ADR 0011 ).
+RESOURCES = ( "ranks", )
 
-# Resources counted against what the host has, when it is shared. `ranks`: the
-# body runs in that many processes, under the MPI launcher of the place
-# ( `errand.mpi` ), and takes as many cores.
-RESOURCES = ( "cpus", "ram", "gpus", "ranks" )
+# What entries used to say of themselves, and where it went: an entry declaring one is told.
+GONE = {
+    "bulk"       : "a bare `errand run` runs `errand.default_run`",
+    "keep"       : "every recorded result is kept and comparable",
+    "exclusive"  : "`-x` on the command line",
+    "stable_path": "`latest/` is always there, beside the stamped runs",
+    "cpus"       : "`--cpus` on the command line",
+    "ram"        : "`--ram` on the command line",
+    "gpus"       : "`--gpus` on the command line",
+}
 
 
 class Param:
@@ -63,12 +67,13 @@ class Entry:
     # the opaque key it uses to find this entry again when asked to run it.
     runner = None
     key      = None
+    # A runner's `::name`, handed to its tool as it was typed ( ADR 0011 ): None for errand's own.
+    selector = None
 
-    def __init__( self, name, tags, params, traits, resources, file, line, module ):
+    def __init__( self, name, tags, params, resources, file, line, module ):
         self.name      = name
         self.tags      = tags          # list[str], free-form, filtered by -e
         self.params    = params        # dict[str, Param]
-        self.traits    = traits        # dict[str, bool]
         self.resources = resources     # dict[str, int|str]
         self.file      = Path( file )
         self.line      = line
@@ -78,15 +83,6 @@ class Entry:
     def site( self ):
         """Identity: where it is written, not what it is called."""
         return ( self.module, self.line )
-
-    @property
-    def kind( self ):
-        """The preset it most resembles, for `-k` and for display."""
-        if self.traits[ "keep" ]:
-            return "bench"
-        if self.traits[ "stable_path" ]:
-            return "experiment"
-        return "test"
 
     def __repr__( self ):
         return f"<Entry {self.name!r} {self.file.name}:{self.line}>"
@@ -136,8 +132,8 @@ def entry( name, tags = None, /, **kw ):
 
     `name` and `tags` are positional-only, and `tags = [ … ]` is accepted as a
     keyword too -- both spellings read well and neither can be confused with a
-    parameter, since a parameter is recognized by BEING a `Param`. Every other
-    keyword must name a trait or a resource.
+    parameter, since a parameter is recognized by BEING a `Param`. The only other
+    keyword is `ranks`.
     """
     if "tags" in kw:
         if tags is not None:
@@ -147,18 +143,16 @@ def entry( name, tags = None, /, **kw ):
     params  = { k: v for k, v in kw.items() if isinstance( v, Param ) }
     rest    = { k: v for k, v in kw.items() if not isinstance( v, Param ) }
 
-    traits  = dict( TRAITS )
     resources = { }
     for k, v in rest.items():
-        if k in TRAITS:
-            traits[ k ] = bool( v )
-        elif k in RESOURCES:
+        if k in RESOURCES:
             resources[ k ] = v
+        elif k in GONE:
+            raise TypeError( f"entry( {name!r} ): {k} = … is no longer an entry's to say: {GONE[ k ]}" )
         else:
             raise TypeError(
                 f"entry( {name!r} ): unknown keyword {k!r}. A parameter must be a Param "
-                f"( {k} = Param( {v!r} ) ); a trait is one of { ', '.join( TRAITS ) }; "
-                f"a resource is one of { ', '.join( RESOURCES ) }."
+                f"( {k} = Param( {v!r} ) ); the only other keyword is {', '.join( RESOURCES )}."
             )
 
     frame  = sys._getframe( 2 if _is_preset( ) else 1 )
@@ -166,7 +160,7 @@ def entry( name, tags = None, /, **kw ):
     module = frame.f_globals.get( "__name__" )
 
     if phase == COLLECT:
-        collected.append( Entry( name, _as_list( tags ), params, traits, resources,
+        collected.append( Entry( name, _as_list( tags ), params, resources,
                                  frame.f_code.co_filename, line, module ) )
         return False
 
@@ -177,7 +171,7 @@ def entry( name, tags = None, /, **kw ):
 
 
 def _is_preset( ):
-    """True when `entry` was reached through test/bench/experiment.
+    """True when `entry` was reached through test/bench/track/experiment.
 
     The call site has to be the user's line, not the preset's, so the frame to
     read is one further up when a preset is in between.
@@ -185,30 +179,27 @@ def _is_preset( ):
     return sys._getframe( 2 ).f_globals.get( "__name__" ) == __name__
 
 
+# What the work is, said in the file for whoever reads it: the four are the same declaration.
+# What used to differ between them ( taking the machine, being in a bare run ) is the command's.
+
 def test( name, tags = None, /, **kw ):
-    """It must pass. Picked up by a bare `errand`."""
+    """It must pass."""
     return entry( name, tags, **kw )
 
 
 def bench( name, tags = None, /, **kw ):
-    """Numbers to follow, measured alone. Kept; takes the machine to itself.
-
-    Exclusive because the commonest numbers worth following are timings, and a
-    timing taken while something else ran is not a timing. The numbers need not
-    be times at all -- an error, a residual, a score, a size -- in which case
-    `exclusive = False`, or `track`, says so.
-    """
-    return entry( name, tags, **{ "bulk": False, "keep": True, "exclusive": True, **kw } )
+    """Numbers to follow. Measured alone when the command says so ( `-x` )."""
+    return entry( name, tags, **kw )
 
 
 def track( name, tags = None, /, **kw ):
-    """Numbers to follow over time that do not need the machine to themselves."""
-    return entry( name, tags, **{ "bulk": False, "keep": True, **kw } )
+    """Numbers to follow over time."""
+    return entry( name, tags, **kw )
 
 
 def experiment( name, tags = None, /, **kw ):
-    """It must be looked at. `latest/` is the path to open."""
-    return entry( name, tags, **{ "bulk": False, "stable_path": True, **kw } )
+    """It must be looked at: `latest/` is the path to open."""
+    return entry( name, tags, **kw )
 
 
 # ── what a body can ask ──────────────────────────────────────────────────────

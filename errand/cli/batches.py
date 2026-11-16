@@ -10,7 +10,7 @@ from .project import child_env_for
 from .plans import plan_path
 
 
-def submit( targets, rest, argv, *, root, known, kinds ):
+def submit( targets, rest, argv, *, root, known ):
     """Launch each environment's share and come straight back.
 
     An environment with layers is prepared first, here ( `cli/drive.submit` ), so the run
@@ -32,7 +32,7 @@ def submit( targets, rest, argv, *, root, known, kinds ):
                 got = { "kind": "failed", "handle": "", "error": f"could not prepare {env.name}" }
             else:
                 print( dim( f"\n  -> {env.name}  {env.describe()}" ), flush = True )
-                got = drive.submit( env, tags, known, root = root, kinds = kinds, report = Report(), log = log )
+                got = drive.submit( env, tags, known, root = root, report = Report(), log = log )
         else:
             got = batch.detach( env, tags, [ "run", *rest ], root = root, log = log,
                                 child_env = child_env_for( env, tags ) )

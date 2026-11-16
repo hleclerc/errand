@@ -10,7 +10,7 @@ One grammar, three readers:
 | | reads | to decide |
 |---|---|---|
 | `-t`, `--env-tags` | [environment tags](/guide/tags) | which places run it |
-| `-e`, `--entry-tags` | entry tags: pytest marks, Catch2 `[tags]`, [errand's own](/guide/declaring-work#tags-on-an-entry) | which tests run |
+| `-e`, `--entry-tags` | the tags of [errand's own entries](/guide/declaring-work#tags-on-an-entry) | which entries run |
 | `has_tag( … )` | the selected environment, from inside a file | whether this file applies |
 
 ## The grammar
@@ -52,7 +52,7 @@ errand run -t 'cuda'                   # every environment that mentions cuda
 errand run -t 'cuda=True'              # every one where it is on
 errand run -t 'jax & fp=64 & !remote'  # on jax, in double, not remote
 errand run -t 'cuda | boxed'           # either kind
-errand run -e '!legacy' -k bench       # benchmarks, minus the old ones
+errand run -e '!legacy' 'bench/**::*'  # benchmarks, minus the old ones
 ```
 
 ```python

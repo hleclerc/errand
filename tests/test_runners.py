@@ -15,7 +15,7 @@ from errand import runner as P
 from errand.runner import Cargo, Catch2, Pytest
 from errand.runner.cargo import _from_cargo
 from errand.runner.catch2 import _from_catch2
-from errand.runner.pytest import _from_junit
+from errand.runner import junit_outcome as _from_junit
 
 from _infra import run_errand, write_project
 
@@ -57,6 +57,14 @@ if test( "pytest's own verdict, in its own words" ):
         report.write_text( JUNIT_PASS )
         assert _from_junit( report ).results[ "seconds" ] == 0.125
         assert _from_junit( Path( tmp ) / "absent.xml" ) is None
+
+        # A file is one run: its cases are counted, and the failed ones named.
+        report.write_text( JUNIT_PASS.replace( "</testsuite>", JUNIT_FAIL.split( 'tests="1">' )[ 1 ].split( "</testsuite>" )[ 0 ]
+                                               + JUNIT_SKIP.split( 'tests="1">' )[ 1 ].split( "</testsuite>" )[ 0 ] + "</testsuite>" ) )
+        got = _from_junit( report )
+        assert got.status == "FAIL" and got.results[ "passed" ] == 1 and got.results[ "failed" ] == 1 \
+               and got.results[ "skipped" ] == 1, got
+        assert got.error.startswith( "1 failed: test_no -- assert 1 == 2" ), got.error
 
 
 CATCH_PASS = '''<?xml version="1.0"?><Catch2TestRun name="t">
@@ -133,19 +141,16 @@ if test( "a Catch2 suite, compiled and run", tags = [ "cpp", "slow" ] ):
                                  { "cpp/test_math.cpp": CATCH_SOURCE } )
 
         code, output = run_errand( project, "run", "-o", "**::*", timeout = 900 )
-        assert code == 0, output
-        assert "PASS adds" in output and "PASS multiplies" in output, output
+        assert code == 0 and "PASS test_math.cpp" in output, output
 
         results = [ yamlish.read( p ) for p in ( project / "errand-outputs" / "runs" ).rglob( "result.yaml" ) ]
-        assert len( results ) == 2, results
-        assert all( r[ "results" ][ "assertions" ] == 1 for r in results ), results
-        # the suite's own report stays where it landed, beside the result
-        assert ( Path( results[ 0 ][ "file" ] ).parent if False else True )
+        assert len( results ) == 1, "one run for the binary"
+        assert results[ 0 ][ "results" ][ "passed" ] == 2 and results[ 0 ][ "results" ][ "assertions" ] == 2, results
         assert list( ( project / "errand-outputs" / "runs" ).rglob( "catch2.xml" ) ), "the report is part of the output"
 
-        # naming one case reaches one case: it is an entry like any other
-        code, output = run_errand( project, "run", "cpp/test_math.cpp::multiplies", timeout = 900 )
-        assert code == 0 and "PASS multiplies" in output and "adds" not in output, output
+        # naming one case hands Catch2 the spec
+        code, output = run_errand( project, "run", "-o", "cpp/test_math.cpp::multiplies", timeout = 900 )
+        assert code == 0, output
 
 
 CARGO_LIB = '''
@@ -195,6 +200,9 @@ if test( "a cargo crate, built and run", tags = [ "rust", "slow" ] ):
         code, output = run_errand( project, "run", "-o", "**::*", timeout = 900 )
         assert code == 0, output
         assert "PASS demo" in output, output
+        # compiled during the preparation, before anything ran, into the environment's own directory
+        assert output.index( "build ( cargo ): cargo test --no-run" ) < output.index( "PASS demo" ), output
+        assert ( project / "build" / "default" / "target" ).is_dir() and not ( project / "target" ).exists()
 
         results = [ yamlish.read( p ) for p in ( project / "errand-outputs" / "runs" ).rglob( "result.yaml" ) ]
         assert len( results ) == 1, results
@@ -227,7 +235,7 @@ errand.runners.replace( errand.Pytest( dirs = [ "suite" ], python = ".venv/bin/p
 '''
 
 
-if test( "a pytest suite, collected by pytest itself", tags = [ "pytest", "slow" ] ):
+if test( "a pytest file is one run of pytest, which does the selecting", tags = [ "pytest", "slow" ] ):
     # A venv of its own, deliberately WITHOUT pytest: installing what a
     # runner needs into an environment that is errand's to install into is
     # part of what a runner does.
@@ -242,22 +250,24 @@ if test( "a pytest suite, collected by pytest itself", tags = [ "pytest", "slow"
         assert subprocess.run( [ venv / "bin" / "python", "-c", "import pytest" ],
                                capture_output = True ).returncode != 0
 
-        code, output = run_errand( project, "list", "**::*", timeout = 900 )
+        code, output = run_errand( project, "run", "--no-queue", "**::*", "-m", "not slow", timeout = 900 )
         if "could not install" in output:
             skip( "pip could not reach an index from here",
                   "the runner installs what it needs; this machine cannot fetch it" )
-
-        # one entry per test, and the marks came across as entry tags
-        assert code == 0, output
-        assert "test_ok" in output and "test_slow" in output, output
-        assert "tags: slow" in output, output
-        # ...and it said what it was doing to somebody's environment
+        # it said what it was doing to somebody's environment
         assert "installing pytest" in output, output
+        # one run for the file, its marks filtered by pytest itself, the failing one named
+        assert code == 1 and "test_things.py" in output, output
+        assert "1 failed: test_no" in output and "assert 1 == 2" in output, "pytest's own words, not `exit 1`"
 
-        code, output = run_errand( project, "run", "-e", "!slow", "**::*", timeout = 900 )
-        assert "test_slow" not in output, output
-        assert code == 1 and "test_no" in output, output          # the failing one is real
-        assert "assert 1 == 2" in output, "pytest's own words, not `exit 1`"
+        code, output = run_errand( project, "run", "--no-queue", "suite/test_things.py::test_ok" )
+        assert code == 0, output
+        code, output = run_errand( project, "run", "--no-queue", "suite/test_things.py::test_[os]*" )
+        assert code == 0, output                                  # a pattern, matched on what pytest collects
+        code, output = run_errand( project, "run", "--no-queue", "suite/test_things.py::test_nope*" )
+        assert code == 1 and "matches no test" in output and "test_ok" in output, output
+        code, output = run_errand( project, "run", "--no-queue", "-e", "!slow", "**::*" )
+        assert code == 1 and "-m \"not slow\"" in output, "-e is errand's entries' filter"
 
 
 if test( "the system interpreter is not errand's to install into", tags = [ "pytest" ] ):
@@ -272,11 +282,11 @@ if test( "the system interpreter is not errand's to install into", tags = [ "pyt
     assert "Pytest( install = True )" in why, "it has to say what to do instead"
 
 
-if test( "a build runs once, not once per entry" ):
+if test( "a build runs once, not once per file" ):
     # Once per file would recompile for nothing; under -j it would have several
     # processes writing the same binary at the same time.
     import os
-    from errand import discovery
+    from errand.cli.listing import prepare_runners
     from errand.runner import Catch2
 
     class Counting( Catch2 ):
@@ -290,15 +300,11 @@ if test( "a build runs once, not once per entry" ):
 
     with tempfile.TemporaryDirectory() as tmp:
         root = Path( os.path.realpath( tmp ) )
-        ( root / "cpp" ).mkdir()
-        for name in ( "test_a.cpp", "test_b.cpp" ):
-            ( root / "cpp" / name ).write_text( "// catch2\nint main(){return 0;}\n" )
         runner = Counting( build = "make -C cpp" )
         runner.root = root
-        discovery.select( "**::*", root, runners = [ runner ], cwd = root,
-                          context = P.RunContext( root = root, out_dir = root, build_dir = root / "b" ) )
-        # Nothing was built for real, so both files say so -- each its own row.
-        assert sorted( p.name for p, _, _ in discovery.broken ) == [ "test_a.cpp", "test_b.cpp" ]
+        entries = runner.collect( [ ( [ root / "cpp" / "test_a.cpp", root / "cpp" / "test_b.cpp" ], None ) ] )
+        assert [ e.name for e in entries ] == [ "test_a.cpp", "test_b.cpp" ], "a source is one run"
+        assert prepare_runners( entries, root = root, out_root = root, tags = { }, env_name = "x" ) == [ ]
 
     assert Counting.runs == 1, f"the build ran {Counting.runs} times for 2 files"
 
@@ -438,7 +444,7 @@ if test( "a `::name` on a file run as a whole is refused, unless its runner take
             raise AssertionError( "a name was dropped on the floor" )
         except ValueError as err:
             assert "run as a whole" in str( err ), err
-        assert P.Cargo.takes_selector and not P.Catch2.whole_files
+        assert P.Cargo.takes_selector and P.Catch2.takes_selector and P.Pytest.takes_selector
 
 
 if test( "a script runs in the place, its exit code is its status, and it is one directory" ):
@@ -485,9 +491,10 @@ X
     exit 0;;
 esac
 for a in "$@"; do case "$a" in xml::out=*) out="${a#xml::out=}";; esac; done
-for a in "$@"; do name="$a"; done
+name=all
+for a in "$@"; do case "$a" in --reporter|xml::out=*) ;; *) name="$a";; esac; done
 cat > "$out" <<X
-<?xml version="1.0"?><Catch2TestRun name="t"><TestCase name="$name"><OverallResult success="true"/></TestCase><OverallResults successes="1" failures="0" expectedFailures="0"/></Catch2TestRun>
+<?xml version="1.0"?><Catch2TestRun name="t"><TestCase name="adds"><OverallResult success="true"/></TestCase><TestCase name="multiplies"><OverallResult success="true"/></TestCase><OverallResults successes="2" failures="0" expectedFailures="0"/></Catch2TestRun>
 X
 echo "ran $name"
 '''
@@ -500,35 +507,33 @@ errand.runners.replace( errand.Catch2(
 '''
 
 
-if test( "a compiled suite is built where it runs, then asked for its cases" ):
+if test( "a compiled suite is built where it runs, then run once, its spec handed to it" ):
     with tempfile.TemporaryDirectory() as tmp:
         project = write_project( Path( tmp ) / "proj", FAKE_PROJECT,
                                  { "cpp/test_math.cpp": "#include <catch2/catch_test_macros.hpp>\n",
                                    "cpp/fake.sh": FAKE_CATCH2 } )
 
         code, output = run_errand( project, "list", "**::*" )
-        assert code == 0 and "adds" in output and "multiplies" in output, output
-        assert "tags: catch2, math, slow" in output, output
+        assert code == 0 and "test_math.cpp" in output, output
+        assert not ( project / "build.log" ).exists(), "listing builds nothing"
 
         code, output = run_errand( project, "run", "-o", "--no-queue", "**::*" )
-        assert code == 0, output
-        assert "PASS adds" in output and "PASS multiplies" in output, output
-        # One entry per case, each with a directory of its own...
-        assert ( project / "errand-outputs" / "runs" / "cpp" / "test_math.cpp" / "adds" / "latest" / "catch2.xml" ).exists()
-        # ...and built once for the run, not once per case.
-        assert ( project / "build.log" ).read_text().count( "built" ) == 2, "once for list, once for run"
+        assert code == 0 and "ran all" in output, output
+        # One run for the source, one directory...
+        assert ( project / "errand-outputs" / "runs" / "cpp" / "test_math.cpp" / "latest" / "catch2.xml" ).exists()
+        # ...and built once for the run.
+        assert ( project / "build.log" ).read_text().count( "built" ) == 1
 
         code, output = run_errand( project, "run", "--no-queue", "cpp/test_math.cpp::mult*" )
-        assert code == 0 and "PASS multiplies" in output and "adds" not in output, output
-        code, output = run_errand( project, "run", "--no-queue", "-e", "!slow", "**::*" )
-        assert code == 0 and "PASS adds" in output and "multiplies" not in output, output
+        assert code == 0 and "ran mult*" in output, output
+        code, output = run_errand( project, "run", "--no-queue", "cpp/test_math.cpp::~[slow]" )
+        assert code == 0 and "ran ~[slow]" in output, output
 
 
-if test( "a build that fails costs its files' rows, and says why" ):
+if test( "a build that fails stops the run, and says why" ):
     with tempfile.TemporaryDirectory() as tmp:
         project = write_project( Path( tmp ) / "proj",
                                  "import errand\nerrand.runners.replace( errand.Catch2( build = \"false\" ) )\n",
                                  { "cpp/test_math.cpp": "#include <catch2/catch_test_macros.hpp>\n" } )
         code, output = run_errand( project, "run", "--no-queue", "**::*" )
-        assert code == 1 and "could not be read" in output and "test_math.cpp" in output, output
-        assert "the build failed" in output, output
+        assert code == 1 and "catch2: the build failed" in output, output

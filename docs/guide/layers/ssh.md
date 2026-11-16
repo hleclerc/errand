@@ -125,7 +125,8 @@ errand.configure( zones = { "/results": "back" } )   # written over there, broug
 
 A zone is left alone by the push. A `back` zone written as a path from the project root
 ( `/results` ) is also fetched after each command; written as a name ( `results`, anywhere in the
-tree ) it is only left alone, as a `build` zone is.
+tree ) it is only left alone, as a `build` zone is. A runner whose tool writes somewhere of its own
+says so the same way: [What a tool writes elsewhere](/guide/runners/#what-a-tool-writes-elsewhere).
 
 `errand-outputs` is excluded both ways on purpose: each side's records, plans and builds are its
 own. The only runs you get back are the ones you just asked for.

@@ -39,7 +39,7 @@ errand shell --env cluster                                 # let me in
   every machine has an agent that tracks what it started and stops what a dead one left.
 - **Taking turns**: a queue per machine; `-x` for a clean timing, `--cpus` / `--gpus` for a share.
 
-It also runs pytest, Catch2 and cargo suites test by test, in every environment.
+It also runs pytest, Catch2 and cargo suites, one run of the tool per file, in every environment.
 
 ## You stay in control
 

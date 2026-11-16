@@ -13,6 +13,7 @@ examples/*/cpp/test_*
 !examples/*/cpp/test_*.cpp
 !examples/*/cpp/test_*.h
 examples/*/rust/target/
+examples/*/target/
 
 .venv*/
 dist/

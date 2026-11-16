@@ -64,7 +64,7 @@ def plan_of( targets, entries, combos, *, root, out_root ):
     """
     runs = [ ]
     for env, tags in targets:
-        unknowable = env.ssh is not None or L.batch_of( env.stack ) is not None
+        unknowable = env.ssh is not None or L.batch_of( env.stack ) is not None or env.prepares_elsewhere()
         for _, values in combos:
             for e in entries:
                 resolved = shown_params( E.resolve_params( e.params, values ), values )

@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-11-16
 ---
 
@@ -51,12 +51,13 @@ read entries from it. The rule of ADR 0003 that decides which runner takes a tar
 goes to an entry runner, anything else to a file runner, and among entry runners the most
 specific claim wins, with a tie reported as an error.
 
-**Tools are named and resolved in the place.** `{python}`, `{cargo}`, `{cmake}`… each have a list
-of candidates (`python3`, `python`), and the first one found in the environment is used. An
-environment can override that choice: `Micromamba( "x", tools = { "python": "python3.12" } )`. This
-replaces `sys.executable` and `INTERPRETERS` in the file runners. A tool that is missing follows
-the rule pytest follows today: it is installed when the environment is errand's own, and reported
-otherwise.
+**Tools are named and resolved in the place.** A runner starts `python`, `cargo`, `cmake`… by name.
+The environment can give its own name for each: `Env( [ … ], tools = { "python": "python3.12" } )`.
+Without one, `python` is the interpreter errand runs on in that place (already the environment's,
+since errand runs inside it), and any other tool is the first of its usual names found on the
+`PATH`. A target whose first word is a named tool runs as named, and a build line writes
+`{cmake}`. A tool that is missing follows the rule pytest follows today: it is installed when the
+environment is errand's own, and reported otherwise.
 
 **Needs belong to the run, not to the entry.** `--cpus`, `--ram`, `--gpus`, `--ranks` and `-x` on
 the command line, or as options of a runner instance. The queue is unchanged, since it never needed
@@ -64,13 +65,14 @@ to know about entries. The traits go: `bulk` is already `default_run`, `keep` an
 and `exclusive` is `-x`. `test`, `bench` and `experiment` become aliases with no meaning, and
 `-k` goes.
 
-**`-j N` reaches the tool only if the runner says how.** A runner declares its parallelism as a
-piece of argv, `jobs = "-n {jobs}"` for pytest (with xdist) or `jobs = "-j {jobs}"` for ctest, or
-declares none. Whether a tool accepts the flag can depend on the place: xdist is a plugin, so it is
-checked there, and installed or reported by the same rule as pytest itself. Errand's entries take
-N at once. Without a declared form, `-j N` still runs N runs at once (targets, grid points). On a
-single run it has no effect, and errand says so instead of passing an unknown flag. `-j N` also
-reaches the claim: the run asks the queue for N cpus, unless `--cpus` says otherwise.
+**`-j N` runs N runs at once; a single run gives it to its tool.** Several runs (files, grid
+points) are what runs at the same time, each on one worker, so the tools never multiply the
+machine's cores. A single run has nothing beside it: `-j N` then goes to its tool when the runner
+says it takes it (`Runner.jobs`): pytest-xdist's `-n N`, cargo's `--test-threads N`. Whether the
+tool accepts it can depend on the place: xdist is a plugin, so it is checked there, and installed
+or reported by the same rule as pytest itself. The claim of that run asks for N cpus, unless
+`--cpus` says otherwise. A runner without a parallelism of its own (Catch2, a script) is said to
+run alone, rather than handed a flag it does not know.
 
 **errand's own entries stay, as one runner among others.** `if test( "…" ):` is how loom and sdot
 write their tests, and it keeps its name, `Param`, its tags and one process per selected entry.
@@ -92,9 +94,13 @@ it builds (`kept()`):
 - `build` for what stays over there and is never overwritten by a push: `target/`,
   `{build_dir}`, `.pytest_cache/`.
 
-The zones of a runner are added to the project's zones while one of its runs is in flight. A `back`
-zone is brought back after each such run, whether or not `-o` was given, because the tool writes
-there whether or not anyone asked. The project's own `zones =` can override what a runner declares.
+The zones of a runner are part of the project's zones, as what a layer builds is, whichever runner
+a command uses: environments and commands share one copy over there. A `back` zone is brought back
+after each command, whether or not `-o` was given, because the tool writes there whether or not
+anyone asked. The project's own `zones =` has the last word on a path both name. A zone is a path
+from the project root, and may name the environment: `{env}`, and `{build_dir}` for `build/<env>`
+(`/{build_dir}/target/criterion`). Without an environment in view, a zone stands for every declared
+one, since they share the copy.
 
 **Per-case results come from the tool's report.** When the tool writes a JUnit XML report (pytest,
 Catch2, ctest, cargo-nextest, go via gotestsum, jest…), errand reads it into the run's record:
@@ -150,6 +156,9 @@ zone.** Then there are two cases.
   mtimes are kept, so the run place does not look stale to make the next time it is the
   preparation place. This is a third direction for a zone, next to `back` and pushed: from one copy
   to another.
+  The plan the run checks itself against was written in the preparation's copy: it travels with
+  the run's request, and is kept in the run's copy for `status`. Each machine is set up with its own
+  list of layers (`Env.places`).
 
 **The machine that runs can be different from the one that builds.** A login node may lack the
 GPU, have another CPU generation, or have other system libraries. Errand does not check that.
@@ -162,9 +171,6 @@ built it, so a mismatch can at least be read after the fact.
 `errand run -r solve …`, or claimed by pattern.
 
 ## Open
-
-- For now, `prepare` must start from the same place as the run (the same `Ssh`, or none). A
-  `prepare` on another machine is refused until the carry above exists.
 
 - The carry between two copies through here doubles the traffic of a large build directory. A direct
   transfer from agent to agent is an optimization for later, and needs the two places to reach each

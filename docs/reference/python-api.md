@@ -37,27 +37,15 @@ entry( name, tags = None, /, **kw ) -> Args | False
 ```
 
 `name` and `tags` are positional-only; `tags = [ … ]` is accepted as a keyword too. Every other
-keyword is a **parameter** ( a `Param` ), a **trait** or a **resource**; anything else is a
-`TypeError` that says which.
+keyword is a **parameter** ( a `Param` ), or `ranks`: MPI processes, each running the body,
+overridden by `--ranks` ( see [Several processes](/guide/mpi) ). Anything else is a `TypeError`
+that says which, and where what it meant went: `exclusive`, `cpus`, `ram`, `gpus` are the
+command's ( `-x`, `--cpus`… ), `bulk` is `errand.default_run`.
 
 ```python
-if p := entry( "solve", n = Param( 1000 ), keep = True, cpus = 4 ):
+if p := entry( "solve", n = Param( 1000 ), ranks = 4 ):
     ...
 ```
-
-| trait | default | |
-|---|---|---|
-| `bulk` | `True` | picked up by a bare `errand run`, through `errand.default_run` |
-| `keep` | `False` | its numbers are kept and compared date to date |
-| `exclusive` | `False` | it needs the machine to itself |
-| `stable_path` | `False` | `latest/` is what you are meant to open |
-
-| resource | |
-|---|---|
-| `cpus` | a count |
-| `ram` | `"8G"`, `"512M"` |
-| `gpus` | a count; the cards are [assigned, not merely counted](/guide/machine) |
-| `ranks` | MPI processes, each running the body; `cpus`, `gpus` and `ram` are then per rank. `--ranks` overrides it. See [Several processes](/guide/mpi) |
 
 Returns `False` while the file is read to find its entries, and while another entry of the file is
 the one running. Returns an `Args` for the entry that is running.
@@ -65,14 +53,14 @@ the one running. Returns an `Args` for the entry that is running.
 ### test, track, bench, experiment
 
 ```python
-test( name, tags = None, /, **kw )        # bulk
-track( name, tags = None, /, **kw )       # keep, not bulk
-bench( name, tags = None, /, **kw )       # keep, exclusive, not bulk
-experiment( name, tags = None, /, **kw )  # stable_path, not bulk
+test( name, tags = None, /, **kw )
+track( name, tags = None, /, **kw )
+bench( name, tags = None, /, **kw )
+experiment( name, tags = None, /, **kw )
 ```
 
-`entry` with traits preset; any of them can be overridden: `bench( "probe", exclusive = False )`.
-`-k test`, `-k bench` ( `track` and `bench` ), `-k experiment` or `-k exp` select them by kind.
+`entry` under four names, so that the file says what the work is. They behave the same: which
+ones run is the target's to say, and the machine to itself is `-x`.
 
 ### Param
 
@@ -189,14 +177,16 @@ An unknown setting is a `TypeError` listing the ones that exist.
 ### envs, Env, default_env
 
 ```python
-errand.envs[ name ] = errand.Env( stack = ( ), prepare = None, **tags )
+errand.envs[ name ] = errand.Env( stack = ( ), prepare = None, tools = None, **tags )
 errand.default_env = "name"          # optional: else the first one declared
 ```
 
 Declares an [environment](/guide/environments); the key is its name. `stack` is a list of
 [layers](/guide/layers/), outermost first: `Ssh` must be first, `Windows` and `WindowsBox` first or
 right after an `Ssh`. `prepare`, when given, is the list the [preparation](/guide/environments#preparing-then-running)
-goes through instead, starting from the same place. Keyword arguments are its [tags](/guide/tags). A name or a
+goes through instead, on the same machine or on another one, whose build is then carried to the
+run's copy. `tools` names what the runners start there,
+where the usual name is wrong ( [Tools](/guide/environments#tools-an-environment-names) ). Keyword arguments are its [tags](/guide/tags). A name or a
 tag value cannot hold a comma. Only an `Env` can be stored.
 
 ### default_run
@@ -227,7 +217,7 @@ del errand.runners[ "cargo" ]
 
 A dict, name → runner, filled with the runners errand comes with. `replace` puts a configured runner
 in place of the default one of its kind; another name adds one, which `-r NAME` picks. See
-[Running a suite test by test](/guide/runners/).
+[Running a suite](/guide/runners/).
 
 ## Layers
 

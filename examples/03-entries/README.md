@@ -12,9 +12,9 @@ test_primes.py    five entries: two tests, two benchmarks, one experiment
 ```bash
 cd examples/03-entries
 
-errand run -k test '**::*'             # the tests
-errand run -k test -e '!slow' '**::*'  # skip the slow one
-errand run -k bench '**::*'            # the benchmarks
+errand run 'test_primes.py::small*'   # a test, by name ( a glob )
+errand run -e '!slow' '**::*'          # everything but the slow one
+errand run -x 'test_primes.py::sieve*' # the benchmarks, each with the machine to itself
 errand run test_primes.py::sieve       # one entry by name
 errand run '**::*'                     # every entry: tests, benchmarks, the experiment
 errand list '**::*'                    # what matched, with the parameters it takes
@@ -26,7 +26,7 @@ a bare `errand run` only prints the help.
 With `--grid`, several values of a parameter are a matrix:
 
 ```bash
-errand run -o -k bench --grid=, '**::*' --n=100000,1000000,10000000
+errand run -o --grid=, test_primes.py::sieve --n=100000,1000000,10000000
 ```
 
 Three runs, three directories under `errand-outputs/runs/` — `-o` lets each write its own files there —
@@ -71,5 +71,7 @@ it, read from the file that case is writing. `o` opens what a run produced.
   file. They are told apart by call site, so two entries may share a name.
 - **The benchmark that also asserts.** `bench( "sieve beats trial division" )` records two numbers
   and then checks one against the other. There is no rule that a benchmark may not fail.
-- **A bare `errand run` never runs the benchmarks**, even where `errand.default_run` names their
-  file. They are not `bulk`; you name them, or you ask for `-k bench`. The experiment likewise.
+- **`test`, `bench`, `experiment` say what the work is**, for whoever reads the file; they behave
+  the same. Which ones run is what the target names, and `-x` gives a measurement the machine to
+  itself. In a project, keep them in files or directories of their own and let
+  `errand.default_run` name the tests.

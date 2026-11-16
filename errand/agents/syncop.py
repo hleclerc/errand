@@ -175,7 +175,9 @@ class Session( _Channel ):
             dst, findings = _seen( root, sel, known, check = first or bool( self.req.get( "check" ) ) )
             self.say( { "dst": { k: list( e ) for k, e in dst.items() },
                         "findings": [ list( f ) for f in findings ], "ci": S.case_insensitive( root ) } )
-            w = S.Writer( root, dst, trusted = known, spare_in = S.spare_dir() )
+            # A copy errand never wrote ( a first sync, an rsync's copy ): nothing in it is known to be errand's, so
+            # whatever the push removes or replaces with other contents is kept.
+            w = S.Writer( root, dst, trusted = known if known is not None else S.Manifest(), spare_in = S.spare_dir() )
             written = S.Manifest( dst )
             written.real = dict( dst.real )
             handle = None
@@ -232,6 +234,7 @@ class Session( _Channel ):
                 w.abort( handle )
             written.generation = os.urandom( 8 ).hex()
             S.save( root / TRUSTED, written )
+            _prune_spared( root )
             with _held_lock:
                 _held[ str( root ) ] = sel
             self.say( { "saved": True, "spared": [ list( s ) for s in w.spared ],
@@ -272,6 +275,20 @@ class Pull( _Channel ):
                     self.say( { "end": list( entry ), "key": key, "stable": stable } )
                 self.say( { "done": True } )
                 return
+
+
+SPARED_DAYS = 30                       # what a push moved aside stays that long
+
+
+def _prune_spared( root: Path ):
+    import shutil
+    try:
+        olds = [ d for d in ( root / S.SPARED ).iterdir()
+                 if d.is_dir() and time.time() - d.stat().st_mtime > SPARED_DAYS * 86400 ]
+    except OSError:
+        return
+    for d in olds:
+        shutil.rmtree( d, ignore_errors = True )
 
 
 def _under( root: Path, paths, sel: S.Selection ):

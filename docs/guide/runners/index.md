@@ -1,23 +1,25 @@
-# Running a suite test by test
+# Running a suite
 
-A pytest, Catch2 or cargo suite runs under errand as it is, one test at a time, with a record per
-test and every environment errand knows. Nothing in the suite changes: `pytest tests/` and
-`./cpp/test_geometry` still work exactly as before.
+A pytest, Catch2 or cargo suite runs under errand as it is, in every environment errand knows. A
+file is one run of its tool, which does the selecting itself, and the run's record holds what the
+tool reported. Nothing in the suite changes: `pytest tests/` and `./cpp/test_geometry` still work
+exactly as before.
 
 ```bash
 errand run '**::*'                       # every test of every suite under here
 errand run "tests/test_api.py::*"        # the tests of that file
 errand run cpp/test_geometry.cpp::area   # one Catch2 case, by name
-errand run -e '!slow' '**::*'            # pytest marks are entry tags
+errand run 'tests/**::*' -m "not slow"   # pytest's own filter, after the target
 errand run --grid=, --env local,old '**::*'   # every suite, in two environments
 errand list "tests/test_api.py::*"       # what that names, and which runner took it
 ```
 
 ## `x::y`: a file, then the tests in it
 
-`::` is what asks for tests. The left side is a path from the current directory, the right side a
-test name; both are globs: `*`, `?`, `[…]`, `{a,b}`, and `**` for any depth of directories on the
-path side. A directory with `::` means everything under it.
+`::` is what asks for tests. The left side is a path from the current directory, a glob: `*`, `?`,
+`[…]`, `{a,b}`, and `**` for any depth of directories. A directory with `::` means everything under
+it. The right side is handed to the file's tool, in its own words: a pytest node id or pattern, a
+Catch2 test spec, a `cargo test` filter. `::*` asks for everything.
 
 ```bash
 errand run 'tests/**::*'                             # every test under tests/
@@ -37,26 +39,27 @@ Python for a `.py`, as an executable otherwise.
 
 Two runners that fit a file equally well are an error that names them, never a coin toss: `-r NAME`
 picks one for the command. With `::`, a file no runner takes is skipped: a glob there is a filter.
-`errand list` says which runner took each test.
+`errand list` says which runner took each file.
 
-## Choosing tests by tag: `-e`
+## Choosing tests by tag
 
-Every test carries tags, and `-e` filters on them with the
-[expression language](/reference/expressions) `-t` uses on environments:
+A tool's tags are the tool's filter, written after the target: `-m "not slow"` for pytest,
+`::[math]~[slow]` for Catch2. `-e` filters [errand's own entries](/guide/declaring-work#tags-on-an-entry)
+with the [expression language](/reference/expressions) `-t` uses on environments, and is refused
+with another runner's targets rather than ignored. `-e` picks *what* runs; `-t` picks *where*.
 
-| runner | its tags |
-|---|---|
-| `Pytest` | the marks: `@pytest.mark.slow` is the tag `slow` |
-| `Catch2` | the `[tags]` of the case, and `catch2` |
-| `Cargo` | `cargo`, and the target's kind ( `lib`, `test`, … ) |
-| errand's own | the `tags = [ … ]` of the [entry](/guide/declaring-work#tags-on-an-entry) |
+## Several at once: `-j`
+
+`-j N` runs N runs at the same time, one process each: N files, or N points of a grid. A single run
+has nothing to run beside it, so `-j N` goes to its tool when the runner says how: pytest-xdist's
+`-n N` for pytest ( installed by the same rule as pytest ), `--test-threads N` for cargo. The run's
+claim then asks for N cpus. A runner without a parallelism of its own ( Catch2, a script ) says so,
+and runs alone.
 
 ```bash
-errand run -e 'slow & !gpu' '**::*'
+errand run -j 8 tests/test_big.py      # one file, eight pytest-xdist workers
+errand run -j 8 'tests/**::*'          # eight files at a time
 ```
-
-`-e` picks *what* runs; `-t` picks *where*. `-k test`, `-k bench`, `-k exp` pick
-[errand's own entries](/guide/declaring-work) by kind.
 
 ## What a bare `errand run` runs: `default_run`
 
@@ -76,11 +79,11 @@ never guesses.
 
 `errand.runners` is a dict, name → runner, filled with the ones errand comes with:
 
-| name | runner | takes | one entry per |
+| name | runner | takes | one run per |
 |---|---|---|---|
 | `errand` | `Errand()` | a `.py` that imports errand | [`if test( … ):`](/guide/declaring-work) |
-| `pytest` | [`Pytest()`](./pytest) | `test_*.py`, `*_test.py` | test |
-| `catch2` | [`Catch2()`](./catch2) | `test_*.cpp` that mentions catch | test case, after a build |
+| `pytest` | [`Pytest()`](./pytest) | `test_*.py`, `*_test.py` | file: `pytest x.py[::sel]` |
+| `catch2` | [`Catch2()`](./catch2) | `test_*.cpp` that mentions catch | source: its binary, after a build |
 | `cargo` | [`Cargo()`](./cargo) | the source root of a test target of the nearest `Cargo.toml` | target |
 | `python` | [`Python()`](./scripts) | a `.py`, named without `::` | file |
 | `executable` | [`Executable()`](./scripts) | anything else named without `::`: a file, or a command on the place's `PATH` | file |
@@ -103,8 +106,8 @@ another name sits beside it: where both take a file they tie, and `-r NAME` says
 
 ## errand compiles nothing itself
 
-A runner that needs a build runs the command you already build with, once, before any of its
-tests, in the place they run:
+A runner that needs a build runs the command you already build with, once, during the preparation,
+in the place its runs go:
 
 ```python
 errand.runners.replace( errand.Catch2( dir = "cpp", build = "make -C cpp" ) )
@@ -112,7 +115,32 @@ errand.runners.replace( errand.Catch2( dir = "cpp", build = "cmake --build build
 ```
 
 Once, not once per file, and not once per process under `-j`. Your compiler, your flags and your
-layout stay yours. `cargo` needs none of this: `cargo test` builds what it runs.
+layout stay yours. `cargo` needs no `build`: the runner compiles with `cargo test --no-run`, also
+during the preparation. Both, on real projects: [Catch2 with CMake](./catch2#example-a-cmake-build-then-the-binaries),
+[a cargo crate](./cargo#example).
+
+## What a tool writes elsewhere
+
+A run's own files go to its output directory ( `-o`, `$ERRAND_OUT_DIR` ), and the first choice is to
+point the tool there: `--junitxml`, `--benchmark-storage`. Some tools write where they like:
+coverage into `htmlcov/`, criterion into `target/criterion/`. On another machine, the next push
+would take those for files that do not belong to the copy. The runner says where its tool writes,
+as [zones](/guide/layers/ssh#what-gets-pushed):
+
+```python
+errand.runners.replace( errand.Pytest( args = [ "--cov=src", "--cov-report=html" ],
+                                       zones = { "/htmlcov": "back" } ) )
+errand.runners.replace( errand.Cargo( target_dir = None, zones = { "/target/criterion": "back" } ) )
+```
+
+- `back`: written over there, **brought back** here after every command, `-o` or not.
+- `build`: written over there and left there, never overwritten by a push.
+
+A runner's zones join the project's ( `errand.configure( zones = … )` ), which has the last word on
+a path both name. `build/`, `target/` and the like are build zones already. A path may name the
+environment: `{env}`, and `{build_dir}`, its build directory, `build/<env>` —
+`Cargo( zones = { "/{build_dir}/target/criterion": "back" } )` brings back criterion's reports
+from the environment's own target directory.
 
 ## What adopting them buys
 
@@ -123,7 +151,7 @@ happens around the run:
 |---|---|---|
 | where it runs | wherever you typed it | any declared environment, several at once |
 | output | scrollback | a directory per run, per place, per date |
-| numbers | printed | `result.yaml`, summarized across dates and machines |
+| verdict | printed | the tool's report read back: counts, failed names, in `result.yaml` |
 | on another machine | copy, ssh, remember to fetch | one flag, results brought back |
 
 ## The pages of this part

@@ -35,13 +35,52 @@ if test( "a layer takes no condition: `when` is gone" ):
         pass
 
 
-if test( "both phases start from the same place, for now" ):
+if test( "the preparation may be on another machine: then it is set up there, and carried" ):
+    same = errand.Env( [ errand.Ssh( "a" ), errand.Slurm( gpus = 1 ) ], prepare = [ errand.Ssh( "a" ) ] )
+    assert not same.prepares_elsewhere() and same.places() == [ same ]
+    two = errand.Env( [ errand.Ssh( "gpu-box" ), errand.Venv() ],
+                      prepare = [ errand.Ssh( "build-box" ), errand.Uv() ], tools = { "cmake": "cmake3" } )
+    assert two.prepares_elsewhere()
+    here_then_there = errand.Env( [ errand.Ssh( "gpu-box" ) ], prepare = [ ] )
+    assert here_then_there.prepares_elsewhere(), "built here, run there"
+    # set up machine by machine, each with its own layers, the tools alike
+    places = two.places()
+    assert [ L.ssh_of( p.stack ).host for p in places ] == [ "gpu-box", "build-box" ]
+    assert all( p.prepare is None and p.tools == { "cmake": "cmake3" } and p.name == two.name for p in places )
+
+
+if test( "what was built over there is carried to the copy that runs, through here" ):
+    from types import SimpleNamespace
+    from errand.cli import drive
+    calls = [ ]
+    kept = drive.L.fetch, drive.L.put
+    drive.L.fetch = lambda paths, host, there, local, *a, **k: calls.append( ( "fetch", host, list( paths ), local ) )
+    drive.L.put = lambda local, host, remote, *a, **k: calls.append( ( "put", host, str( local ), str( remote ) ) )
     try:
-        errand.Env( [ errand.Ssh( "a" ), errand.Venv() ], prepare = [ errand.Ssh( "b" ), errand.Venv() ] )
-        raise AssertionError( "two machines were accepted" )
-    except ValueError as err:
-        assert "same place" in str( err ), err
-    errand.Env( [ errand.Ssh( "a" ), errand.Slurm( gpus = 1 ) ], prepare = [ errand.Ssh( "a" ) ] )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path( tmp )
+            env = errand.Env( [ ] )
+            env.name = "gpu"
+            box = lambda host: SimpleNamespace( root = root, there = Path( f"/far/{host}" ),
+                                                ssh = SimpleNamespace( host = host, options = [ ], transfer = None ) )
+            local = SimpleNamespace( root = root, there = root, ssh = None )
+            ( root / "build" / "gpu" ).mkdir( parents = True )
+
+            drive._carry( env, local, box( "run-box" ), root )          # built here, run there
+            assert calls == [ ( "put", "run-box", str( root / "build" / "gpu" ), "/far/run-box/build/gpu" ) ], calls
+
+            calls.clear()
+            drive._carry( env, box( "build-box" ), local, root )        # built there, run here
+            assert calls == [ ( "fetch", "build-box", [ "build/gpu" ], root ) ], calls
+
+            calls.clear()
+            staging = errand.config.state( root ) / "carry" / "gpu"
+            ( staging / "build" / "gpu" ).mkdir( parents = True )
+            drive._carry( env, box( "build-box" ), box( "run-box" ), root )   # two machines: through here
+            assert calls == [ ( "fetch", "build-box", [ "build/gpu" ], staging ),
+                              ( "put", "run-box", str( staging / "build" / "gpu" ), "/far/run-box/build/gpu" ) ], calls
+    finally:
+        drive.L.fetch, drive.L.put = kept
 
 
 if test( "two schedulers in one list is refused, when the environment is declared" ):
@@ -149,13 +188,21 @@ if test( "a run phase that does not find what was prepared refuses to run it" ):
                 "PYTHONPATH": str( Path( errand.__file__ ).resolve().parent.parent ) }
 
         def session( **kw ):
-            req = { "root": str( project ), "env": "two", "tags": { }, "verb": "run", "kinds": [ ],
+            req = { "root": str( project ), "env": "two", "tags": { }, "verb": "run",
                     **kw, "known": { **known, **kw.pop( "known", { } ) } }
             return subprocess.run( [ sys.executable, "-m", "errand.agents.ops", "session", json.dumps( req ) ],
                                    cwd = project, env = env, capture_output = True, text = True )
 
         got = session( prepare_only = True, known = { "phase": "prepare" } )
         assert got.returncode == 0, got.stdout + got.stderr
+        # prepared on another machine, the plan comes with the request: the run checks against it, and keeps it
+        plans = project / "errand-outputs" / "state" / "plans"
+        plan = json.loads( next( plans.glob( "*-two.json" ) ).read_text() )
+        for f in plans.glob( "*" ):
+            f.unlink()
+        got = session( known = { "phase": "run", "from_plan": True, "plan": plan } )
+        assert got.returncode == 0 and "who run" in got.stdout, got.stdout + got.stderr
+        assert list( plans.glob( "*-two.json" ) ), "kept where the run is, for status"
         ( project / "test_b.py" ).write_text( WORK )            # the sources moved in between
         got = session( known = { "phase": "run", "from_plan": True } )
         assert got.returncode == 1 and "not what was prepared" in got.stdout, got.stdout + got.stderr

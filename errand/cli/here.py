@@ -11,7 +11,7 @@ import traceback
 
 from .. import config, discovery, entries as E, local, mpi, queue, results as R, runner as P, steps
 from .style import bad, capture, dim, GREEN, head, RED, RESET, YELLOW
-from .project import _src_paths, _with_env, build_dir_for, TAGS
+from .project import _src_paths, _with_env, build_dir_for, tools_for, TAGS
 from .parsing import shown_params, target_argv
 from .help import _short
 
@@ -29,10 +29,11 @@ def aggregate_needs( entries, asked = None ):
     """What one command carries, as one machine's worth of asking.
 
     A dispatched command runs SEVERAL entries in one allocation, so the
-    allocation has to be the largest of them -- and exclusive if any one of
-    them is.
+    allocation has to be the largest of them -- and exclusive when the command
+    says so ( `-x`, `asked[ "exclusive" ]` ).
     """
-    out = { }
+    asked = dict( asked or { } )
+    out = { "exclusive": True } if asked.pop( "exclusive", False ) else { }
     for e in entries:
         # what the command line asks ( `--cpus`, `--ranks` ) wins, as it does in the queue; with ranks,
         # per rank: a batch system asks for so many tasks of so much each
@@ -40,8 +41,6 @@ def aggregate_needs( entries, asked = None ):
         ranks = float( asked_here.pop( "ranks", None ) or 1 )
         for key, value in [ *queue.normalize( asked_here ).items(), *( [ ( "ranks", ranks ) ] if ranks > 1 else [ ] ) ]:
             out[ key ] = max( out.get( key, 0.0 ), value )
-        if e.traits[ "exclusive" ]:
-            out[ "exclusive" ] = True
     return out
 
 
@@ -67,6 +66,8 @@ class Ask:
         self.quiet     = bool( get( "quiet" ) )
         self.visible   = bool( get( "keep_out" ) or get( "out" ) )
         self.wrap      = _ceiling( get( "mem" ) )
+        # `-j N` handed to the tool of a single run ( `Runner.jobs` ): set by `run_here`.
+        self.jobs      = 1
 
     @staticmethod
     def flags( known ) -> list:
@@ -126,7 +127,7 @@ def run_entries( entries, modules, *, root, out_root, overrides, env_name, tags,
         # part of how long the work takes, and recording it as if it were would
         # make a benchmark's numbers depend on who else was busy.
         with queue.claim( { **e.resources, **ask.resources },
-                          exclusive = e.traits[ "exclusive" ] or ask.exclusive,
+                          exclusive = ask.exclusive,
                           label = ask.label or f"{e.file.name}::{e.name}", enabled = queued,
                           echo = lambda m: print( dim( m ), flush = True ) ) as granted:
             # Being told WHICH card is the whole point of asking for one: two
@@ -240,8 +241,9 @@ def run_case( e, modules, *, root, out_root, overrides, env_name, tags, version,
                         root = root, out_dir = leaf, params = resolved,
                         env = { **handed, **_handed_to_the_run( root, tags ),
                                 **( { P.OUT_DIR: str( leaf ) } if ask.visible else { } ) },
-                        selector = selectors.get( e.name ),
+                        selector = getattr( e, "selector", None ) or selectors.get( e.name ),
                         build_dir = build_dir_for( root, env_name ),
+                        tools = tools_for( env_name ), jobs = ask.jobs,
                         args = target_argv( e, resolved, overrides ),
                         wrap = ask.wrap + _ranks_wrap( e, ask, env_name, tags ) ) )
                     status, error = got.status, got.error
@@ -262,14 +264,6 @@ def run_case( e, modules, *, root, out_root, overrides, env_name, tags, version,
 
     if status == "PASS":
         print( f"{GREEN}PASS{RESET} {e.name} {dim( f'({site})' )}", flush = True )
-        if e.traits[ "stable_path" ]:
-            # What it produced IS the point, so name the files and the path
-            # to open rather than leave it to be reconstructed.
-            written = sorted( f.name for f in leaf.iterdir()
-                              if f.name not in ( R.RESULT, R.OUTPUT ) )
-            print( dim( f"  {_short( leaf.parent / R.LATEST, root )}/" ) )
-            for name in written:
-                print( dim( f"    {name}" ) )
     elif status == "SKIP":
         print( f"{YELLOW}SKIP{RESET} {e.name} {dim( f'({site})' )} - {error}", flush = True )
     else:

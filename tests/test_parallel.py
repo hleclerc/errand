@@ -49,7 +49,7 @@ if test( "skips" ):
 PARAMETRIZED = '''
 from errand import bench, Param
 
-if p := bench( "measured", exclusive = False, n = Param( 1 ), label = Param( "plain" ) ):
+if p := bench( "measured", n = Param( 1 ), label = Param( "plain" ) ):
     p.results[ "n" ] = p.n
     p.results[ "label" ] = p.label
 '''
@@ -71,12 +71,12 @@ if test( "the same results, whichever shape it ran in", tags = [ "slow" ] ):
     with tempfile.TemporaryDirectory() as tmp:
         project = write_project( Path( tmp ) / "proj", "", { "bench_p.py": PARAMETRIZED } )
 
-        code, _ = run_errand( project, "run", "-o", "-k", "bench", "--grid=,", "**::*", "--n=1,2,3" )
+        code, _ = run_errand( project, "run", "-o", "--grid=,", "**::*", "--n=1,2,3" )
         assert code == 0
         serial = { str( p.relative_to( project ) ): yamlish.read( p )[ "results" ]
                    for p in sorted( ( project / "errand-outputs" / "runs" ).rglob( "result.yaml" ) ) }
 
-        code, _ = run_errand( project, "run", "-o", "-k", "bench", "-j", "3", "--grid=,", "**::*", "--n=1,2,3" )
+        code, _ = run_errand( project, "run", "-o", "-j", "3", "--grid=,", "**::*", "--n=1,2,3" )
         assert code == 0
         parallel = { str( p.relative_to( project ) ): yamlish.read( p )[ "results" ]
                      for p in sorted( ( project / "errand-outputs" / "runs" ).rglob( "result.yaml" ) ) }
@@ -119,14 +119,14 @@ if test( "a value with a space survives the trip to the child", tags = [ "slow" 
     # be wrong.
     with tempfile.TemporaryDirectory() as tmp:
         project = write_project( Path( tmp ) / "proj", "", { "bench_p.py": PARAMETRIZED } )
-        code, output = run_errand( project, "run", "-o", "-k", "bench", "-j", "2", "**::*", "--label", "two words" )
+        code, output = run_errand( project, "run", "-o", "-j", "2", "**::*", "--label", "two words" )
         assert code == 0, output
         got = [ yamlish.read( p )[ "results" ]
                 for p in ( project / "errand-outputs" / "runs" ).rglob( "result.yaml" ) ]
         assert got and all( g[ "label" ] == "two words" for g in got ), got
 
 
-if test( "exclusive still means exclusive when several are running", tags = [ "slow" ] ):
+if test( "-x still means exclusive when several are running", tags = [ "slow" ] ):
     # The queue is what enforces it, and it works between processes, which is
     # exactly what -j creates.
     WORK = '''
@@ -144,7 +144,7 @@ if p := bench( "alone two" ):
     with tempfile.TemporaryDirectory() as tmp:
         project = write_project( Path( tmp ) / "proj", "", { "bench_alone.py": WORK } )
         started = time.perf_counter()
-        code, output = run_errand( project, "run", "-k", "bench", "-j", "2", "**::*" )
+        code, output = run_errand( project, "run", "-x", "-j", "2", "**::*" )
         elapsed = time.perf_counter() - started
         assert code == 0, output
         assert elapsed > 2.5, f"two exclusive benchmarks overlapped ({elapsed:.1f}s)\n{output}"

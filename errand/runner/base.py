@@ -5,13 +5,16 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
+import shutil
 import subprocess
+import sys
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from enum import IntEnum
 from pathlib import Path
 
-from ..entries import Entry, TRAITS
-from ..targets import name_matches
+from ..entries import Entry
 
 
 class Level( IntEnum ):
@@ -67,6 +70,17 @@ class RunContext:
     args    : list = field( default_factory = list )
     # What a plain command runs under: a memory ceiling, a lower priority.
     wrap    : list = field( default_factory = list )
+    # The environment's own names for its tools ( `Env( tools = { "python": "python3.12" } )` ).
+    tools   : dict = field( default_factory = dict )
+    # `-j N` on a single run whose runner takes it ( `Runner.jobs` ): the tool's own parallelism.
+    jobs    : int = 1
+
+
+# The usual names of a tool, in the order they are looked for when the environment gives none.
+TOOLS = {
+    "cmake": ( "cmake", "cmake3" ),
+    "ctest": ( "ctest", "ctest3" ),
+}
 
 
 class Runner:
@@ -82,30 +96,63 @@ class Runner:
     # answers a bare `x`, and is never asked to claim anything.
     takes_entries = True
 
-    # True when an entry IS a whole file -- a script, or a compiled suite whose
-    # cases cannot be enumerated before it is built. A `::name` then belongs to
-    # the file, not to the entry: the core must not filter entries by it.
-    whole_files = False
-    # ...and the runner hands it on as the file's own filter ( Catch2 takes a
-    # case name, `cargo test` a test name ). Without it, `file::x` is refused.
+    # True when an entry IS a whole file: one run of the runner's tool ( ADR 0011 ). Every runner but
+    # errand's own entries. A `::name` then belongs to the tool, not to the entry: the core must not
+    # filter entries by it.
+    whole_files = True
+    # ...and the runner hands it on as the tool's own filter ( a pytest node id, a Catch2 test spec,
+    # a `cargo test` filter ). Without it ( a script ), `file::x` is refused.
     takes_selector = False
+
+    # Whether `run` hands `ctx.jobs` to its tool ( pytest-xdist's `-n`, `--test-threads` ): then `-j N`
+    # on a single run is the tool's parallelism. Without it, `-j` only runs several runs at once.
+    jobs = False
+
+    # Where its tool writes, other than the run's output directory ( ADR 0006 zones ): path -> "back"
+    # ( brought back after every command ) or "build" ( stays over there, never overwritten by a
+    # push ). Given per instance: `Pytest( zones = { "/htmlcov": "back" } )`.
+    zones: dict = { }
+
+    # The environment's tools, for what a runner does before it has a `RunContext` ( listing a
+    # crate's targets ): set where the environment is known, the same as `RunContext.tools`.
+    place_tools: dict = { }
 
     # The project root, set when the project's configuration has been read:
     # what a runner's own relative paths ( `dirs`, `manifest` ) are relative to.
     root = None
 
-    # True when what a file holds can only be listed once it is built: then
-    # `prepare` runs BEFORE `collect`, during the preparation, in the place --
-    # and `collect` finds the build where `context.build_dir` says.
-    builds_to_collect = False
-    # What the preparation is being done with: the root, this environment's
-    # build directory. Set by discovery before `prepare` and `collect`.
-    context = None
-
     def suitability( self, path: Path ) -> Level:
         return NONE
 
     def collect( self, specs ) -> list:
+        """One entry per file: a run of the runner's tool, which does the selecting itself."""
+        return [ self.entry( name = Path( f ).name, file = Path( f ), key = str( f ) )
+                 for f in self.files_of( specs ) ]
+
+    def tool( self, name: str, ctx: RunContext | None = None ) -> list:
+        """The argv that starts tool `name` in this place: the environment's own name for it when it
+        gives one, else the interpreter errand runs on for `python`, else the first of its usual
+        names found on the PATH ( `TOOLS` ), else the name itself, for the error to say."""
+        given = ( ctx.tools if ctx is not None else self.place_tools ).get( name )
+        if given:
+            return shlex.split( given ) if isinstance( given, str ) else [ str( a ) for a in given ]
+        if name == "python":
+            return [ sys.executable ]
+        for candidate in TOOLS.get( name, ( name, ) ):
+            if shutil.which( candidate ):
+                return [ candidate ]
+        return [ name ]
+
+    def fill_tools( self, line: str, ctx: RunContext ) -> str:
+        """`{python}`, `{cmake}`… in a command line written by the user, for the tools the environment
+        names: nothing else in braces is touched ( `${CC}`, `{a,b}` )."""
+        for name in { "python", *ctx.tools }:
+            if "{" + name + "}" in line:
+                line = line.replace( "{" + name + "}", shlex.join( self.tool( name, ctx ) ) )
+        return line
+
+    def build_lines( self, entries, ctx: RunContext ) -> list:
+        """What `prepare` will build, as lines a person reads: shown before it runs. None by default."""
         return [ ]
 
     def prepare( self, entries, ctx: RunContext ):
@@ -140,16 +187,14 @@ class Runner:
     def files_of( self, specs ):
         return list( dict.fromkeys( f for matched, _ in specs for f in matched ) )
 
-    def entry( self, *, name, file, key = None, tags = ( ), traits = None, line = 0,
-               params = None ):
+    def entry( self, *, name, file, key = None, tags = ( ), line = 0, params = None ):
         """One entry of this runner's.
 
         `params` are ordinary errand parameters, so a suite that can be asked
         to run two ways -- a device, a precision -- is a MATRIX like any other:
         `--device cpu,cuda` is two runs, two directories, two rows.
         """
-        made = Entry( name, list( tags ), dict( params or { } ),
-                      dict( TRAITS, **( traits or { } ) ), { },
+        made = Entry( name, list( tags ), dict( params or { } ), { },
                       file, line, f"{self.name}:{file}" )
         made.runner = self
         made.key = key if key is not None else name
@@ -162,17 +207,6 @@ class Runner:
                                env = { **os.environ, **extra, **ctx.env }, capture_output = True,
                                text = True, timeout = timeout )
 
-    def matching( self, specs, path: Path, names ):
-        """The names of `path` that the specs asked for."""
-        out = [ ]
-        for matched, name_glob in specs:
-            if path not in matched:
-                continue
-            if name_glob is None:
-                return list( names )
-            out += [ n for n in names if name_matches( name_glob, n ) ]
-        return out
-
 
 def selector_of( specs, path: Path ) -> str | None:
     """The `::name` that selected `path`, for a runner that runs whole files --
@@ -181,3 +215,40 @@ def selector_of( specs, path: Path ) -> str | None:
         if path in matched and name_glob and name_glob != "*":
             return name_glob
     return None
+
+
+def junit_outcome( report: Path ):
+    """A JUnit XML report, as pytest, ctest, cargo-nextest and many others write it: counts by status,
+    the failed cases by name, the first failure's message. None when there is no report to read."""
+    if not report.exists():
+        return None
+    try:
+        root = ET.parse( report ).getroot()
+    except ET.ParseError:
+        return None
+    cases = list( root.iter( "testcase" ) )
+    if not cases:
+        return None
+    counts, failed, first, seconds = { "passed": 0, "failed": 0, "skipped": 0 }, [ ], None, 0.0
+    for case in cases:
+        seconds += float( case.get( "time" ) or 0 )
+        bad = case.find( "failure" ) if case.find( "failure" ) is not None else case.find( "error" )
+        if bad is not None:
+            counts[ "failed" ] += 1
+            failed.append( case.get( "name", "?" ) )
+            if first is None:
+                first = ( bad.get( "message" ) or bad.text or "" ).strip()[ : 500 ]
+        elif case.find( "skipped" ) is not None:
+            counts[ "skipped" ] += 1
+        else:
+            counts[ "passed" ] += 1
+    results = { **counts, "seconds": round( seconds, 3 ) }
+    if failed:
+        shown = ", ".join( failed[ : 10 ] ) + ( f" and {len( failed ) - 10} more" if len( failed ) > 10 else "" )
+        return Outcome( status = "FAIL", results = results,
+                        error = f"{len( failed )} failed: {shown}" + ( f" -- {first}" if first else "" ) )
+    if counts[ "skipped" ] and not counts[ "passed" ]:
+        skipped = next( c for c in cases if c.find( "skipped" ) is not None ).find( "skipped" )
+        return Outcome( status = "SKIP", results = results,
+                        error = ( skipped.get( "message" ) or skipped.text or "skipped" ).strip()[ : 500 ] )
+    return Outcome( status = "PASS", results = results )
