@@ -8,6 +8,7 @@ import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .. import bootstrap
 from .base import _install_steps, _quiet, Command, Context, file_stamp, sh, SITE_STAMP, under, WINDOWS
 from .families import Artefact, Interpreter
 
@@ -212,10 +213,24 @@ class Uv( Interpreter, Artefact ):
         return [ self.path ]
 
     def build( self, ctx ):
-        create = [ "uv", "venv", self.path ]
+        # Where uv is not installed ( a cluster's nodes ), the one errand fetches for itself ( `bootstrap` ):
+        # every step finds it first, since each is a shell line of its own
+        posix = ctx.remote or not WINDOWS
+        find, uv = ( UV_FIND + " && ", '"$uv"' ) if posix else ( "", "uv" )
+        create = [ "venv", self.path ]
         if self.python:
             create += [ "--python", self.python ]
-        steps = [ sh( create ) ]
-        install = [ "uv", "pip", "install", "--python", self._python( ctx ) ]
-        steps += _install_steps( install, self, ctx )
-        return steps
+        install = [ "pip", "install", "--python", self._python( ctx ) ]
+        return [ f"{find}{uv} {step}" for step in [ sh( create ), *_install_steps( install, self, ctx ) ] ]
+
+
+# A shell line that leaves in `$uv` the uv of the PATH, of its usual places, or of errand's cache, fetched
+# there from astral.sh when there is none ( never on the PATH, never in a shell profile ): the way `bootstrap`
+# finds the one it makes its Python with, so that the two share it.
+UV_FIND = ( 'uv=$( command -v uv 2>/dev/null ); base=' + bootstrap.SH_BASE + '; '
+            'for c in "$HOME/.local/bin/uv" "$HOME/.cargo/bin/uv" "$base/uv/uv"; do '
+            '[ -z "$uv" ] && [ -x "$c" ] && uv="$c"; done; '
+            'if [ -z "$uv" ]; then echo "errand: no uv here: fetching one into $base/uv" >&2; mkdir -p "$base"; '
+            'if command -v curl >/dev/null 2>&1; then curl -LsSf https://astral.sh/uv/install.sh; '
+            'else wget -qO- https://astral.sh/uv/install.sh; fi | env UV_UNMANAGED_INSTALL="$base/uv" sh >&2; '
+            'uv="$base/uv/uv"; fi; [ -x "$uv" ]' )

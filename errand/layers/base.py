@@ -112,6 +112,14 @@ SITE_STAMP = ( "import os, sysconfig; s = os.stat( sysconfig.get_paths()[ 'purel
 INTERPRETERS = ( "python", "python3", "python2" )
 
 
+def enter( root ) -> str:
+    """`cd root`, as a shell line run on a node: a directory just made by the push, on the login node, may
+    not be seen there yet ( NFS keeps a lookup that failed for up to a minute ), so it is waited for that
+    long before the `cd` says it is not there. Followed by ` && <the rest>`."""
+    q = shlex.quote( str( root ) )
+    return f"n=0; until [ -d {q} ] || [ $n -ge 60 ]; do sleep 1; n=$(( n + 1 )); done; cd {q}"
+
+
 def under( argv, python ):
     """`argv` with its interpreter replaced by `python`, when it HAS one.
 

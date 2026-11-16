@@ -61,8 +61,12 @@ class Ssh( Gateway ):
     """Must be the first layer. Everything after it runs on `host`.
 
     `options` are passed to both ssh and rsync -- a port, an identity file, a
-    jump host, a `StrictHostKeyChecking` you have decided about. rsync has to
-    get the same ones or it reaches a different machine than ssh does.
+    `StrictHostKeyChecking` you have decided about. rsync has to get the same
+    ones or it reaches a different machine than ssh does.
+
+    `user` and `jump` say what a `~/.ssh/config` entry would ( `User`, `ProxyJump` ), so that an
+    environment file works for whoever has none: `jump` is a host or a list of them, gone through in
+    order ( `"me@gate.example.org"` ), and ends up in `options` as `-J`.
     """
     host   : str
     root   : str | None = None
@@ -75,6 +79,17 @@ class Ssh( Gateway ):
     # How the project crosses: by manifest through the host's agent ( "sync", the default, ADR 0006 ), or
     # "rsync", whose delta wins for a large file that changes a little. `ERRAND_TRANSFER` overrides it.
     transfer: str | None = None
+    user   : str | None = None
+    jump   : str | list | None = None
+
+    def __post_init__( self ):
+        # Folded into `host` and `options`, which is all the rest of errand reads ( and all `spec` carries )
+        if self.user and "@" not in self.host:
+            self.host = f"{self.user}@{self.host}"
+        if self.jump:
+            hops = [ self.jump ] if isinstance( self.jump, str ) else list( self.jump )
+            self.options = [ "-J", ",".join( hops ), *self.options ]
+        self.user = self.jump = None
 
     def describe( self ):
         return f"ssh:{self.host}"

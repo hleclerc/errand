@@ -65,6 +65,15 @@ if test( "rsync is given the same options as ssh", tags = [ "ssh" ] ):
     assert command.startswith( "ssh -p 2222 -o ConnectTimeout=" )
 
 
+if test( "user and jump say what ~/.ssh/config would, and survive a trip through spec" ):
+    from errand.layers.hosts import Over, host_of
+    s = L.Ssh( host = "node", user = "me", jump = [ "me@gate", "inner" ], options = [ "-p", "2222" ] )
+    assert s.host == "me@node" and s.options == [ "-J", "me@gate,inner", "-p", "2222" ]
+    back = host_of( Over( s, "/r" ).spec() ).ssh
+    assert ( back.host, back.options ) == ( s.host, s.options )
+    assert L.Ssh( host = "you@node", user = "me", jump = "gate" ).host == "you@node"
+
+
 if test( "it reaches the machine at all", tags = [ "ssh" ] ):
     host, options, _ = ssh_target()
     got = subprocess.run( [ "ssh", *options, host, "echo reached" ],

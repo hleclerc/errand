@@ -28,4 +28,9 @@ Uv( path = ".venv", python = None, requirements = None, pip = [ ] )
 A uv-managed venv of the project, at `path` relative to the project root. `python` is the version
 uv installs it with.
 
+uv does not need to be installed: where it is neither on the `PATH` nor in `~/.local/bin` or
+`~/.cargo/bin`, errand fetches one from astral.sh into its cache over there
+( `~/.cache/errand/uv`, never on the `PATH`, never in a shell profile ), the one it makes its own
+Python with. A cluster's nodes are such a place.
+
 Both are [built and kept current](../upkeep) from what they declare.

@@ -2,7 +2,7 @@
 
 ```python
 Ssh( host, root = None, python = "python3", options = [ ], also = [ ],
-     errand_outputs_directory = None, transfer = None )
+     errand_outputs_directory = None, transfer = None, user = None, jump = None )
 ```
 
 Everything after it runs on `host`. The project is pushed there before the command, and what the
@@ -35,7 +35,9 @@ It **must be the first layer**: `errand.Env()` refuses a stack where it is not.
 | `host` | what ssh reaches: a name from your `~/.ssh/config`, or `user@host` |
 | `root` | where the project goes over there. Default: the same path as here |
 | `python` | the interpreter to try first over there, when no later layer chooses one ( [below](#nothing-to-install-over-there) ) |
-| `options` | passed to ssh ( and to rsync, with `transfer = "rsync"` ): a port, an identity, a jump host |
+| `options` | passed to ssh ( and to rsync, with `transfer = "rsync"` ): a port, an identity |
+| `user` | the login over there, when `host` does not say it ( `User` in `~/.ssh/config` ) |
+| `jump` | a gateway to go through, or a list of them in order ( `ProxyJump` in `~/.ssh/config` ): `"me@gate.example.org"`. See [below](#a-gateway-on-the-way) |
 | `also` | sibling checkouts the work needs ( `[ "../loom" ]` ), pushed to the same relative place over there |
 | `errand_outputs_directory` | where errand writes for the project over there: runs, builds, state. Say `/scratch/me/proj-out`; the project's copy then holds a symlink `errand-outputs` to it. See [Where errand writes](../storage) |
 | `transfer` | how the project crosses: `"sync"` ( the default ), by manifest through the agent, or `"rsync"`. `ERRAND_TRANSFER` overrides it for one command. See [below](#sync-or-rsync) |
@@ -106,6 +108,18 @@ Ssh( host = "gpu-box", root = "/home/me/proj",
 
 A port, a jump host, a `StrictHostKeyChecking` you have decided about. With `transfer = "rsync"`,
 rsync gets the same list, or it would reach a different machine.
+
+## A gateway on the way
+
+A cluster is often reached through a gateway. `~/.ssh/config` can say so, but then an environment
+file only works for whoever has the same entries. `user` and `jump` say it in the file itself:
+
+```python
+Ssh( host = "frontend", user = "me", jump = "me@gate.example.org", root = "/home/me/proj" )
+```
+
+is `ssh -J me@gate.example.org me@frontend`. `jump` takes a list for several gateways, gone through in
+order. Names are resolved from the last gateway: `frontend` may be a name only the inside knows.
 
 ## What gets pushed
 

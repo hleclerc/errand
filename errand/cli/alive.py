@@ -164,7 +164,7 @@ exec srun -u --jobid="$j" --overlap -N1 -n1 -w "$node" {connect} sh "$d/$j" {sel
         def line_for( where_ ):
             cmd = L.Command( [ "python", "-m", "errand.agents", "connect", where_, str( self.agent_keep() ) ] )
             sent = bootstrap.command( cmd, self.after, self.cache, "python3", boot = self.boot )
-            return f"cd {shlex.quote( str( self.where.there ) )} && {L.compose( self.after, sent, ctx ).shell()}"
+            return f"{L.enter( self.where.there )} && {L.compose( self.after, sent, ctx ).shell()}"
 
         digest = hashlib.sha1( line_for( "@" ).encode() ).hexdigest()[ : 10 ]
         # its directory is the job's: a socket of a job that is over must not be mistaken for this one's
@@ -187,7 +187,7 @@ class NodeHost:
         self.conn, self.root = conn, root
 
     def shell( self, line: str, *, quiet = False, tty = False, capture = False, input = None, timeout = None ):
-        return agents.shell( self.conn, f"cd {shlex.quote( str( self.root ) )} && {line}", quiet = quiet,
+        return agents.shell( self.conn, f"{L.enter( self.root )} && {line}", quiet = quiet,
                              capture = capture, input = input, timeout = timeout, login = True )
 
     def describe( self ):

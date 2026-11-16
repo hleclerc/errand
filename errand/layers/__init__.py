@@ -30,7 +30,7 @@ One file per family:
 """
 from __future__ import annotations
 
-from .base import _how, _install_steps, _quiet, Command, compose, Context, file_stamp, fingerprint, Here, INTERPRETERS, NeedsAShell, remote_path, sh, SITE_STAMP, under, WINDOWS, windows_argv, windows_env
+from .base import _how, _install_steps, enter, _quiet, Command, compose, Context, file_stamp, fingerprint, Here, INTERPRETERS, NeedsAShell, remote_path, sh, SITE_STAMP, under, WINDOWS, windows_argv, windows_env
 from .families import Artefact, batch_of, Container, Gateway, Interpreter, is_scheduler, Launcher, Layer, Overlay, Scheduler
 from .overlays import Guix, Module, Nix, Vars
 from .launchers import Mpi, Preload, preload_of
@@ -97,6 +97,7 @@ __all__ = [
     'Over',
     'host_of',
     '_install_steps',
+    'enter',
     '_quiet',
     'NODE_LOCAL',
     'is_scheduler',

@@ -39,7 +39,7 @@ features:
     linkText: What is running
   - icon: 💻
     title: Close the laptop
-    details: "The work goes on over there. errand attach picks it up, results included. --batch gives the shell back at once."
+    details: "The connection drops, the work goes on over there and its results still come back. --batch gives the shell back at once."
     link: /guide/detached
     linkText: Let it run
   - icon: ⚡
@@ -51,14 +51,17 @@ features:
 
 ## What you would type by hand
 
-::: code-group
+<div class="by-hand-vs-errand">
+<div class="side">
+<div class="side-label">By hand</div>
 
-```bash [By hand]
+```bash
 rsync -az --exclude .git ./ gpu-box:~/proj/
 ssh gpu-box
   cd ~/proj
   salloc -p gpu --gres=gpu:1 -t 2:00:00
-  srun apptainer exec --nv containers/cuda.sif python train.py --lr 1e-3
+  srun apptainer exec --nv containers/cuda.sif \
+    python train.py --lr 1e-3
   # ...the laptop sleeps, the ssh drops: is it still running?
 exit
 rsync -az gpu-box:~/proj/out/ ./out/
@@ -66,13 +69,18 @@ rsync -az gpu-box:~/proj/out/ ./out/
 ssh gpu-box 'ps -u $USER; squeue -u $USER'
 ```
 
-```bash [With errand]
-errand run --env cluster --pull out python train.py --lr 1e-3
-errand attach          # the laptop slept: pick it up again
-errand status          # what runs, on every machine
+</div>
+<div class="arrow" aria-hidden="true"></div>
+<div class="side">
+<div class="side-label">With errand</div>
+
+```bash
+errand run --env cluster --pull out \
+  python train.py --lr 1e-3
 ```
 
-:::
+</div>
+</div>
 
 The place is declared once, in a file you version:
 
@@ -104,8 +112,8 @@ running   ( on mac, gpu-box: this machine, and every machine work was sent to fr
   gpu-box: windows vm 80103674 ready, 8 cpus 16G
 ```
 
-**Babysitting the connection.** Close the laptop: the work goes on over there.
-`errand attach` shows the output from the start, waits for the end, and brings the results back.
+**Babysitting the connection.** Close the laptop: the work goes on over there, and its results
+still come back ( [`errand attach`](/guide/detached#close-the-laptop) when you want to follow it again ).
 
 ## You stay in control
 

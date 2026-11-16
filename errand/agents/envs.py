@@ -41,7 +41,7 @@ def target( env, stack, tags, phase, *, root, ssh = None, cache = None, keep_ali
         cmd = L.Command( [ "python", "-m", "errand.agents", "connect", where, str( keep ),
                            *( [ ] if detach else [ "attached" ] ) ] )
         sent = bootstrap.command( cmd, inner, cache, ssh.python if ssh is not None else "python", boot = boot )
-        return f"cd {shlex.quote( str( root ) )} && {L.compose( inner, sent, ctx ).shell()}"
+        return f"{L.enter( root )} && {L.compose( inner, sent, ctx ).shell()}"
 
     # Named from what it reaches through, which the name itself is not part of.
     shape = line_for( "@" )
