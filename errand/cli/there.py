@@ -54,7 +54,7 @@ def run_there( known, command, *, root, interactive = False, targets = None ):
                            "PYTHONPATH": path.rstrip( os.pathsep ) } )
         print( dim( f"\n  -> {env.name}  {env.describe()}" ), flush = True )
         from . import alive
-        if alive.scheduler( env.stack_for( "run", tags ) ) is not None:
+        if alive.scheduler( env.stack_for( "run" ) ) is not None:
             # In a Slurm allocation: through its agent, as every command there ( ADR 0009 ).
             rc |= _allocation_shell( env, tags, root, list( command ) )
             continue

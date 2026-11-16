@@ -31,6 +31,7 @@ from typing import NamedTuple
 
 CHUNK = 1 << 20
 COPY_STATE = ".errand-copy"      # at a copy's root: its trusted manifest ( `agents/syncop.py` ), never part of a sync
+SPARED = COPY_STATE + "-kept"    # beside it: what a sync would have lost, one directory per sync that kept something
 
 
 class SyncError( Exception ):
@@ -358,9 +359,13 @@ class Writer:
     """The destination's side: what a plan does there. A file is written beside its target and
     renamed into place once whole: an interrupted sync never leaves half a file under its name."""
 
-    def __init__( self, root, dst: Manifest | None = None ):
+    def __init__( self, root, dst: Manifest | None = None, trusted: Manifest | None = None, spare_in: str = "" ):
+        """`trusted`: what errand wrote there last. A file about to be replaced or removed that is not as it says
+        ( changed since, or never written by errand ) is moved under `spare_in`, relative to the root, rather than
+        lost: `spared`, [ ( key, "changed" | "added", its mtime ) ]."""
         self.root = Path( root )
         self.dst = dst if dst is not None else Manifest()
+        self.trusted, self.spare_in, self.spared = trusted, spare_in, [ ]
         mask = os.umask( 0 )
         os.umask( mask )
         self.modes = ( 0o666 & ~mask, 0o777 & ~mask )
@@ -368,8 +373,31 @@ class Writer:
     def path( self, key: str ) -> Path:
         return self.root / self.dst.on_disk( key )
 
+    def spare( self, key: str ):
+        """Out of the way, if errand did not write it as it is: kept under `spare_in`, said in `spared`."""
+        if self.trusted is None or not self.spare_in:
+            return
+        p = self.path( key )
+        try:
+            st = p.lstat()
+        except OSError:
+            return
+        if stat.S_ISDIR( st.st_mode ):
+            return
+        t = self.trusted.get( key )
+        if stat.S_ISLNK( st.st_mode ):
+            if t is not None and t.kind == "l" and t.target == os.readlink( p ):
+                return
+        elif t is not None and t.kind == "f" and ( t.size, t.mtime_ns // 100 ) == ( st.st_size, st.st_mtime_ns // 100 ):
+            return
+        to = self.root / self.spare_in / self.dst.on_disk( key )
+        to.parent.mkdir( parents = True, exist_ok = True )
+        os.replace( p, to )
+        self.spared.append( ( key, "added" if t is None else "changed", st.st_mtime_ns ) )
+
     def delete( self, key: str ) -> bool:
         """-> False for a directory that is not empty: something excluded is left in it."""
+        self.spare( key )
         p = self.path( key )
         try:
             if p.is_dir() and not p.is_symlink():
@@ -406,11 +434,13 @@ class Writer:
     def write( self, handle, chunk: bytes ):
         handle[ 1 ].write( chunk )
 
-    def commit( self, handle, entry: Entry ):
+    def commit( self, handle, entry: Entry, key: str | None = None ):
         part, f, p = handle
         f.close()
         os.chmod( part, self.modes[ entry.exe ] )
         os.utime( part, ns = ( entry.mtime_ns, entry.mtime_ns ) )
+        if key is not None:
+            self.spare( key )
         os.replace( part, p )
 
     def abort( self, handle ):
@@ -448,6 +478,8 @@ class Report:
     deleted : list = field( default_factory = list )
     kept    : list = field( default_factory = list )     # directories not removed: something excluded is in them
     findings: list = field( default_factory = list )     # changed on the destination since it was last written
+    spared  : list = field( default_factory = list )     # ( key, what, mtime ): moved aside rather than lost
+    spared_in: str = ""                                  # where, relative to the destination's root
     unstable: list = field( default_factory = list )     # changed while being read, twice
 
     def __bool__( self ):
@@ -466,14 +498,37 @@ def say_findings( findings, where: str, say, sel: Selection | None = None ):
         if f.what == "removed":
             say( f"  {f.key}: removed on {where} since errand wrote it -- written again" )
         elif f.what == "added":
-            say( f"  {f.key}: appeared on {where} ( {when( f.mtime_ns )} ), not in the project -- removed" )
+            say( f"  {f.key}: appeared on {where} ( {when( f.mtime_ns )} ), not in the project -- moved aside" )
         else:
-            say( f"  {f.key}: changed on {where} ( {when( f.mtime_ns )} ) since errand wrote it -- replaced" )
+            say( f"  {f.key}: changed on {where} ( {when( f.mtime_ns )} ) since errand wrote it -- replaced, "
+                 f"the old one moved aside" )
     if findings:
         zones = ", ".join( f"{z.pattern} ( {z.kind} )" for z in ( sel.zones if sel else [ ] ) if z.kind != "errand" )
         say( f"  outside its zones{' ( ' + zones + ' )' if zones else ''}, {where} holds only what errand "
              f"sends. A path a run writes, to keep: declare a zone, "
              f"`errand.configure( zones = {{ \"path\": \"back\" }} )`" )
+
+
+def say_spared( spared, spared_in: str, where: str, say, said = ( ) ):
+    """What a sync would have lost over there, and where it is kept instead. What `said` names ( the findings ) is
+    only counted."""
+    if not spared:
+        return
+    said = set( said )
+    news = [ s for s in spared if s[ 0 ] not in said ]
+    if len( news ) < len( spared ):
+        say( f"  kept on {where}, in {spared_in}/: {len( spared ) - len( news )} of the files above" )
+    for key, what, mtime_ns in news[ : 20 ]:
+        how = "changed" if what == "changed" else "not written by errand"
+        say( f"  {key}: {how} on {where} ( {when( mtime_ns )} ) -- kept, in {spared_in}/" )
+    if len( news ) > 20:
+        say( f"  ...and {len( news ) - 20} more, in {spared_in}/" )
+
+
+def spare_dir( ) -> str:
+    """Where one sync keeps what it would have lost: by the time it ran."""
+    import time
+    return f"{SPARED}/{time.strftime( '%Y-%m-%d_%Hh%Mm%S' )}"
 
 
 def sync( src_root, dst_root, sel: Selection, *, src_cache = None, trusted = None, check = True,

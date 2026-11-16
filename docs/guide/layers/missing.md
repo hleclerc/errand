@@ -1,7 +1,7 @@
 # Missing
 
 ```python
-Missing( what, hint = None, when = None )
+Missing( what, hint = None )
 ```
 
 An environment this machine cannot reach, declared anyway so that it says why.

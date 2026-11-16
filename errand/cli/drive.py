@@ -47,9 +47,9 @@ def say( s ):
 def arrive( env, tags, root, project = True ):
     """The project over there, and errand's sources: -> where it all is. Without `project`, errand's sources only: a
     Windows guest takes the project from here, through its own agent ( `guest.Guest` )."""
-    ssh = L.ssh_of( env.stack_for( "run", tags ) )
+    ssh = L.ssh_of( env.stack_for( "run" ) )
     there = ssh.remote_root( L.Context( root = root ) ) if ssh is not None else root
-    for message in L.warnings_for( env.stack_for( "run", tags ), there ):
+    for message in L.warnings_for( env.stack_for( "run" ), there ):
         print( warn( f"  warning: {message}" ), flush = True )
     cache = None
     if ssh is not None and not project:
@@ -72,7 +72,7 @@ class Reach:
 
     def __init__( self, env, tags, phase, where, *, needs = None, time = None, batch = False ):
         self.env, self.tags, self.phase, self.where = env, tags, phase, where
-        self.stack = env.stack_for( phase, tags )
+        self.stack = env.stack_for( phase )
         self.inner = [ l for l in self.stack if not isinstance( l, L.Ssh ) ]
         self.sched = L.batch_of( self.inner )
         self.ctx   = L.Context( root = where.there, tags = tags, remote = where.ssh is not None, phase = phase,
@@ -156,7 +156,7 @@ def drive( env, tags, verb, known, *, root, out_root, report, kinds, pull = ( ) 
     child = child_env_for( env, tags )
     base = _requests( env, tags, verb, known, kinds, where )
     how_many = job_count( known.jobs )
-    single = env.single_pass( tags ) and how_many == 1 and verb != "list"
+    single = env.single_pass() and how_many == 1 and verb != "list"
     box : dict = { }
 
     if not single:

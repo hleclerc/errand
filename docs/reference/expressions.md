@@ -5,14 +5,13 @@ errand run -t 'cuda & fp=64' train.py           # the environments with cuda, in
 errand run -e 'slow & !gpu' '**::*'             # the slow tests that are not gpu ones
 ```
 
-One grammar, four readers:
+One grammar, three readers:
 
 | | reads | to decide |
 |---|---|---|
 | `-t`, `--env-tags` | [environment tags](/guide/tags) | which places run it |
 | `-e`, `--entry-tags` | entry tags: pytest marks, Catch2 `[tags]`, [errand's own](/guide/declaring-work#tags-on-an-entry) | which tests run |
 | `has_tag( … )` | the selected environment, from inside a file | whether this file applies |
-| a layer's `when = …` | the environment's tags, and `phase` ( `prepare` or `run` ) | whether this [layer](/guide/layers/) applies |
 
 ## The grammar
 
@@ -60,10 +59,6 @@ errand run -e '!legacy' -k bench       # benchmarks, minus the old ones
 if not has_tag( "driver=torch" ):
     sys.exit( 0 )
 import torch
-```
-
-```python
-errand.Slurm( partition = "gpu", when = "phase=run" )    # the allocation only for the run
 ```
 
 ## What an expression does not do

@@ -11,7 +11,7 @@ from pathlib import Path
 
 from .base import _quiet, Command, Context, file_stamp, sh, under
 from .families import Artefact, Container
-from .gateways import push, Ssh, ssh_options
+from .gateways import push, Ssh, ssh_options, transfer
 from .hosts import Over
 
 
@@ -42,7 +42,6 @@ class Apptainer( Container, Artefact ):
     install    : str | None = None
     run_from   : str | None = None
     exe        : str = "apptainer"
-    when       : str | None = None
 
     # `apptainer exec` mounts the image ( squashfuse ) for as long as the process it
     # started runs: an agent detached from it would keep running on an unmounted image
@@ -160,8 +159,8 @@ class _BuiltElsewhere:
         b, image = self.builder, self.layer.image
         # The recipe is a file of the project HERE, which the builder builds
         # from its own copy: pushed first, as `Ssh` does before a run.
-        echo( f"    rsync push -> {b.ssh.host}:{b.root}" )
-        push( self.ctx.origin, b.ssh.host, b.root, b.ssh.options, echo = echo )
+        echo( f"    {transfer( b.ssh.transfer )} push -> {b.ssh.host}:{b.root}" )
+        push( self.ctx.origin, b.ssh.host, b.root, b.ssh.options, echo = echo, transfer_by = b.ssh.transfer )
         for step in self.steps:
             echo( f"    $ {step}    ( on {b.describe()} )" )
             if b.shell( step, tty = True ).returncode != 0:
@@ -218,7 +217,6 @@ class Docker( Container, Artefact ):
     pip   : list = field( default_factory = list )
     engine: str = "docker"
     user  : str | None = "caller"
-    when  : str | None = None
 
     @property
     def container( self ):

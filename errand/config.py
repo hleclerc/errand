@@ -42,59 +42,76 @@ class Env:
 
         errand.envs[ "gpu" ] = errand.Env( [ errand.Apptainer( ... ) ], driver = "cuda" )
 
+    The preparation ( setting up, building, writing the plan ) goes through the same layers, unless
+    `prepare` gives it its own: another allocation, another machine. Copy what both share:
+
+        base = [ errand.Ssh( host = "login.hpc", root = "/scratch/me/proj" ) ]
+        errand.Env( base + [ errand.Slurm( gpus = 1 ) ], prepare = base + [ errand.Slurm( cpus = 16 ) ] )
+
     The name is the key it is stored under; `Env` does not take one.
     """
 
-    def __init__( self, stack = ( ), **tags ):
+    def __init__( self, stack = ( ), prepare = None, **tags ):
         for k, v in tags.items():
             # A comma on the command line is several values: a tag value holding
             # one could never be asked for.
             if isinstance( v, str ) and "," in v:
                 raise ValueError( f"tag {k} = {v!r}: a tag value cannot hold a comma, which means "
                                   f"several values on the command line" )
-        if PHASE in tags:
-            raise ValueError( f"`{PHASE}` is not a tag an environment can declare: it is which phase "
-                              f"a layer's `when` is asked about ( {' or '.join( PHASES )} )" )
-        self.name  = ""
-        self.stack = list( stack )
-        self.tags  = dict( tags )
-        for i, layer in enumerate( self.stack ):
-            # A `WindowsBox` is reached by the `Ssh` before it: its own copy knows which.
-            if getattr( layer, "is_box", False ):
-                import dataclasses
-                self.stack[ i ] = layer = dataclasses.replace( layer )
-                layer.via = self.stack[ 0 ] if i == 1 and isinstance( self.stack[ 0 ], L.Ssh ) else None
-        # What does not depend on the selected tags can be checked now, rather
-        # than on the day somebody first runs in this environment.
-        for phase in PHASES:
-            check_stack( [ l for l in self.stack if _phase_only( l, phase ) ], phase )
+        self.name    = ""
+        self.stack   = list( stack )
+        self.prepare = None if prepare is None else list( prepare )
+        self.tags    = dict( tags )
+        for layers in ( self.stack, self.prepare ):
+            for i, layer in enumerate( layers or ( ) ):
+                # A `WindowsBox` is reached by the `Ssh` before it: its own copy knows which.
+                if getattr( layer, "is_box", False ):
+                    import dataclasses
+                    layers[ i ] = layer = dataclasses.replace( layer )
+                    layer.via = layers[ 0 ] if i == 1 and isinstance( layers[ 0 ], L.Ssh ) else None
+        # Checked now, rather than on the day somebody first runs in this environment.
+        check_stack( self.stack, "run" )
+        if self.prepare is not None:
+            check_stack( self.prepare, "prepare" )
+            # Preparing on another machine means carrying what was built to the one that runs
+            # ( ADR 0011 ), which is not there yet: both phases start from the same place.
+            for find in ( L.ssh_of, L.vm_of ):
+                a, b = find( self.stack ), find( self.prepare )
+                if not ( a is b or a == b ):
+                    what = lambda l: l.describe() if l is not None else "this machine"
+                    raise ValueError( f"`prepare` starts at {what( b )}, the run at {what( a )}: both phases "
+                                      f"must start from the same place for now -- copy the first layer" )
 
     # -- the stack of one phase ----------------------------------------------
 
-    def stack_for( self, phase: str, tags = None ) -> list:
-        """The layers active in `phase` with `tags` selected, checked."""
-        out = [ l for l in self.stack if _active( l, phase, self.tags if tags is None else tags ) ]
-        check_stack( out, phase )
+    def stack_for( self, phase: str ) -> list:
+        """The layers `phase` goes through: `prepare`'s for the preparation when it was given."""
+        if phase not in PHASES:
+            raise ValueError( f"phase {phase!r}: one of {', '.join( PHASES )}" )
+        return list( self.prepare if phase == "prepare" and self.prepare is not None else self.stack )
+
+    def layers( self ):
+        """( index, layer ) for every layer of either phase, once each: what `setup` builds and keeps
+        current. The run's first, in order, then what only the preparation has."""
+        out = list( enumerate( self.stack ) )
+        seen = { id( l ) for l in self.stack }
+        for layer in self.prepare or ( ):
+            if id( layer ) not in seen:
+                seen.add( id( layer ) )
+                out.append( ( len( out ), layer ) )
         return out
 
-    def indexed( self, tags = None ):
-        """( index, layer ) for every layer active in at least one phase: what
-        `setup` builds and keeps current, under the index it was declared at."""
-        tags = self.tags if tags is None else tags
-        return [ ( i, l ) for i, l in enumerate( self.stack )
-                 if any( _active( l, phase, tags ) for phase in PHASES ) ]
-
-    def single_pass( self, tags = None ) -> bool:
+    def single_pass( self ) -> bool:
         """Can preparing and running be one process? Only when both phases go
         through the same layers and nothing has to be sized from the plan -- a
         watched scheduler is sized from its declaration, and is one job."""
-        prepare, run = self.stack_for( "prepare", tags ), self.stack_for( "run", tags )
+        prepare, run = self.stack_for( "prepare" ), self.stack_for( "run" )
         same = len( prepare ) == len( run ) and all( a is b for a, b in zip( prepare, run ) )
         return same and not any( L.is_scheduler( l ) and not getattr( l, "watch", None ) for l in run )
 
     @classmethod
-    def make( cls, name: str, stack = ( ), tags = None ):
-        e = cls( stack, **( tags or { } ) )
+    def make( cls, name: str, stack = ( ), tags = None, prepare = None ):
+        e = cls( stack, prepare, **( tags or { } ) )
         e.name = name
         return e
 
@@ -103,68 +120,48 @@ class Env:
 
     @property
     def container( self ):
-        return L.container_of( self.stack_for( "run" ) )
+        return L.container_of( self.stack )
 
     @property
     def ssh( self ):
-        return L.ssh_of( self.stack_for( "run" ) )
+        return L.ssh_of( self.stack )
 
     @property
     def vm( self ):
-        return L.vm_of( self.stack_for( "run" ) )
+        return L.vm_of( self.stack )
 
     @property
     def missing( self ):
         """The `Missing` layer that says why this environment cannot be reached from here, or None."""
-        return L.missing_of( [ l for _, l in self.indexed() ] )
+        return L.missing_of( [ l for _, l in self.layers() ] )
 
     def describe( self ):
-        def one( l ):
-            when = getattr( l, "when", None )
-            return l.describe() + ( f" [{when}]" if when else "" )
-        return " -> ".join( one( l ) for l in self.stack ) or "this interpreter"
+        def arrow( layers ):
+            return " -> ".join( l.describe() for l in layers ) or "this interpreter"
+        if self.prepare is None:
+            return arrow( self.stack )
+        return f"{arrow( self.stack )}  ( prepared: {arrow( self.prepare )} )"
 
-    def wraps_anything( self, tags = None ):
+    def wraps_anything( self ):
         """Does reaching this environment mean leaving this process?"""
-        return any( not isinstance( l, L.Vars ) for _, l in self.indexed( tags ) )
+        return any( not isinstance( l, L.Vars ) for _, l in self.layers() )
 
 
-# The pseudo-tag a layer's `when` can ask about, and its values.
-PHASE  = "phase"
+# What a command goes through: preparing ( setting up, building, writing the plan ), then running.
 PHASES = ( "prepare", "run" )
 
 
-def _active( layer, phase, tags ) -> bool:
-    when = getattr( layer, "when", None )
-    if not when:
-        return True
-    from .expr import matches
-    return matches( when, { **dict( tags or { } ), PHASE: phase } )
-
-
-def _phase_only( layer, phase ) -> bool:
-    """Active in `phase` as far as can be told without knowing the tags: a
-    condition on anything but the phase is left for when they are known."""
-    when = getattr( layer, "when", None )
-    if not when:
-        return True
-    from .expr import names
-    if names( when ) - { PHASE }:
-        return False
-    return _active( layer, phase, { } )
-
-
 def check_stack( stack, phase = "run" ):
-    """What a stack must look like, phase by phase."""
+    """What a stack must look like."""
+    where = f" ( in `prepare` )" if phase == "prepare" else ""
     for i, layer in enumerate( stack ):
         if isinstance( layer, L.Ssh ) and i:
-            raise ValueError( "Ssh must be the first layer" + ( f" ( in the {phase} phase )"
-                                                               if phase != "run" else "" ) )
+            raise ValueError( "Ssh must be the first layer" + where )
         # A machine errand boots is reached the way another machine is, and is
         # first for the same reason -- or right after the `Ssh` that leads to
         # the machine that boots it.
         if getattr( layer, "is_vm", False ) and i and not ( i == 1 and isinstance( stack[ 0 ], L.Ssh ) ):
-            raise ValueError( f"{type( layer ).__name__} must be the first layer, or follow its Ssh" )
+            raise ValueError( f"{type( layer ).__name__} must be the first layer, or follow its Ssh" + where )
     for layer in stack:
         # An image left for something to fill in ( a package that completes the layers its users give ) and never filled.
         if isinstance( layer, L.Container ) and not getattr( layer, "image", "x" ):
@@ -173,9 +170,10 @@ def check_stack( stack, phase = "run" ):
             raise ValueError( f"{type( layer ).__name__}( name = ... ) is empty: name the environment" )
     schedulers = [ l for l in stack if L.is_scheduler( l ) ]
     if len( schedulers ) > 1:
-        raise ValueError( f"{len( schedulers )} schedulers in the {phase} phase "
-                          f"( {', '.join( l.describe() for l in schedulers )} ): give them `when` "
-                          f"conditions that cannot both hold, e.g. when = \"phase=prepare\"" )
+        hint = ( "one allocation per list" if phase == "prepare" else
+                 "to prepare in another allocation, give it its own layers: Env( [ ... ], prepare = [ ... ] )" )
+        raise ValueError( f"{len( schedulers )} schedulers{where} "
+                          f"( {', '.join( l.describe() for l in schedulers )} ): {hint}" )
 
 
 @dataclass

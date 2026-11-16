@@ -175,9 +175,9 @@ with the job.
 ## Preparing and running: two allocations
 
 The preparation — resolving targets, building, collecting — runs in the allocation held warm, as the
-run does: one job for both. When they want different allocations, they are two `Slurm` layers with a
-[`when`](./index#when) each, each held warm on its own; `when = "phase=run"` alone prepares on the
-machine `Ssh` leads to, with no allocation at all. See
+run does: one job for both. When they want different allocations, the preparation gets its own
+layers ( `prepare = [ … ]` ), each `Slurm` held warm on its own. A `prepare` without a `Slurm` prepares
+on the machine `Ssh` leads to, with no allocation at all. See
 [Preparing, then running](../environments#preparing-then-running).
 
 ## Inside an allocation, errand does not queue

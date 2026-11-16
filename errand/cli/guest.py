@@ -40,7 +40,7 @@ class Guest:
         from ..vm.windows import where as where_of
         self.env, self.tags, self.where, self.echo = env, tags, where, echo
         self.layer = env.vm
-        stack = env.stack_for( "run", tags )
+        stack = env.stack_for( "run" )
         self.inner = stack[ stack.index( self.layer ) + 1 : ]
         self.host = L.Over( where.ssh, where.there ) if where.ssh is not None else L.Here( where.root )
         self.ctx = L.Context( root = where.there, tags = tags, remote = where.ssh is not None, host = self.host,

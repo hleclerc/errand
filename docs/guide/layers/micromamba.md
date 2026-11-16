@@ -4,7 +4,7 @@
 
 ```python
 Micromamba( name, python = None, channels = [ "conda-forge" ], packages = [ ],
-            requirements = None, pip = [ ], root_prefix = None, executable = None, when = None )
+            requirements = None, pip = [ ], root_prefix = None, executable = None )
 ```
 
 Runs the command as `micromamba -n <name> run …`, or as it is when that environment is already

@@ -84,7 +84,7 @@ def detach( env, tags, argv, *, root, log: Path, child_env: dict ) -> dict:
     """`errand <argv>` here, in a session of its own, and come straight back: an environment
     with nothing to go through ( an environment with layers is prepared and submitted by
     `cli/drive.submit` ). -> { kind: "local", handle, log }, or { kind: "failed" }."""
-    if L.vm_of( env.stack_for( "run", tags ) ) is not None:
+    if L.vm_of( env.stack_for( "run" ) ) is not None:
         return { "kind": "failed", "handle": "",
                  "error": f"{env.name} is a virtual machine: `--batch` does not reach one yet" }
     log.parent.mkdir( parents = True, exist_ok = True )

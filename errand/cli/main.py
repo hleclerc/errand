@@ -265,7 +265,7 @@ def _main( argv = None ):
     report = Report()
     rc, dispatched = 0, 0
     for env, tags in targets:
-        if inside is None and env.wraps_anything( tags ):
+        if inside is None and env.wraps_anything():
             # This side only chooses where, and hands the command over as it
             # was typed: what it designates is for that place to say.
             if not known.no_setup:

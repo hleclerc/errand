@@ -1,7 +1,7 @@
 # Vars
 
 ```python
-Vars( values, when = None )
+Vars( values )
 ```
 
 Environment variables for the child process.

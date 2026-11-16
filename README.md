@@ -20,7 +20,7 @@ Then run there what you would have typed here:
 
 ```bash
 errand run --env local pytest                              # the env is created on first use
-errand run --env cluster --pull out python train.py        # rsync, allocation, container, and out/ back
+errand run --env cluster --pull out python train.py        # sync, allocation, container, and out/ back
 errand run --batch --env cluster python train.py           # give me the shell back
 errand attach                                              # the laptop slept: pick the run up again
 errand status                                              # what runs, on every machine I sent work to
@@ -43,7 +43,7 @@ It also runs pytest, Catch2 and cargo suites test by test, in every environment.
 
 ## You stay in control
 
-What runs is your command. `-v` prints every command errand starts (ssh, rsync, sbatch, apptainer).
+What runs is your command. `-v` prints every command errand starts (ssh, sbatch, apptainer).
 Everything is plain files: the places are Python, the records are in `errand-outputs/`. Nothing to
 install on the other machines.
 

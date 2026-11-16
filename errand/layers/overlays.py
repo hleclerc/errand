@@ -18,7 +18,6 @@ class Vars( Overlay ):
     value: `Vars( lambda t: { "FTYPE": t.get( "fp", "64" ) } )`.
     """
     values: dict | object
-    when  : str | None = None
 
     def wrap( self, cmd: Command, ctx: Context ) -> Command:
         values = self.values( ctx.tags ) if callable( self.values ) else self.values
@@ -33,7 +32,6 @@ class Nix( Overlay ):
     """`nix develop <flake> -c …`."""
     flake: str = "."
     shell: str | None = None
-    when : str | None = None
 
     def wrap( self, cmd: Command, ctx: Context ) -> Command:
         target = f"{self.flake}#{self.shell}" if self.shell else self.flake
@@ -48,7 +46,6 @@ class Guix( Overlay ):
     """`guix shell -m <manifest> -- …`."""
     manifest: str | None = None
     packages: list = field( default_factory = list )
-    when    : str | None = None
 
     def wrap( self, cmd: Command, ctx: Context ) -> Command:
         spec = [ "-m", self.manifest ] if self.manifest else list( self.packages )
@@ -66,11 +63,9 @@ class Module( Overlay ):
     login shell to exist at all. That is the whole layer.
     """
     names: list
-    when : str | None = None
 
-    def __init__( self, *names, when = None ):
+    def __init__( self, *names ):
         self.names = list( names )
-        self.when  = when
 
     def wrap( self, cmd: Command, ctx: Context ) -> Command:
         loads = " && ".join( f"module load {shlex.quote( n )}" for n in self.names )

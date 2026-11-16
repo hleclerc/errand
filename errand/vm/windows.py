@@ -50,7 +50,6 @@ class Windows( L.Gateway, L.Artefact ):
                                      # lands -- so what a command leaves ( a build ) is there for the next
                                      # one. Grows as it is written, up to this; None: everything is C:, reset
     root     : str | None = None     # where the project goes; C:/errand/<project name>
-    when     : str | None = None     # a condition: an expression over the tags and `phase`
 
     # Not a field: what `layers.vm_of` recognizes, like `Ssh` is recognized by its class.
     is_vm = True
@@ -131,7 +130,7 @@ class Install:
 
     def __call__( self, echo = print ) -> int:
         from .. import config
-        wanted = { layer.image_name( self.ctx ) for e in config.envs.values() for layer in e.stack
+        wanted = { layer.image_name( self.ctx ) for e in config.envs.values() for _, layer in e.layers()
                    if isinstance( layer, Windows ) }
         return install( self.ctx.host, self.layer.image_name( self.ctx ), self.layer.declared(),
                         self.layer.booted(), echo, wanted )

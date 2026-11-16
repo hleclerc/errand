@@ -19,7 +19,6 @@ class Venv( Interpreter, Artefact ):
     requirements: str | None = None
     pip         : list = field( default_factory = list )
     create      : bool = False          # make the venv if `python` is inside a missing one
-    when        : str | None = None     # a condition: an expression over the tags and `phase`
 
     def wrap( self, cmd: Command, ctx: Context ) -> Command:
         return Command( under( cmd.argv, self.python ), cmd.env )
@@ -62,7 +61,6 @@ class Micromamba( Interpreter, Artefact ):
     pip         : list = field( default_factory = list )
     root_prefix : str | None = None     # where `-n <name>` resolves; wins over MAMBA_ROOT_PREFIX and the guesses below
     executable  : str | None = None     # the micromamba binary, when it is not on PATH -- e.g. on a compute node
-    when        : str | None = None     # a condition: an expression over the tags and `phase`
 
     def _exe( self, ctx ):
         """`micromamba`, pinned to the root prefix `-n <name>` must resolve against.
@@ -186,7 +184,6 @@ class Uv( Interpreter, Artefact ):
     python      : str | None = None
     requirements: str | None = None
     pip         : list = field( default_factory = list )
-    when        : str | None = None     # a condition: an expression over the tags and `phase`
 
     def _python( self, ctx ):
         if WINDOWS and not ctx.remote:          # a venv on Windows: Scripts\python.exe

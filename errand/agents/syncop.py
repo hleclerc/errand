@@ -175,7 +175,7 @@ class Session( _Channel ):
             dst, findings = _seen( root, sel, known, check = first or bool( self.req.get( "check" ) ) )
             self.say( { "dst": { k: list( e ) for k, e in dst.items() },
                         "findings": [ list( f ) for f in findings ], "ci": S.case_insensitive( root ) } )
-            w = S.Writer( root, dst )
+            w = S.Writer( root, dst, trusted = known, spare_in = S.spare_dir() )
             written = S.Manifest( dst )
             written.real = dict( dst.real )
             handle = None
@@ -218,7 +218,7 @@ class Session( _Channel ):
                     w.restart( handle )
                 elif "end" in msg:
                     entry = S.Entry( *msg[ "end" ] )
-                    w.commit( handle, entry )
+                    w.commit( handle, entry, msg[ "key" ] )
                     written[ msg[ "key" ] ] = entry
                     handle = None
                 elif "touch" in msg:
@@ -234,7 +234,8 @@ class Session( _Channel ):
             S.save( root / TRUSTED, written )
             with _held_lock:
                 _held[ str( root ) ] = sel
-            self.say( { "saved": True } )
+            self.say( { "saved": True, "spared": [ list( s ) for s in w.spared ],
+                        "spared_in": w.spare_in if w.spared else "" } )
 
 
 class Pull( _Channel ):
@@ -425,7 +426,10 @@ def push( conn, local_root, remote_root, sel: S.Selection, *, src_cache = None, 
             c.send( { "touch": [ [ k, list( src[ k ] ) ] for k in p.touch ] } )
             report.touched = list( p.touch )
         c.send( { "done": True } )
-        c.get()
+        saved = c.get()
+        report.spared = [ tuple( s ) for s in saved.get( "spared", [ ] ) ]
+        report.spared_in = saved.get( "spared_in", "" )
+        S.say_spared( report.spared, report.spared_in, where, say, [ f.key for f in report.findings ] )
     finally:
         call.close()
     return report

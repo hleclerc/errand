@@ -2,11 +2,12 @@
 
 ```python
 Ssh( host, root = None, python = "python3", options = [ ], also = [ ],
-     errand_outputs_directory = None, transfer = None, when = None )
+     errand_outputs_directory = None, transfer = None )
 ```
 
-Everything after it runs on `host`. The project is pushed there by rsync before the command, and
-what the command wrote is brought back after it.
+Everything after it runs on `host`. The project is pushed there before the command, and what the
+command wrote is brought back after it. Both go through errand's agent over there, so that
+machine needs ssh and a Python, and no rsync.
 
 ```python
 # errand-envs.py
@@ -22,9 +23,9 @@ errand run --env box -o python train.py
 
 ```text
   -> box  ssh:gpu-box -> apptainer:cuda.sif
-  rsync push -> gpu-box:/home/me/proj
+  sync push -> gpu-box:/home/me/proj
   ...
-  rsync pull  <- gpu-box:/home/me/proj [errand-outputs/runs/train.py/…]
+  sync pull  <- gpu-box:/home/me/proj [errand-outputs/runs/train.py/…]
 ```
 
 It **must be the first layer**: `errand.Env()` refuses a stack where it is not.
@@ -34,10 +35,10 @@ It **must be the first layer**: `errand.Env()` refuses a stack where it is not.
 | `host` | what ssh reaches: a name from your `~/.ssh/config`, or `user@host` |
 | `root` | where the project goes over there. Default: the same path as here |
 | `python` | the interpreter to try first over there, when no later layer chooses one ( [below](#nothing-to-install-over-there) ) |
-| `options` | passed to ssh **and** to rsync: a port, an identity, a jump host |
+| `options` | passed to ssh ( and to rsync, with `transfer = "rsync"` ): a port, an identity, a jump host |
 | `also` | sibling checkouts the work needs ( `[ "../loom" ]` ), pushed to the same relative place over there |
 | `errand_outputs_directory` | where errand writes for the project over there: runs, builds, state. Say `/scratch/me/proj-out`; the project's copy then holds a symlink `errand-outputs` to it. See [Where errand writes](../storage) |
-| `transfer` | how the project crosses: `"rsync"` ( the default ), or `"sync"`, by manifest through the agent, still being measured. `ERRAND_TRANSFER` overrides it for one command |
+| `transfer` | how the project crosses: `"sync"` ( the default ), by manifest through the agent, or `"rsync"`. `ERRAND_TRANSFER` overrides it for one command. See [below](#sync-or-rsync) |
 
 ## Nothing to install over there
 
@@ -69,7 +70,7 @@ Everything errand made for itself is in `~/.cache/errand`: removing that directo
 ## One connection, kept
 
 The first command to reach a host starts an **agent** there, through one ssh. Every later command
-goes through it, the rsyncs included, and nothing logs in again. Here, a **hub** keeps the
+goes through it, the pushes and pulls included, and nothing logs in again. Here, a **hub** keeps the
 connection open between commands. Past the layers, a second agent runs with the environment's own
 interpreter, inside the micromamba environment, the module, the container: the layers are entered
 once, not once per command. All of them stop on their own after 15 minutes unused.
@@ -96,22 +97,23 @@ ssh runs commands non-interactively, and so never reads the rc file that puts mi
 nvm on the `PATH`. errand runs the remote command through an interactive shell ( `$SHELL -ic` ),
 which reads it. That is the difference between `micromamba -n myenv run` working over there and not.
 
-## options go to ssh and to rsync
+## options go to ssh
 
 ```python
 Ssh( host = "gpu-box", root = "/home/me/proj",
      options = [ "-p", "2222", "-i", "~/.ssh/bench", "-J", "jump.example" ] )
 ```
 
-rsync has to get the same options as ssh, or it reaches a different machine: a port, a jump host,
-a `StrictHostKeyChecking` you have decided about. One list, both tools.
+A port, a jump host, a `StrictHostKeyChecking` you have decided about. With `transfer = "rsync"`,
+rsync gets the same list, or it would reach a different machine.
 
 ## What gets pushed
 
-The push is an rsync of the project, without the obvious: `.git`, `errand-outputs`, `build`,
-`dist`, `__pycache__`, `*.pyc`, `*.so`, `*.o`, `node_modules`, `.venv`, `*.egg-info`, `.mypy_cache`,
-`.pytest_cache`, and, by their exact paths, what the project's layers build there ( an image with
-its `.new`, `.prev` and `.part` ).
+The push sends the project, without the obvious. `.git`, `__pycache__`, `*.pyc`, `.mypy_cache` and
+`.pytest_cache` are no part of a copy. `errand-outputs` ( at any depth ), `build`, `dist`, `*.so`,
+`*.o`, `node_modules`, `.venv` and `*.egg-info` are written over there and left alone. So is what
+the project's layers build there, by its exact path ( an image with its `.new`, `.prev` and
+`.part` ).
 
 The copy over there is kept identical to the project here: anything found only over there is
 deleted, and errand prints what went. A run that writes into the copy, outside `errand-outputs`,
@@ -127,6 +129,25 @@ tree ) it is only left alone, as a `build` zone is.
 
 `errand-outputs` is excluded both ways on purpose: each side's records, plans and builds are its
 own. The only runs you get back are the ones you just asked for.
+
+## sync or rsync
+
+By default the push is a **sync**. Each side keeps a manifest of its files ( size, mtime, hash ).
+The local side sends its own, the agent over there answers with what it lacks, and whole files
+cross, compressed. The manifest of the copy is kept in the copy ( `.errand-copy` ). So two hosts
+that share a file system ( a cluster's login and compute nodes ) share it too, with nothing to
+declare. The agent walks the copy when it starts and when it goes, and trusts the manifest in
+between. A change made over there outside a zone is reported, with when it was first seen, before
+it is overwritten.
+
+`transfer = "rsync"` keeps rsync, which then has to be on both machines. Its delta wins for a large
+file that changes a little ( a checkpoint, a dataset appended to ). A sync sends such a file whole.
+
+| on lmo, from a Mac | rsync | sync |
+|---|---:|---:|
+| 2597 files, 407 MB, cold | 73.6 s | 20.9 s |
+| the same, nothing changed | 1.33 s | 0.73 s |
+| one file changed | 1.27 s | 0.78 s |
 
 ## Building over there
 

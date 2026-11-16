@@ -171,3 +171,33 @@ if test( "a pull brings back what is under the paths asked for, deletes nothing 
         assert ( here / "results/a.csv" ).read_text() == "b"
         r = syncop.pull( conn, there, here, [ "errand-outputs/runs/latest" ], links = False, say = said.append )
         assert not said, said
+
+
+if test( "what a push would lose over there is moved aside, even between two walks; what errand wrote is not" ):
+    with scratch() as d:
+        src = tree( d / "src", { "a.py": "a", "b.py": "b", "c.py": "c" } )
+        dst = d / "copy"
+        conn = agent( d / "ag" )
+        r, _ = push( conn, src, dst )
+        assert not r.spared, r
+        ( dst / "a.py" ).write_text( "edited by a run over there" )      # the same agent: no walk sees it
+        tree( dst, { "notes.txt": "written over there, outside the zones" } )
+        ( src / "a.py" ).write_text( "A" )
+        ( src / "b.py" ).write_text( "B" )
+        r, said = push( conn, src, dst )
+        assert sorted( r.sent ) == [ "a.py", "b.py" ] and not r.findings, r
+        assert [ ( k, w ) for k, w, _ in r.spared ] == [ ( "a.py", "changed" ) ], r.spared
+        kept = dst / r.spared_in
+        assert ( kept / "a.py" ).read_text() == "edited by a run over there" and ( dst / "a.py" ).read_text() == "A"
+        assert not ( kept / "b.py" ).exists(), "what errand wrote is not kept"
+        assert any( "a.py: changed on the copy" in s and "kept" in s for s in said ), said
+        assert ( dst / "notes.txt" ).exists(), "trusted: a file nobody pushed over is not seen until a walk"
+        other = agent( d / "ag2" )                                     # a new agent walks: it is found, and kept
+        r, said = push( other, src, dst )
+        assert [ ( f.key, f.what ) for f in r.findings ] == [ ( "notes.txt", "added" ) ], r
+        assert [ k for k, _, _ in r.spared ] == [ "notes.txt" ] and not ( dst / "notes.txt" ).exists()
+        assert ( dst / r.spared_in / "notes.txt" ).read_text() == "written over there, outside the zones"
+        assert any( "moved aside" in s for s in said ) and any( "1 of the files above" in s for s in said ), said
+        assert S.scan( dst, S.Selection() ).get( r.spared_in.split( "/" )[ 0 ] ) is None, "never part of the copy"
+        r, said = push( other, src, dst )
+        assert not r and not said, ( r, said )

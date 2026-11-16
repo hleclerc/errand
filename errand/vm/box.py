@@ -62,7 +62,6 @@ class WindowsBox( L.Gateway, L.Artefact ):
     fetch    : list = field( default_factory = list )   # what to bring back after each command
     also     : list = field( default_factory = list )   # sibling checkouts the work needs ( `../loom` )
     root     : str | None = None                        # where the project goes; C:/errand/work/<project name>
-    when     : str | None = None
 
     # What the paths a machine errand boots goes through recognize ( `layers.vm_of` ), and what tells the two apart.
     is_vm  = True

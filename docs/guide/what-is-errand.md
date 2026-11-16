@@ -46,7 +46,7 @@ hides nothing:
 - **What runs is your command.** What follows `errand run` is what you would have typed:
   `make check`, `python train.py`, `./bench`. errand does not need to know your language.
 - **You can see every step.** `-v` prints every command errand starts, including the ssh, the
-  rsync, the `sbatch`, the `apptainer exec` and what it hands to an agent.
+  `sbatch`, the `apptainer exec` and what it hands to an agent.
 - **You can get in.** `errand shell --env cluster` is a real terminal in the allocation, in the
   container, in the env.
 - **Nothing is rebuilt behind your back.** An environment that exists the first time errand meets

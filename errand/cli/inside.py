@@ -119,7 +119,7 @@ def prepare_here( env, tags, verb, known, *, root, out_root, report, kinds ):
     # layers meant to put in the environment has to be put there directly --
     # and `Vars` is the only kind that can act without a new process at all.
     phase = getattr( known, "phase", None ) or "run"
-    os.environ.update( L.compose( [ l for l in env.stack_for( phase, tags ) if isinstance( l, L.Vars ) ],
+    os.environ.update( L.compose( [ l for l in env.stack_for( phase ) if isinstance( l, L.Vars ) ],
                                   L.Command( [ "python" ] ),
                                   L.Context( root = root, tags = tags ) ).env )
 

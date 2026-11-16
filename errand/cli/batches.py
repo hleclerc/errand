@@ -26,7 +26,7 @@ def submit( targets, rest, argv, *, root, known, kinds ):
     places = [ ]
     for env, tags in targets:
         log = batch.batch_dir( root ) / f"{ident}-{R.slug( env.name )}.log"
-        if env.wraps_anything( tags ):
+        if env.wraps_anything():
             if not known.no_setup and setup.ensure( root, env, L.Context( root = root, tags = tags ),
                                                     echo = lambda s: print( dim( s ), flush = True ) ):
                 got = { "kind": "failed", "handle": "", "error": f"could not prepare {env.name}" }

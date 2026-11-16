@@ -50,7 +50,6 @@ class Slurm( Scheduler ):
     # speaks -- `pmix` for Open MPI, `pmi2` for MPICH ( see `errand.mpi` ).
     mpi      : str | None = None
     extra    : list = field( default_factory = list )
-    when     : str | None = None
     # Held warm between commands ( "30m" ): one allocation, an agent on its first node, and every command
     # of that time runs in it -- no queue, no new job ( ADR 0005, step 6 ). Released once nothing used it
     # for that long, or at its `time`. Not given: `KEEP_WARM`, just long enough for the run to find the

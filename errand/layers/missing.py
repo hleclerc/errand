@@ -21,7 +21,6 @@ class Missing( Layer ):
     """
     what: str
     hint: str | None = None
-    when: str | None = None
 
     def describe( self ):
         return f"missing: {self.what}"

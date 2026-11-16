@@ -170,7 +170,7 @@ if test( "a record is read through what a remote shell says first" ):
         assert record == { "built": { "fingerprint": "f" } } and stamp == "12 34", ( record, stamp )
 
 
-if test( "push spares the exact paths of every environment, and says what it deleted" ):
+if test( "a push by rsync spares the exact paths of every environment, and says what it deleted" ):
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path( tmp )
         here, there, bin_ = tmp / "here", tmp / "there", tmp / "bin"
@@ -191,7 +191,7 @@ if test( "push spares the exact paths of every environment, and says what it del
         said = [ ]
         try:
             assert "/a.sif.new" in L.own_paths() and "/b.sif" in L.own_paths()
-            L.push( here, "h", there, echo = said.append )
+            L.push( here, "h", there, echo = said.append, transfer_by = "rsync" )
         finally:
             os.environ[ "PATH" ] = path
             config.envs.clear()

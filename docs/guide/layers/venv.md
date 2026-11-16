@@ -3,7 +3,7 @@
 ## Venv
 
 ```python
-Venv( python = "python", requirements = None, pip = [ ], create = False, when = None )
+Venv( python = "python", requirements = None, pip = [ ], create = False )
 ```
 
 A given interpreter: a venv's python, or any installed one.
@@ -22,7 +22,7 @@ errand.Env( [ errand.Venv( python = ".venv-313/bin/python", requirements = "requ
 ## Uv
 
 ```python
-Uv( path = ".venv", python = None, requirements = None, pip = [ ], when = None )
+Uv( path = ".venv", python = None, requirements = None, pip = [ ] )
 ```
 
 A uv-managed venv of the project, at `path` relative to the project root. `python` is the version

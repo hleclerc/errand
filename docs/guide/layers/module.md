@@ -1,7 +1,7 @@
 # Module
 
 ```python
-Module( "gcc/13", "cuda/12", when = None )
+Module( "gcc/13", "cuda/12" )
 ```
 
 Lmod or environment modules: how a cluster picks a toolchain. The command runs as

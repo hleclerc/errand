@@ -51,7 +51,7 @@ def slug( layer ) -> str:
 def wanted( env, ctx ) -> dict:
     """The fingerprint each layer of `env` says it should have."""
     out = { }
-    for i, layer in env.indexed( ctx.tags ):
+    for i, layer in env.layers():
         if hasattr( layer, "spec" ):
             out[ f"{i}:{layer.describe()}" ] = L.fingerprint( *layer.spec( ctx ) )
     return out
@@ -147,14 +147,14 @@ def status( root: Path, env, ctx ) -> str:
         return UNREACHABLE
     want = wanted( env, ctx )
     if not want:
-        return UNKNOWN if env.wraps_anything( ctx.tags ) else OK
+        return UNKNOWN if env.wraps_anything() else OK
     if env.ssh or getattr( env.vm, "is_box", False ):
         return UNKNOWN           # only the other machine can say
-    for _, layer in env.indexed( ctx.tags ):
+    for _, layer in env.layers():
         if hasattr( layer, "probe" ) and not layer.probe( ctx ):
             return MISSING
     states = [ ]
-    for i, layer in env.indexed( ctx.tags ):
+    for i, layer in env.layers():
         if not hasattr( layer, "spec" ):
             continue
         record, stamp = look( root, layer, ctx )
@@ -175,7 +175,7 @@ def _inside( env, ctx ):
     """-> layer -> the context to build it in when it is after a scheduler held warm, else None.
     The allocation is reached ( held, if it is not ) only once one such layer is looked at."""
     from .cli import alive
-    stack = env.stack_for( "run", ctx.tags )
+    stack = env.stack_for( "run" )
     sched = alive.scheduler( stack )
     after = { id( l ) for l in stack[ stack.index( sched ) + 1 : ] } if sched is not None else set()
     made = { }
@@ -229,7 +229,7 @@ def ensure( root: Path, env, ctx, *, force = False, echo = print, dry_run = Fals
             echo( f"  {env.name}: {line}" )
         return 1
     jobs, adopted = [ ], [ ]
-    for _, layer in env.indexed( ctx.tags ):
+    for _, layer in env.layers():
         if not isinstance( layer, L.Artefact ):
             continue
         # After a scheduler held warm, a layer is built where it is used: in the allocation.
@@ -271,8 +271,9 @@ def ensure( root: Path, env, ctx, *, force = False, echo = print, dry_run = Fals
         # all of them are files HERE, and the build happens THERE. Pushing
         # first is what makes `errand setup` over ssh mean the same thing as
         # `errand setup` at home.
-        echo( f"    rsync push -> {env.ssh.host}:{env.ssh.remote_root( ctx )}" )
-        L.push( ctx.root, env.ssh.host, env.ssh.remote_root( ctx ), env.ssh.options, echo = echo )
+        echo( f"    {L.transfer( env.ssh.transfer )} push -> {env.ssh.host}:{env.ssh.remote_root( ctx )}" )
+        L.push( ctx.root, env.ssh.host, env.ssh.remote_root( ctx ), env.ssh.options, echo = echo,
+                transfer_by = env.ssh.transfer )
     if dry_run:
         for layer, _, steps, *_ in jobs:
             for step in steps:
@@ -318,14 +319,14 @@ def lacks( env, ctx, there, inside = None ) -> list:
     """What the layers of `env` require ( `requires` ) and do not find where they run: one shell line per place, asked
     before anything is built. -> [ "on build-box: apptainer, not found ( apptainer:… )" ]."""
     if L.WINDOWS and not there.host.remote:
-        posix = [ l for _, l in env.indexed( ctx.tags )
+        posix = [ l for _, l in env.layers()
                   if not isinstance( l, L.Gateway ) and type( l ).__name__ not in ON_WINDOWS_HERE ]
-        stack = [ l for _, l in env.indexed( ctx.tags ) ]
+        stack = [ l for _, l in env.layers() ]
         if posix and not ( stack and isinstance( stack[ 0 ], L.Gateway ) ):
             return [ f"here: {l.describe()} needs a POSIX machine, and this is Windows: put an Ssh to one before it"
                      for l in posix ]
     by_place = { }
-    for _, layer in env.indexed( ctx.tags ):
+    for _, layer in env.layers():
         at = ( inside( layer ) if inside else None ) or there
         requires = getattr( layer, "requires", None )     # a layer may be anything with the methods it uses
         for test, what in ( requires( at ) if requires else ( ) ):

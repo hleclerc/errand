@@ -189,13 +189,14 @@ An unknown setting is a `TypeError` listing the ones that exist.
 ### envs, Env, default_env
 
 ```python
-errand.envs[ name ] = errand.Env( stack = ( ), **tags )
+errand.envs[ name ] = errand.Env( stack = ( ), prepare = None, **tags )
 errand.default_env = "name"          # optional: else the first one declared
 ```
 
 Declares an [environment](/guide/environments); the key is its name. `stack` is a list of
 [layers](/guide/layers/), outermost first: `Ssh` must be first, `Windows` and `WindowsBox` first or
-right after an `Ssh`. Keyword arguments are its [tags](/guide/tags); `phase` is not one. A name or a
+right after an `Ssh`. `prepare`, when given, is the list the [preparation](/guide/environments#preparing-then-running)
+goes through instead, starting from the same place. Keyword arguments are its [tags](/guide/tags). A name or a
 tag value cannot hold a comma. Only an `Env` can be stored.
 
 ### default_run
@@ -230,13 +231,11 @@ in place of the default one of its kind; another name adds one, which `-r NAME` 
 
 ## Layers
 
-Every argument is a keyword with a default unless shown otherwise. Every layer also takes
-`when = None`: an [expression](./expressions) over the environment's tags and `phase`
-( `prepare` or `run` ) that says when the layer applies.
+Every argument is a keyword with a default unless shown otherwise.
 
 | layer | signature | page |
 |---|---|---|
-| `Vars` | `Vars( values, when = None )`: a dict, or a function of the selected tags returning one | [Vars](/guide/layers/vars) |
+| `Vars` | `Vars( values )`: a dict, or a function of the selected tags returning one | [Vars](/guide/layers/vars) |
 | `Venv` | `Venv( python = "python", requirements = None, pip = [ ], create = False )` | [Venv and Uv](/guide/layers/venv) |
 | `Uv` | `Uv( path = ".venv", python = None, requirements = None, pip = [ ] )` | [Venv and Uv](/guide/layers/venv) |
 | `Micromamba` | `Micromamba( name, python = None, channels = [ "conda-forge" ], packages = [ ], requirements = None, pip = [ ], root_prefix = None, executable = None )` | [Micromamba](/guide/layers/micromamba) |
@@ -250,7 +249,7 @@ Every argument is a keyword with a default unless shown otherwise. Every layer a
 | `Ssh` | `Ssh( host, root = None, python = "python3", options = [ ], also = [ ], errand_outputs_directory = None, transfer = None )` | [Ssh](/guide/layers/ssh) |
 | `Slurm` | `Slurm( partition = None, nodes = None, cpus = None, gpus = None, time = None, account = None, nodelist = None, qos = None, watch = None, ntasks_per_node = None, mpi = None, extra = [ ], keep_alive = None, allocation = None )` | [Slurm](/guide/layers/slurm) |
 | `Mpi` | `Mpi( launcher = "mpiexec", np = "-n", flags = [ ] )` | [MPI](/guide/layers/mpi) |
-| `Preload` | `Preload( *modules, learn = True, when = None )` | [Preload](/guide/layers/preload) |
+| `Preload` | `Preload( *modules, learn = True )` | [Preload](/guide/layers/preload) |
 | `Windows` | `Windows( iso = None, key = None, index = 1, cpus = 4, ram = "8G", disk = "64G", msvc = True, python = "3.13.16", provision = [ ], fetch = [ ], also = [ ], keep = "5m", data = "32G", root = None )` | [Windows](/guide/layers/windows) |
 | `WindowsBox` | `WindowsBox( python = None, msvc = False, provision = [ ], fetch = [ ], also = [ ], root = None )` | [WindowsBox](/guide/layers/windows-box) |
 | `Missing` | `Missing( what, hint = None )` | [Missing](/guide/layers/missing) |

@@ -3,7 +3,7 @@
 ```python
 Windows( iso = None, key = None, index = 1, cpus = 4, ram = "8G", disk = "64G", msvc = True,
          python = "3.13.16", provision = [ ], fetch = [ ], also = [ ], keep = "5m", data = "32G",
-         root = None, when = None )
+         root = None )
 ```
 
 **First, or right after the `Ssh` of the machine that boots it.** A Windows virtual machine under

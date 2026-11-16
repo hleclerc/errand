@@ -18,13 +18,13 @@ them.
   here                          the machine Ssh leads to             the end of the stack
   ────                          ────────────────────────             ────────────────────
   errand ── hub ── one ssh ──── host agent ── the layers, once ───── environment agent ── sessions
-  errand ──┘                    (rsync, setup, probes)               (micromamba, container, …)
+  errand ──┘                    (push, pull, setup, probes)               (micromamba, container, …)
 ```
 
 - **The hub**: one process here, per user. It keeps the connections to the agents open between
   commands, and several commands share them.
 - **A host agent** on each machine errand reaches. It is started through one ssh; after that the
-  rsyncs, the builds of `setup` and the probes all go through it. Nothing logs in again.
+  pushes and pulls, the builds of `setup` and the probes all go through it. Nothing logs in again.
 - **An environment agent** past the layers, with the environment's own interpreter: inside the
   micromamba env, the module, the container, the allocation. The layers are entered once, not once
   per command.

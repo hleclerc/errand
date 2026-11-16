@@ -20,8 +20,8 @@ class Preload( Layer ):
     a Python started anew. It changes nothing in the command: it says how sessions start.
     """
 
-    def __init__( self, *modules, learn = True, when = None ):
-        self.modules, self.learn, self.when = list( modules ), bool( learn ), when
+    def __init__( self, *modules, learn = True ):
+        self.modules, self.learn = list( modules ), bool( learn )
 
     def wrap( self, cmd: Command, ctx: Context ) -> Command:
         return cmd
@@ -53,7 +53,6 @@ class Mpi( Launcher ):
     launcher: str = "mpiexec"
     np      : str = "-n"                                 # the flag giving the number of processes
     flags   : list = field( default_factory = list )      # e.g. [ "--oversubscribe" ] for Open MPI
-    when    : str | None = None
 
     def wrap( self, cmd: Command, ctx: Context ) -> Command:
         return cmd

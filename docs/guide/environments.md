@@ -133,21 +133,23 @@ That is a **preparation phase**, which writes a *plan* — what will run, what i
 the directories it will write — before a **run phase** runs it. The plan is what the results are
 fetched back by, what [`errand status`](./status) reads, and what an allocation is sized from.
 
-Every layer takes **`when =`**, an [expression](/reference/expressions) over the selected tags and
-the pseudo-tag `phase` ( `prepare` or `run` ). A layer without one is in both phases. To prepare in
-one allocation ( CPUs to compile ) and run in another ( a GPU ), write two `Slurm` layers:
+The preparation goes through the environment's layers, unless `prepare =` gives it its own. To
+prepare in one allocation ( CPUs to compile ) and run in another ( a GPU ), write both lists, and
+copy what they share:
 
 ```python
 # errand-envs.py
-errand.envs[ "cluster" ] = errand.Env( [
-    errand.Ssh( host = "login.hpc", root = "/scratch/me/proj" ),
-    errand.Slurm( cpus = 16, time = "0:30:00",                   when = "phase=prepare" ),
-    errand.Slurm( partition = "gpu", gpus = 1, time = "2:00:00", when = "phase=run" ),
-    errand.Apptainer( image = "containers/cuda.sif" ),
-] )
+login = errand.Ssh( host = "login.hpc", root = "/scratch/me/proj" )
+image = errand.Apptainer( image = "containers/cuda.sif" )   # both phases: same compiler, same libraries
+
+errand.envs[ "cluster" ] = errand.Env(
+    [ login, errand.Slurm( partition = "gpu", gpus = 1, time = "2:00:00" ), image ],
+    prepare = [ login, errand.Slurm( cpus = 16, time = "0:30:00" ), image ],
+)
 ```
 
-At most one scheduler is active per phase, and errand checks it. With a single `Slurm`, the
+Both lists start from the same place: the same `Ssh`, or none. At most one scheduler per list, and
+errand checks it. With a single `Slurm`, the
 allocation is [held warm](./layers/slurm#held-warm-keep-alive) and the preparation and the run go
 into the same job. With `keep_alive = 0`, the preparation is one task and the run a job of its own,
 sized from the plan. When no layer is a scheduler, preparing and running are one pass, one process.

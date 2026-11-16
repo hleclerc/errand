@@ -48,13 +48,17 @@ What a layer needs in order to exist â€” an image, a conda environment, a venv â
 build, and errand rebuilds it when its declaration changes. What was already there is adopted, not
 rebuilt. See [Keeping environments current](../upkeep).
 
-## `when`
+## The preparation's own layers
 
-Every layer takes **`when =`**: an [expression](/reference/expressions) over the selected tags and
-the pseudo-tag `phase` ( `prepare` or `run` ). A layer without one is active in both phases; at most
-one scheduler may be active in each. See [Preparing, then running](../environments#preparing-then-running).
+A layer applies wherever it is listed. The preparation goes through the same list, unless the
+environment gives it its own with `prepare =`. Copy what both share. At most one scheduler per list.
+See [Preparing, then running](../environments#preparing-then-running).
 
 ```python
-errand.Slurm( partition = "gpu", gpus = 1, when = "phase=run" )
-errand.Vars( { "XLA_FLAGS": "--xla_gpu_deterministic_ops" }, when = "cuda" )
+base = [ errand.Ssh( host = "login.hpc", root = "/scratch/me/proj" ) ]
+errand.Env( base + [ errand.Slurm( partition = "gpu", gpus = 1 ) ],
+            prepare = base + [ errand.Slurm( cpus = 16 ) ] )
 ```
+
+A layer that depends on the environment's tags is a `Vars` whose values are a function of them, or
+another environment.

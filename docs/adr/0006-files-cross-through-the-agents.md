@@ -192,7 +192,18 @@ volumes; how far below is measured, not assumed.
    then not there when it starts. Results come straight back here too, so the copy on the machine
    that runs QEMU plays no part. Links are followed. errand's sources are a tar on the stdin of one
    cmd.exe line, unpacked by Windows' `tar` beside their place and moved into it, and skipped
-   when the sources key is already there. `transfer = "rsync"` (or `ERRAND_TRANSFER=rsync`) keeps
-   the old way. MSYS2 leaves the image only once a guest has been seen to work without it.
-7. Sync becomes the default, rsync the option.
+   when the sources key is already there. Once that run had worked, MSYS2 left the image (recipe 3)
+   and the box setup, along with the guest's rsync path. A guest has no other way in now. The new
+   image installed on lmo in 52 min (`260293db`). `win-numpy` ran on it: a cold push of the whole
+   project (11 466 files, 4.1 GB) onto a new data disk, then the command, with no rsync in the
+   guest. errand
+   started on Windows still copies with MSYS2's rsync and ssh for an `Ssh` push by rsync, until
+   step 7.
+7. Sync becomes the default, rsync the option. Done on 2026-11-16. `transfer()` answers `sync`
+   unless `Ssh( transfer = "rsync" )` or `ERRAND_TRANSFER=rsync` asks for rsync. That holds for the
+   push before a run, the push of `errand setup` and of an image built elsewhere (`build_on`), and
+   the pulls. The 34 test files pass; the 2 that test rsync itself ask for it by name. otrec on lmo
+   (`lmo-sif`, `test_loss.py`, 11 entries) passed with nothing set. errand started on Windows needs
+   MSYS2's rsync and ssh only when rsync is asked for. jz is still not measured, and neither is a
+   large file that changes a little.
 8. Local watching as a hint.

@@ -110,7 +110,7 @@ running   ( on mac, gpu-box: this machine, and every machine work was sent to fr
 ## You stay in control
 
 - What runs is **the command you would have typed**. errand does not need to know your language.
-- `-v` prints **every command errand starts**: the ssh, the rsync, the `sbatch`, the `apptainer exec`.
+- `-v` prints **every command errand starts**: the ssh, the `sbatch`, the `apptainer exec`.
 - `errand shell --env cluster` **lets you in**, in the allocation, in the container.
 - An environment that already exists is **adopted as it is**, never rebuilt behind your back.
 - Everything is **plain files**: `errand-envs.py` is Python, records are in `errand-outputs/`.

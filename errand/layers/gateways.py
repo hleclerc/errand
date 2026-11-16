@@ -35,7 +35,7 @@ def own_paths() -> list:
     environments share a remote root.
     """
     from .. import config
-    found = { os.path.normpath( p ) for e in config.envs.values() for layer in e.stack
+    found = { os.path.normpath( p ) for e in config.envs.values() for _, layer in e.layers()
               if hasattr( layer, "kept" ) for p in layer.kept() }
     return sorted( f"/{p}" for p in found if not os.path.isabs( p ) and p != "." and not p.startswith( ".." ) )
 
@@ -69,12 +69,11 @@ class Ssh( Gateway ):
     python : str = "python3"
     options: list = field( default_factory = list )
     also   : list = field( default_factory = list )   # sibling checkouts the work needs, pushed with the project
-    when   : str | None = None
     # Where errand writes for the project over there ( runs, builds, state ): a scratch disk, say.
     # The project's copy then holds a link to it, by its usual name ( `errand-outputs` ).
     errand_outputs_directory: str | None = None
-    # How the project crosses: "rsync", or "sync", by manifest through the host's agent ( ADR 0006,
-    # being measured ). `ERRAND_TRANSFER` overrides it for one command.
+    # How the project crosses: by manifest through the host's agent ( "sync", the default, ADR 0006 ), or
+    # "rsync", whose delta wins for a large file that changes a little. `ERRAND_TRANSFER` overrides it.
     transfer: str | None = None
 
     def describe( self ):
@@ -267,8 +266,8 @@ ln -sfn "$d" "$o"
 
 
 def transfer( chosen = None ) -> str:
-    """How a push crosses: `ERRAND_TRANSFER`, else the `Ssh`'s `transfer`, else rsync ( for now )."""
-    got = ( os.environ.get( "ERRAND_TRANSFER" ) or chosen or "rsync" ).strip().lower()
+    """How a push crosses: `ERRAND_TRANSFER`, else the `Ssh`'s `transfer`, else a sync ( ADR 0006 )."""
+    got = ( os.environ.get( "ERRAND_TRANSFER" ) or chosen or "sync" ).strip().lower()
     if got not in ( "rsync", "sync" ):
         raise ValueError( f"transfer {got!r}: rsync or sync" )
     return got

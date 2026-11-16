@@ -1,7 +1,7 @@
 # Mpi
 
 ```python
-Mpi( launcher = "mpiexec", np = "-n", flags = [ ], when = None )
+Mpi( launcher = "mpiexec", np = "-n", flags = [ ] )
 ```
 
 How the place starts several processes of one program, when it is not the usual way. Rarely needed.

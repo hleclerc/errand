@@ -17,7 +17,7 @@ errand run --env gpu python train.py     # apptainer exec --nv containers/cuda.s
 ```python
 Apptainer( image, recipe = None, flags = [ ], mounts = { }, pip = [ ],
            fakeroot = False, scratch = None, build_flags = [ ],
-           build_on = None, install = None, run_from = None, exe = "apptainer", when = None )
+           build_on = None, install = None, run_from = None, exe = "apptainer" )
 ```
 
 Runs the command with `apptainer exec`.
@@ -65,7 +65,7 @@ errand.Apptainer( image = "containers/main.sif", recipe = "containers/main.def",
 ## Docker, Podman
 
 ```python
-Docker( image, recipe = None, flags = [ ], mounts = { }, pip = [ ], engine = "docker", user = "caller", when = None )
+Docker( image, recipe = None, flags = [ ], mounts = { }, pip = [ ], engine = "docker", user = "caller" )
 Podman( … )     # the same, through podman, rootless
 ```
 

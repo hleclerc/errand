@@ -1,7 +1,7 @@
 # WindowsBox
 
 ```python
-WindowsBox( python = None, msvc = False, provision = [ ], fetch = [ ], also = [ ], root = None, when = None )
+WindowsBox( python = None, msvc = False, provision = [ ], fetch = [ ], also = [ ], root = None )
 ```
 
 **Right after the `Ssh` that reaches a Windows machine.** A Windows that is already there, such as a

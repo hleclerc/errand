@@ -1,7 +1,7 @@
 # Preload: sessions that start warm
 
 ```python
-Preload( *modules, learn = True, when = None )
+Preload( *modules, learn = True )
 ```
 
 At the end of a stack, it changes how sessions start: each one is a fork of a process that has

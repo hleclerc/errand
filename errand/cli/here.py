@@ -85,7 +85,7 @@ class Ask:
 def _stack_of( env_name, tags ) -> list:
     """The layers of the environment this process runs in, as far as it knows them."""
     env = config.envs.get( env_name )
-    return env.stack_for( "run", tags ) if env is not None else [ ]
+    return env.stack_for( "run" ) if env is not None else [ ]
 
 
 def _ranks_wrap( e, ask, env_name, tags ) -> list:

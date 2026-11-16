@@ -52,7 +52,7 @@ class Allocation:
         ( `fits` ): an allocation of its size, shared in turn by whatever fits in it."""
         from dataclasses import replace
         self.env, self.tags, self.where = env, tags, where
-        stack = env.stack_for( phase, tags )
+        stack = env.stack_for( phase )
         declared = scheduler( stack )
         self.after = stack[ stack.index( declared ) + 1 : ]
         self.keep = seconds( declared )
