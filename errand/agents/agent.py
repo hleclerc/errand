@@ -30,6 +30,10 @@ class Agent:
         self.idle_since = time.monotonic()
         self.lock       = threading.Lock()
         self.web        = None              # the page it serves, a host agent only ( `errand.web` )
+        # The agent that started this one's bridge, outside the layers this one entered ( a container ):
+        # what this one starts can ask it to start something out there ( the ranks, `errand.mpi` ).
+        outer = os.environ.get( "ERRAND_AGENT_DIR" )
+        self.outer      = outer if outer and outer != str( self.root ) else None
 
     # -- one client -----------------------------------------------------------
 
@@ -84,7 +88,8 @@ class Agent:
                 # ... and how long it stays, and who it is: a zygote beside it keeps as long, and goes
                 # with it ( `warm` )
                 env = { **( req.get( "env" ) or { } ), "ERRAND_AGENT_DIR": str( self.root ),
-                        "ERRAND_AGENT_KEEP": str( self.keep_alive ), "ERRAND_AGENT_PID": str( os.getpid() ) }
+                        "ERRAND_AGENT_KEEP": str( self.keep_alive ), "ERRAND_AGENT_PID": str( os.getpid() ),
+                        **( { "ERRAND_OUTER_AGENT_DIR": self.outer } if self.outer else { } ) }
                 proc = Proc( self.root, req[ "argv" ], env, req.get( "cwd" ), bool( req.get( "keep" ) ),
                              tty = req.get( "tty" ), store = req.get( "store" ) )
                 with self.lock:
@@ -125,7 +130,12 @@ class Agent:
             else:
                 writer.send( channel, F.REPLY, { "error": f"unknown request {op!r}" } )
         except Exception as err:          # said to the client, not fatal to the agent
-            writer.send( channel, F.REPLY, { "error": f"{type( err ).__name__}: {err}" } )
+            if self.unmounted():
+                self.stopping = True      # gone with its image: the next command starts a new one
+                err = f"{type( err ).__name__}: {err} -- the image this agent ran in was replaced; run the command again"
+            else:
+                err = f"{type( err ).__name__}: {err}"
+            writer.send( channel, F.REPLY, { "error": err } )
 
     def replay( self, writer, channel, req ):
         """A process no longer running here: what it left on disk, then that goes -- delivered."""
@@ -151,7 +161,7 @@ class Agent:
         """Nothing running, nothing asked, for `keep_alive`. A client that is merely connected does not
         count: a hub keeps its streams open between commands, and an allocation held warm must still
         be let go of once nobody uses it ( its hub then reaches a new one )."""
-        if getattr( self, "stopping", False ):
+        if getattr( self, "stopping", False ) or self.unmounted():
             return True
         with self.lock:
             if any( p.code is None for p in self.procs.values() ):
@@ -173,6 +183,19 @@ class Agent:
             except OSError:
                 pass
         return True
+
+    def unmounted( self ) -> bool:
+        """Whether the files this agent runs from are gone: an image rebuilt under an agent that lives in
+        it ( `errand setup` replaced the `.sif` ) unmounts it, and nothing it starts would run any more
+        ( `Transport endpoint is not connected` ). It goes, and the next command starts one in the new image."""
+        try:
+            os.stat( sys.executable )
+            return False
+        except FileNotFoundError:
+            return True
+        except OSError as err:
+            import errno
+            return err.errno in ( errno.ENOTCONN, errno.ESTALE, errno.EIO )
 
     def _busy( self ):
         """Say so on disk: for an agent above this one ( `idle` )."""

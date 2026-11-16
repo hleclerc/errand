@@ -334,11 +334,19 @@ def lacks( env, ctx, there, inside = None ) -> list:
             return [ f"here: {l.describe()} needs a POSIX machine, and this is Windows: put an Ssh to one before it"
                      for l in posix ]
     by_place = { }
+    overlays = [ ]          # ( place, layer ): what a command is run through before the layers after it
     for _, layer in env.layers():
         at = ( inside( layer ) if inside else None ) or there
         requires = getattr( layer, "requires", None )     # a layer may be anything with the methods it uses
+        # Asked as the command will be: through the overlays before it there ( a `Module( "singularity" )`
+        # puts `singularity` on the PATH of what comes after it ).
+        through = [ o for where, o in overlays if where is at ]
         for test, what in ( requires( at ) if requires else ( ) ):
+            if through:
+                test = L.compose( through, L.Command( [ "sh", "-c", test ] ), at ).shell()
             by_place.setdefault( id( at ), ( at, [ ] ) )[ 1 ].append( ( test, what, layer ) )
+        if isinstance( layer, L.Overlay ):
+            overlays.append( ( at, layer ) )
     out = [ ]
     for at, checks in by_place.values():
         if _windows_here( at ):
@@ -355,7 +363,9 @@ def lacks( env, ctx, there, inside = None ) -> list:
                 if not found:
                     out.append( f"{place}: {what} ( {layer.describe()} )" )
             continue
-        line = "; ".join( f"{{ {test} ; }} >/dev/null 2>&1 || echo errand-lacks-{i}" for i, ( test, _, _ ) in enumerate( checks ) )
+        # One group: a host that says `cd <root> && <line>` ( the allocation's ) must not read a root not
+        # pushed yet as every check failing.
+        line = "{ " + "; ".join( f"{{ {test} ; }} >/dev/null 2>&1 || echo errand-lacks-{i}" for i, ( test, _, _ ) in enumerate( checks ) ) + "; }"
         got = at.host.shell( line, capture = True )
         failed = { int( w[ len( "errand-lacks-" ): ] ) for w in ( got.stdout or "" ).split() if w.startswith( "errand-lacks-" ) }
         place = "here" if not at.host.remote else f"on {at.host.describe()}"

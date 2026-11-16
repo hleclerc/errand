@@ -62,6 +62,14 @@ errand.Apptainer( image = "containers/main.sif", recipe = "containers/main.def",
                   exe = "singularity" )
 ```
 
+### Several ranks
+
+Under Slurm, the ranks of an MPI run start outside the image, with `srun`, and each enters it on its
+node: `srun … apptainer exec image.sif python …`. The MPI of the image must speak the PMI that `srun`
+offers ( PMIx for Open MPI, PMI-2 for MPICH ). `--cleanenv` or `--containall` in `flags` hides from
+errand the agent that starts them, and the run is then skipped.
+→ [Several processes, in a container](../mpi#in-a-container)
+
 ## Docker, Podman
 
 ```python

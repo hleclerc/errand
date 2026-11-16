@@ -94,7 +94,7 @@ def _ranks_wrap( e, ask, env_name, tags ) -> list:
     n = mpi.ranks_of( e.resources, ask.resources )
     if n <= 1 or not ( e.runner is not None and e.runner.whole_files ) or mpi.inside():
         return [ ]
-    start = mpi.launcher( _stack_of( env_name, tags ), n )
+    start = mpi.launcher( _stack_of( env_name, tags ), n, { "env": env_name, "tags": tags } )
     if start is None:
         raise local.Skipped( f"needs an MPI launcher for {n} ranks",
                              "install one in the environment ( micromamba install -c conda-forge mpich mpi4py ), "
@@ -208,6 +208,7 @@ def run_case( e, modules, *, root, out_root, overrides, env_name, tags, version,
                     status, error, hint, got = mpi.run(
                         e, n = ranks, stack = _stack_of( env_name, tags ), root = root, leaf = leaf,
                         resolved = resolved, argv = target_argv( e, resolved, overrides ),
+                        place = { "env": env_name, "tags": tags },
                         env = { **handed, **_handed_to_the_run( root, tags ),
                                 **( { P.OUT_DIR: str( leaf ) } if ask.visible else { } ) } )
                     E.results.update( got )

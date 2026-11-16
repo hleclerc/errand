@@ -40,6 +40,7 @@ export default defineConfig( {
             { text: '1 · Four environments',              link: '/tutorials/environments' },
             { text: '2 · Numbers over two machines',      link: '/tutorials/two-machines' },
             { text: '3 · A cluster and a Windows VM',     link: '/tutorials/cluster-and-vm' },
+            { text: '4 · A parallel computation',         link: '/tutorials/parallel' },
           ] },
         ]
       },

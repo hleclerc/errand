@@ -152,3 +152,121 @@ if test( "Slurm asks for one task per rank, and errand runs once in the allocati
             raise AssertionError( f"{bad} was accepted" )
         except ValueError as err:
             assert "ranks" in str( err ), err
+
+
+# ── ranks started outside a container ───────────────────────────────────────
+
+BOXED = '''
+import errand
+from dataclasses import dataclass
+from errand.layers import Command, Container
+
+@dataclass
+class Box( Container ):
+    """A container that is not one: it says it was entered."""
+    def wrap( self, cmd, ctx ):
+        return Command( [ "env", "IN_BOX=1", *cmd.argv ], cmd.env )
+    def describe( self ):
+        return "box"
+
+errand.envs[ "boxed" ] = errand.Env( [ errand.Mpi( {launcher!r} ), Box() ] )
+errand.envs[ "inner" ] = errand.Env( [ Box(), errand.Mpi( {launcher!r} ) ] )
+'''
+
+# `launcher -n N cmd…`: N copies of cmd, each told its rank, and which agent started the launcher.
+FAKE_MPI = '''#!/bin/sh
+n=$2; shift 2; i=0
+pids=; rc=0
+while [ $i -lt $n ]; do PMI_RANK=$i PMI_SIZE=$n LAUNCHED_BY="$ERRAND_AGENT_DIR" "$@" & pids="$pids $!"; i=$(( i + 1 )); done
+for p in $pids; do wait $p || rc=$?; done
+exit $rc
+'''
+
+
+def _agent( d: Path, env = None ):
+    """An agent serving in `d`, started as errand starts one ( detached ), with `env` in its environment."""
+    import subprocess
+    import sys
+    here = str( Path( __file__ ).resolve().parent.parent )
+    subprocess.run( [ sys.executable, "-c", f"from pathlib import Path; from errand.agents import daemon; daemon.start( Path( {str( d )!r} ), 20 )" ],
+                    env = { **os.environ, "PYTHONPATH": here, **( env or { } ) }, check = True )
+    from errand.agents import endpoint
+    import time
+    deadline = time.monotonic() + 10
+    while endpoint.reach( d ) is None:
+        assert time.monotonic() < deadline, ( d / "log" ).read_text() if ( d / "log" ).exists() else "no agent"
+        time.sleep( 0.05 )
+
+
+def _conn( d: Path ):
+    import socket
+    from errand.agents import client as C, endpoint
+    sock = endpoint.reach( d )
+    return C.Connection( sock.recv, sock.sendall, lambda: sock.shutdown( socket.SHUT_RDWR ) )
+
+
+if test( "an agent tells what it starts which agent started it" ):
+    from errand.agents import client as C
+    with tempfile.TemporaryDirectory( dir = "/tmp" ) as tmp:
+        d = Path( tmp ) / "a"
+        _agent( d, { "ERRAND_AGENT_DIR": "/somewhere/outer" } )
+        got = C.shell( _conn( d ), 'echo "$ERRAND_OUTER_AGENT_DIR $ERRAND_AGENT_DIR"', capture = True )
+        assert got.stdout.split() == [ "/somewhere/outer", str( d ) ], got.stdout
+
+
+if test( "a launcher named before the container starts the ranks outside it, each entering it" ):
+    import json
+    import subprocess
+    import sys
+    import errand
+    from errand import local, mpi
+    with tempfile.TemporaryDirectory( dir = "/tmp" ) as tmp:
+        tmp = Path( tmp )
+        fake = tmp / "fakempi"
+        fake.write_text( FAKE_MPI )
+        fake.chmod( 0o755 )
+        project = write_project( tmp / "proj", BOXED.format( launcher = str( fake ) ), { } )
+
+        # which launcher: outside for `Mpi` before the container, the container's own after it
+        from errand import config
+        config.load( project, warn = lambda m: None )
+        boxed, inner = ( config.envs[ k ].stack_for( "run" ) for k in ( "boxed", "inner" ) )
+        assert mpi.outside( boxed, 2 ) == [ str( fake ), "-n", "2" ]
+        assert mpi.outside( inner, 2 ) is None
+        assert mpi.outside( [ errand.Mpi( "x" ) ], 2 ) is None                 # no container: as always
+        assert mpi.after_outer( boxed ) == [ boxed[ 1 ] ]
+
+        # no agent out there: skipped, saying why
+        kept = os.environ.pop( mpi.OUTER, None )
+        try:
+            mpi.launcher( boxed, 2, { "env": "boxed", "tags": { } } )
+            assert False, "no agent outside, and the ranks would have started"
+        except local.Skipped as s:
+            assert "outside the container" in s.reason, s.reason
+
+        d = tmp / "outer"
+        _agent( d )
+        os.environ[ mpi.OUTER ] = str( d )
+        try:
+            start = mpi.launcher( boxed, 2, { "env": "boxed", "tags": { } } )
+        finally:
+            os.environ.pop( mpi.OUTER )
+            if kept is not None:
+                os.environ[ mpi.OUTER ] = kept
+        assert start[ 1 : 4 ] == [ "-m", "errand.mpi", "through" ], start
+        assert json.loads( start[ 4 ] )[ "start" ] == [ str( fake ), "-n", "2" ]
+
+        here = str( Path( __file__ ).resolve().parent.parent )
+        rank = "import os; print( 'rank', os.environ[ 'PMI_RANK' ], os.environ.get( 'IN_BOX' ), os.environ.get( 'ERRAND_SAID' ), os.environ.get( 'NOT_SAID' ), os.environ.get( 'LAUNCHED_BY' ) )"
+        got = subprocess.run( [ *start, sys.executable, "-c", rank ], cwd = project, capture_output = True, text = True,
+                              env = { **os.environ, "PYTHONPATH": here, "ERRAND_SAID": "yes", "NOT_SAID": "no" }, timeout = 60 )
+        assert got.returncode == 0, got.stdout + got.stderr
+        lines = sorted( l for l in got.stdout.splitlines() if l.startswith( "rank" ) )
+        # in the box, errand's variables said, the container's own not, the launcher started by the agent out there
+        assert lines == [ f"rank {r} 1 yes None {d}" for r in ( 0, 1 ) ], got.stdout + got.stderr
+        assert "outside the container" in got.stdout, got.stdout
+
+        # the exit code comes back
+        got = subprocess.run( [ *start, sys.executable, "-c", "import sys; sys.exit( 3 )" ], cwd = project,
+                              capture_output = True, text = True, env = { **os.environ, "PYTHONPATH": here }, timeout = 60 )
+        assert got.returncode == 3, got.stdout + got.stderr

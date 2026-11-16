@@ -582,3 +582,41 @@ if test( "what a process leaves its owner to do on a stop is done: by its agent,
         assert gone( srun, 15 )
         assert Path( f"{d}/cancelled" ).exists(), "the next agent killed the orphan but left its job"
         agents._open.clear()
+
+
+if test( "a process that ends before its client is attached still gives its output" ):
+    # `spawn` replies, then attaches: a quick process may be over in between, and its output must wait for
+    # the attach rather than go with its directory.
+    import socket
+    import subprocess
+    import sys
+    import tempfile
+    import threading
+    import time
+    from pathlib import Path
+    from errand.agents import client as C, endpoint
+    with tempfile.TemporaryDirectory( dir = "/tmp" ) as tmp:
+        d = Path( tmp ) / "a"
+        here = str( Path( __file__ ).resolve().parent.parent )
+        subprocess.run( [ sys.executable, "-c", f"from pathlib import Path; from errand.agents import daemon; daemon.start( Path( {str( d )!r} ), 10 )" ],
+                        env = { **os.environ, "PYTHONPATH": here }, check = True )
+        deadline = time.monotonic() + 10
+        while endpoint.reach( d ) is None:
+            assert time.monotonic() < deadline, "no agent"
+            time.sleep( 0.05 )
+        bad = [ ]
+
+        def one():
+            s = endpoint.reach( d )
+            conn = C.Connection( s.recv, s.sendall, lambda: s.shutdown( socket.SHUT_RDWR ) )
+            for _ in range( 15 ):
+                got = C.shell( conn, "echo out; exit 3", capture = True )
+                if ( got.stdout, got.returncode ) != ( "out\n", 3 ):
+                    bad.append( ( got.stdout, got.returncode ) )
+
+        threads = [ threading.Thread( target = one ) for _ in range( 12 ) ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert not bad, f"{len( bad )} of 180 came back without their output: {bad[ : 3 ]}"

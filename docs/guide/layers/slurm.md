@@ -137,7 +137,9 @@ container ) share it, each with an environment agent of its own in it.
 The job's batch step is an agent, on the first node. The layers after `Slurm` are entered once, by an
 environment agent it starts, and are built there too. A venv or an environment in a node's local
 `/tmp` is built on that node. An entry's ranks are started from that first node with the allocation's
-own `srun`. The allocation is sized from what is declared, since it outlives the command that started
+own `srun`. With a container after `Slurm`, that `srun` runs outside the container, and each rank
+enters it on its node ( see [Several processes, in a container](../mpi#in-a-container) ). The
+allocation is sized from what is declared, since it outlives the command that started
 it: ranks fit when `nodes × ntasks_per_node` is enough for them.
 
 A command runs in it only if it fits: its ranks within the allocation's tasks, its cores and cards

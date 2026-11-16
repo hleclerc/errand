@@ -46,8 +46,10 @@ if test( "no file of this project imports a third-party module at its top" ):
     # What another runner runs with its own tool is not read by errand: the pytest suite of example 03
     # imports pytest, as any pytest suite does.
     foreign = ROOT / "examples" / "02-existing-suite" / "tests"
+    # ... and a plain MPI program is run by a launcher, under the environment's Python: never read by errand.
+    programs = { ROOT / "examples" / "06-mpi" / "heat.py" }
     for path in sorted( ROOT.rglob( "*.py" ) ):
-        if foreign in path.parents:
+        if foreign in path.parents or path in programs:
             continue
         if any( part in ( ".git", "node_modules", "__pycache__", "build", "dist", "runs", "_lib" )
                 or part.startswith( ".venv" ) for part in path.parts ):

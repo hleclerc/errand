@@ -68,6 +68,27 @@ def arrive( env, tags, root, project = True, phase = "run" ):
                             boot = envs.boot_of( ssh, cache ) )
 
 
+class AgentOutside:
+    """Not declared: put by errand after a scheduler whose job it submits, before a container. An agent
+    serving in `<cache>/agents/job-<id>`, on the node, outside the container, for the job's length; what
+    runs inside reaches it through `ERRAND_OUTER_AGENT_DIR` ( `errand.mpi` ). Without a Python on the
+    node, none: the ranks of a run in the container are then skipped, saying why."""
+
+    def __init__( self, cache: str, boot: str ):
+        self.cache, self.boot = cache, boot
+
+    def wrap( self, cmd, ctx ):
+        q = shlex.quote
+        then = f'"$py" {q( self.boot )} -m errand.agents serve "$d" 86400 </dev/null >"$d.log" 2>&1 &\n'
+        line = ( f'd={q( self.cache )}/agents/job-"${{SLURM_JOB_ID:-$$}}"; mkdir -p "$d"\n'
+                 f'( {bootstrap._script( then, "python3" )} ) >/dev/null 2>&1\n'
+                 f'export ERRAND_OUTER_AGENT_DIR="$d"\nexec "$@"' )
+        return L.Command( [ "sh", "-c", line, "sh", *cmd.argv ], cmd.env )
+
+    def describe( self ):
+        return "agent outside"
+
+
 class Reach:
     """How a session of `env` reaches the environment in `phase`."""
 
@@ -91,8 +112,20 @@ class Reach:
         sent = bootstrap.command( cmd, self.inner, self.where.cache or str( bootstrap.local_cache() ),
                                   ssh.python if ssh is not None else "python",
                                   boot = None if ssh is not None else self.where.boot )
-        self.wrapped = L.compose( self.inner, sent, self.ctx )
+        self.wrapped = L.compose( self._with_agent_outside(), sent, self.ctx )
         return f"cd {shlex.quote( str( self.where.there ) )} && {self.wrapped.shell()}"
+
+    def _with_agent_outside( self ) -> list:
+        """The layers, with an agent started on the node before a container is entered, in a job errand
+        submits ( `watch`, `--batch` ): no agent of errand's is there otherwise, and the ranks of an MPI
+        run start from outside the container ( `errand.mpi.outside` ). Held warm, the allocation's agent
+        is that agent already."""
+        if self.sched is None or self.where.cache is None:
+            return self.inner
+        at = self.inner.index( self.sched )
+        if not any( isinstance( l, L.Container ) for l in self.inner[ at + 1 : ] ):
+            return self.inner
+        return [ *self.inner[ : at + 1 ], AgentOutside( self.where.cache, self.where.boot ), *self.inner[ at + 1 : ] ]
 
     def start( self, request: dict, child: dict ):
         w = self.where
@@ -198,8 +231,11 @@ def drive( env, tags, verb, known, *, root, out_root, report, pull = ( ) ) -> in
             _bring_back( prepared_at, env.name, box, [ ] )
             return rc
 
-    reach = Reach( env, tags, "run", where, needs = ( box.get( "plan" ) or { } ).get( "needs" ),
-                   time = getattr( known, "time", None ) )
+    # One job sized before any plan ( watched ): what the command line asks is all there is to size it from
+    # ( `--ranks 8` ). An entry's own `ranks = …` is known only from the plan.
+    asked = { k: getattr( known, k ) for k in ( "ranks", "cpus", "gpus", "ram" ) if getattr( known, k, None ) }
+    needs = ( box.get( "plan" ) or { } ).get( "needs" ) if not single else asked
+    reach = Reach( env, tags, "run", where, needs = needs, time = getattr( known, "time", None ) )
     runs = { **base, "known": { **base[ "known" ], **told, "from_plan": not single, "phase": "run" } }
     if single:
         sessions = [ reach.start( runs, child ) ]
@@ -296,7 +332,8 @@ def _remember( root, env, reach, sessions, where, pull ):
     live.parent.mkdir( parents = True, exist_ok = True )
     live.write_text( json.dumps( { "id": ident, "env": env.name, "target": reach.target, "procs": pids,
                                    "ssh": None if where.ssh is None else
-                                   { "host": where.ssh.host, "options": list( where.ssh.options ) },
+                                   { "host": where.ssh.host, "options": list( where.ssh.options ),
+                                     "transfer": getattr( where.ssh, "transfer", None ) },
                                    "there": str( where.there ), "store": store_of( where ),
                                    "pull": list( pull ) }, indent = 1 ) )
     return live
@@ -349,7 +386,7 @@ def attach( root, ident = None, *, report ) -> int:
             rc |= max( rcs ) if rcs else 0
             if any( b.get( "lost" ) for b in boxes ):
                 continue
-        ssh = SimpleNamespace( **rec[ "ssh" ] ) if rec.get( "ssh" ) else None
+        ssh = SimpleNamespace( **{ "transfer": None, **rec[ "ssh" ] } ) if rec.get( "ssh" ) else None   # older records lack it
         _bring_back( SimpleNamespace( root = root, ssh = ssh, there = L.remote_path( rec[ "there" ] ) if ssh else Path( rec[ "there" ] ) ), rec[ "env" ], { },
                      rec.get( "pull", [ ] ) )
         path.unlink( missing_ok = True )

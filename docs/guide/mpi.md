@@ -23,6 +23,22 @@ the environment:
 - **anything else** is named with the [`Mpi`](/guide/layers/mpi) layer:
   `errand.Mpi( "mpirun", flags = [ "--oversubscribe" ] )`.
 
+## In a container
+
+errand runs inside the container, but `srun` is not in an image, and an `mpiexec` of the image would
+start every rank on one node. So when a Slurm allocation, or an `Mpi` layer, comes **before** the
+container in the stack, the ranks start outside it: the agent out there runs the launcher, and each
+rank enters the container on its own node.
+
+```text
+srun --mpi=pmix --nodes 2 --ntasks 8 apptainer exec image.sif python parallel.py
+```
+
+The MPI of the image gets its rank from Slurm ( PMIx for Open MPI, PMI-2 for MPICH ). An `Mpi` layer
+placed **after** the container is the image's own, and starts the ranks inside it, on one node.
+Only errand's variables and `PYTHONPATH` are passed to the launcher out there; each rank gets the
+container's environment by entering it again. → [Tutorial 4 · A parallel computation](/tutorials/parallel)
+
 With no launcher to be found, the run is skipped and says what to install:
 `micromamba install -c conda-forge mpich mpi4py`, or an `Mpi` layer.
 

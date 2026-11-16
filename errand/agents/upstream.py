@@ -86,8 +86,16 @@ def rsh( host: str, options = ( ) ) -> str:
     return " ".join( shlex.quote( a ) for a in rsh_argv( host, options ) )
 
 
-def name_of( target: dict ) -> str:
-    return f"host-{bootstrap.sources_key()}"
+def name_of( target: dict, machine: str | None = None ) -> str:
+    """The host agent's directory name: per machine, since several login nodes behind one name ( a
+    cluster's ) share the home it lives in, and an agent of one cannot be reached from another."""
+    return f"host-{bootstrap.sources_key()}" + ( f"-{machine}" if machine else "" )
+
+
+def this_machine( ) -> str:
+    """This machine's short name, as `hostname -s` says it in `argv_of`."""
+    import socket
+    return socket.gethostname().split( "." )[ 0 ]
 
 
 def argv_of( target: dict ) -> list:
@@ -96,7 +104,7 @@ def argv_of( target: dict ) -> list:
         return list( target[ "argv" ] )          # a command whose stdio reaches a bridge ( `envs.py` )
     if target[ "kind" ] == "local":
         return [ sys.executable, "-m", "errand.agents", "connect", str( target[ "dir" ] ), str( keep ) ]
-    where = f'"$base"/{shlex.quote( AGENTS + "/" + name_of( target ) )}'
+    where = f'"$base"/{shlex.quote( AGENTS + "/" + name_of( target ) )}-"$( hostname -s 2>/dev/null || hostname )"'
     then = f'exec "$py" "$base"/{shlex.quote( bootstrap.boot_rel() )} -m errand.agents connect {where} {keep}\n'
     line = " ".join( shlex.quote( a ) for a in ( "sh", "-c", bootstrap._script( then, target.get( "python" ) or "python3" ) ) )
     # Through the user's interactive shell, as every remote command is: it is what puts

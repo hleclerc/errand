@@ -83,6 +83,14 @@ def _mpiexec( ):
     return shutil.which( "mpiexec", path = os.path.dirname( sys.executable ) ) or shutil.which( "mpiexec" )
 
 
+def _shown( argv ) -> str:
+    """A command as said to the user: without the `env -u …` in front."""
+    i = 1 if argv and argv[ 0 ] == "env" else 0
+    while i and i < len( argv ) and argv[ i ] == "-u":
+        i += 2
+    return " ".join( str( a ) for a in argv[ i : ] )
+
+
 def _unset( names ) -> list:
     names = sorted( names )
     return [ "env", *( a for k in names for a in ( "-u", k ) ) ] if names else [ ]
@@ -95,38 +103,163 @@ def plugin( ) -> str:
     return "pmix" if os.path.exists( os.path.join( here, "ompi_info" ) ) else "pmi2"
 
 
-def launcher( stack, n: int ) -> list | None:
-    """The command that starts `n` processes in this place, or None when there is none."""
+def _srun( stack, n: int, exe: str ) -> list:
+    """`srun` starting `n` ranks over the whole allocation, without the variables of the step errand runs in."""
+    from . import layers as L
+    slurm = L.batch_of( stack )
+    nodes = os.environ.get( "SLURM_JOB_NUM_NODES", "" )
+    flags = [ a for var, flag in SLURM_PER_TASK if os.environ.get( var ) for a in ( flag, os.environ[ var ].split( "(" )[ 0 ] ) ]
+    return [ *_unset( k for k in os.environ
+                      if k.startswith( ( "SLURM_", "PMI_", "PMIX_" ) ) and not k.startswith( SLURM_JOB ) ),
+             exe, "--overlap", f"--mpi={getattr( slurm, 'mpi', None ) or plugin()}",
+             *( [ "--nodes", str( min( int( nodes ), n ) ) ] if nodes.isdigit() else [ ] ), *flags, "--ntasks", str( n ) ]
+
+
+def outside( stack, n: int ) -> list | None:
+    """The launcher of a place whose ranks start OUTSIDE its container, or None.
+
+    In a container, errand runs inside it, and so would the launcher: `srun` is
+    not in an image, and a `mpiexec` of the image starts every rank on one node.
+    So when the stack names its launcher before the container -- a Slurm
+    allocation, or an `Mpi` layer -- the ranks are started out there, each
+    entering the container on its own ( `srun … apptainer exec image python …` ),
+    the MPI of the image speaking to the launcher's PMI. An `Mpi` after the
+    container is the image's own, and starts the ranks inside it."""
+    from . import layers as L
+    box = next( ( i for i, l in enumerate( stack ) if isinstance( l, L.Container ) ), None )
+    if box is None:
+        return None
+    mpi = L.mpi_of( stack )
+    if mpi is not None:
+        return [ mpi.launcher, mpi.np, str( n ), *mpi.flags ] if stack.index( mpi ) < box else None
+    slurm = L.batch_of( stack )
+    if slurm is not None and stack.index( slurm ) < box and os.environ.get( "SLURM_JOB_ID" ):
+        return _srun( stack, n, "srun" )
+    return None
+
+
+def launcher( stack, n: int, place: dict | None = None ) -> list | None:
+    """The command that starts `n` processes in this place, or None when there is none.
+
+    `place`: `{ "env": name, "tags": { … } }`, what a launcher outside a container
+    needs to enter it again for each rank ( see `outside` )."""
     from . import layers as L
     stack = stack or [ ]
+    out = outside( stack, n )
+    if out is not None:
+        return _relay( out, place )
     mpi = L.mpi_of( stack )
     if mpi is not None:
         exe = mpi.launcher
         found = shutil.which( exe ) or ( exe if os.sep in exe else None )
         return [ found, mpi.np, str( n ), *mpi.flags ] if found else None
     if os.environ.get( "SLURM_JOB_ID" ) and shutil.which( "srun" ):
-        slurm = L.batch_of( stack )
-        nodes = os.environ.get( "SLURM_JOB_NUM_NODES", "" )
-        flags = [ a for var, flag in SLURM_PER_TASK if os.environ.get( var ) for a in ( flag, os.environ[ var ].split( "(" )[ 0 ] ) ]
-        return [ *_unset( k for k in os.environ
-                          if k.startswith( ( "SLURM_", "PMI_", "PMIX_" ) ) and not k.startswith( SLURM_JOB ) ),
-                 shutil.which( "srun" ), "--overlap", f"--mpi={getattr( slurm, 'mpi', None ) or plugin()}",
-                 *( [ "--nodes", str( min( int( nodes ), n ) ) ] if nodes.isdigit() else [ ] ), *flags, "--ntasks", str( n ) ]
+        return _srun( stack, n, shutil.which( "srun" ) )
     exe = _mpiexec()
     if exe is None:
         return None
     return [ *_unset( k for k in os.environ if k.startswith( ALLOCATION ) ), exe, "-n", str( n ) ]
 
 
+# ── outside the container ───────────────────────────────────────────────────
+
+# The agent outside the layers errand runs in, which started the bridge of its own agent ( `Agent.outer` ):
+# the allocation's node agent under Slurm, the host agent over ssh.
+OUTER = "ERRAND_OUTER_AGENT_DIR"
+# Said to the launcher out there, which has its own environment otherwise: errand's variables, and the
+# path errand and the project's sources are found on. Not the container's PATH, nor its libraries.
+FORWARDED = ( "PYTHONPATH", "PYTHONUNBUFFERED" )
+NOT_FORWARDED = ( "ERRAND_AGENT_DIR", "ERRAND_AGENT_KEEP", "ERRAND_AGENT_PID", OUTER, "ERRAND_PROC_DIR" )
+
+
+def _relay( start: list, place: dict | None ) -> list:
+    """The prefix that has the outer agent start `start`, each rank entering the layers again ( `through` )."""
+    from . import local
+    from .agents import endpoint
+    outer = os.environ.get( OUTER )
+    # In a job errand submitted, the agent was started on the node just before the container: it may
+    # still be on its way.
+    import time
+    deadline = time.monotonic() + 20
+    while outer and endpoint.reach( Path( outer ) ) is None and time.monotonic() < deadline:
+        time.sleep( 0.2 )
+    if not outer or endpoint.reach( Path( outer ) ) is None:
+        raise local.Skipped( "the ranks start outside the container, and no errand agent is there to start them",
+                             "it is the allocation's agent under Slurm, the host's over ssh: an `apptainer exec` "
+                             "with --cleanenv or --containall hides it ( or put an `errand.Mpi` after the "
+                             "container: the ranks then start inside it, on one node )" )
+    if place is None:
+        raise ValueError( "a launcher outside a container needs the place ( env, tags ) to enter it again" )
+    spec = { "outer": outer, "start": start, "env": place[ "env" ], "tags": dict( place.get( "tags" ) or { } ) }
+    return [ sys.executable, "-m", "errand.mpi", "through", json.dumps( spec ) ]
+
+
+def after_outer( stack ) -> list:
+    """The layers between the outer agent and the work: after the allocation, else after the gateway;
+    the launcher itself not among them."""
+    from . import layers as L
+    cut = max( ( i + 1 for i, l in enumerate( stack ) if L.is_scheduler( l ) or isinstance( l, L.Gateway ) ), default = 0 )
+    return [ l for l in stack[ cut : ] if not isinstance( l, L.Launcher ) ]
+
+
+def through( spec: dict, payload: list ) -> int:
+    """Run in the container: has the outer agent start `start` + `payload` through the layers again, and
+    relays its output and its exit code. Stopped, it stops what it started out there."""
+    import signal
+    import socket
+    from . import config, layers as L
+    from .agents import client as C, endpoint, frames as F
+    root = Path.cwd()
+    config.load( root, warn = lambda m: None )
+    env = config.envs.get( spec[ "env" ] )
+    stack = env.stack_for( "run" ) if env is not None else [ ]
+    ctx = L.Context( root = root, tags = spec[ "tags" ], remote = L.ssh_of( stack ) is not None )
+    cmd = L.compose( after_outer( stack ), L.Command( list( payload ) ), ctx )
+    sent = { k: v for k, v in os.environ.items()
+             if k in FORWARDED or ( k.startswith( "ERRAND_" ) and k not in NOT_FORWARDED ) }
+    argv = [ *spec[ "start" ], *cmd.argv ]
+    sock = endpoint.reach( Path( spec[ "outer" ] ) )
+    if sock is None:
+        print( f"errand: the agent outside the container ( {spec[ 'outer' ]} ) does not answer", file = sys.stderr )
+        return 1
+    print( f"  $ {_shown( argv )}   ( outside the container )", flush = True )
+    conn = C.Connection( sock.recv, sock.sendall, lambda: sock.shutdown( socket.SHUT_RDWR ) )
+    call = conn.open( { "op": "spawn", "argv": argv, "cwd": str( root ), "env": { **sent, **cmd.env }, "keep": False } )
+    call.reply()
+    call.send( F.EOF )
+
+    def interrupted( signum, frame ):
+        raise KeyboardInterrupt
+    signal.signal( signal.SIGTERM, interrupted )
+    stopping = False
+    while True:
+        try:
+            kind, data = call.next()
+        except KeyboardInterrupt:
+            if not stopping:
+                C.stop( call )             # the agent out there stops the launcher and every rank
+                stopping = True
+            continue
+        if kind is None:
+            print( "errand: the connection to the agent outside the container was lost", file = sys.stderr )
+            return 1
+        if kind in ( F.OUT, F.ERR ):
+            view = memoryview( data )
+            while view:
+                view = view[ os.write( 1 if kind == F.OUT else 2, view ) : ]
+        elif kind == F.EXIT:
+            return int( F.load( data ).get( "code", 1 ) )
+
+
 # ── the side that launches ──────────────────────────────────────────────────
 
-def run( e, *, n: int, stack, root: Path, leaf: Path, resolved: dict, argv: list, env: dict ):
+def run( e, *, n: int, stack, root: Path, leaf: Path, resolved: dict, argv: list, env: dict, place = None ):
     """Runs the entry `e` on `n` ranks. -> ( status, error, hint, results ).
 
     The ranks' output goes to stdout as it comes ( the caller captures it into
     `output.txt` ), each line after its rank."""
     from . import local
-    start = launcher( stack, n )
+    start = launcher( stack, n, place )
     if start is None:
         raise local.Skipped( f"needs an MPI launcher for {n} ranks",
                              "install one in the environment ( micromamba install -c conda-forge mpich mpi4py ), "
@@ -138,10 +271,8 @@ def run( e, *, n: int, stack, root: Path, leaf: Path, resolved: dict, argv: list
     child = { **os.environ, **env, "PYTHONPATH": path, "PYTHONUNBUFFERED": "1",
               RESOLVED: json.dumps( resolved ), ARGV: json.dumps( argv ), RANKED: "1" }
     cmd = [ *start, sys.executable, "-m", "errand.mpi", str( e.file ), str( e.line ), str( root ), str( leaf ) ]
-    i = 1 if start[ 0 ] == "env" else 0
-    while i and start[ i ] == "-u":
-        i += 2
-    print( f"  $ {' '.join( start[ i: ] )} …", flush = True )
+    if "through" not in start[ 1 : 4 ]:            # the relay says its own
+        print( f"  $ {_shown( start )} …", flush = True )
     proc = subprocess.Popen( cmd, cwd = str( root ), env = child, text = True, errors = "replace",
                              stdout = subprocess.PIPE, stderr = subprocess.STDOUT )
     for line in proc.stdout:
@@ -200,7 +331,10 @@ def main( argv = None ):
     import traceback
     from . import discovery, entries as E, local
 
-    file, line, root, leaf = ( argv or sys.argv[ 1 : ] )[ : 4 ]
+    argv = argv or sys.argv[ 1 : ]
+    if argv[ : 1 ] == [ "through" ]:
+        return through( json.loads( argv[ 1 ] ), argv[ 2 : ] )
+    file, line, root, leaf = argv[ : 4 ]
     root, leaf = Path( root ), Path( leaf )
     r, n = rank() or 0, size() or 1
     if n > 1:

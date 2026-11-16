@@ -52,7 +52,15 @@ def session( req: dict ) -> int:
     from .. import results as R
 
     root = Path( req[ "root" ] )
-    os.chdir( root )
+    try:
+        os.chdir( root )
+    except FileNotFoundError:
+        # Seen from a container that does not mount the file system the project is on
+        print( f"errand: the project root {root} is not seen here"
+               + ( ": mount it in the image ( `flags = [ \"--bind\", ... ]` on the container layer )"
+                   if os.environ.get( "APPTAINER_CONTAINER" ) or os.environ.get( "SINGULARITY_CONTAINER" ) else "" ),
+               file = sys.stderr )
+        return 1
     config.load( root, warn = lambda m: print( dim( f"  warning: {m}" ), file = sys.stderr ) )
     known = SimpleNamespace( **{ **{ k: None for k in KNOWN }, **req[ "known" ] } )
     out_root = output_tree( root, known )

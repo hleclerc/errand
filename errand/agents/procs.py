@@ -74,6 +74,9 @@ class Proc:
             meta.update( pgid = self.child.pid, since = started( self.child.pid ) )
         for d in { self.mark, self.dir }:
             ( d / "meta.json" ).write_text( json.dumps( meta ) )
+        # Attached at least once: a process that ends before its client is attached ( `spawn` replies,
+        # then attaches ) keeps its output for that client, rather than the client getting an exit alone.
+        self.seen = False
         self._readers = [ threading.Thread( target = self._pump, args = ( read, name, F.OUT if name == "out" else F.ERR ),
                                             daemon = True ) for read, name in self.child.streams ]
         for t in self._readers:
@@ -113,13 +116,15 @@ class Proc:
             self._tell( F.EXIT, { "code": code } )
             delivered = bool( self.listeners )
             self.listeners.clear()
-            if delivered or not self.keep:
+            if delivered or ( not self.keep and self.seen ):
                 shutil.rmtree( self.dir, ignore_errors = True )
-            shutil.rmtree( self.mark, ignore_errors = True )
+            if self.mark != self.dir:          # the same directory: kept above until its client is told
+                shutil.rmtree( self.mark, ignore_errors = True )
 
     def attach( self, writer, channel, out = 0, err = 0 ):
         """Send what was written from these offsets on, then follow."""
         with self.lock:
+            self.seen = True
             for name, kind, offset in ( ( "out", F.OUT, out ), ( "err", F.ERR, err ) ):
                 path = self.dir / name
                 if path.exists() and path.stat().st_size > offset:
@@ -128,6 +133,8 @@ class Proc:
                         writer.send( channel, kind, f.read() )
             if self.code is not None:
                 writer.send( channel, F.EXIT, { "code": self.code } )
+                if not self.keep:
+                    shutil.rmtree( self.dir, ignore_errors = True )      # ended before this attach: told now
             else:
                 self.listeners.append( ( writer, channel ) )
 

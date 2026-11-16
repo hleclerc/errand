@@ -44,7 +44,7 @@ def port_of_user( ) -> int:
 def host_agent_dir( ) -> Path:
     """This machine's host agent, where ssh would start it ( `upstream.argv_of` )."""
     from ..agents import upstream as U
-    return bootstrap.local_cache() / U.AGENTS / U.name_of( { "kind": "ssh" } )
+    return bootstrap.local_cache() / U.AGENTS / U.name_of( { "kind": "ssh" }, U.this_machine() )
 
 
 def serves( root: Path ) -> bool:
