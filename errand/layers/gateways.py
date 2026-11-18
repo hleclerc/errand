@@ -489,6 +489,25 @@ def put( local_dir: Path, host: str, remote_dir, options = ( ), transfer_by = No
                       here( f"{local_dir}/" ), f"{host}:{remote}/" ], check = True )
 
 
+def fetch_file( path: str, host: str, remote_root, local_root: Path, options = ( ), transfer_by = None, say = print ):
+    """One file of the copy, `path` from its root, brought back at once ( a view, `cli.views` ), its date kept:
+    the run's own coming back finds it as it is and leaves it. Raises when it could not come."""
+    path = Path( path ).as_posix()
+    target = Path( local_root ) / path
+    target.parent.mkdir( parents = True, exist_ok = True )
+    if transfer( transfer_by ) == "sync":
+        from ..agents import syncop, upstream
+        conn = agents.open( upstream.of_host( host, options ) )
+        syncop.pull( conn, remote_root, local_root, [ path ], where = host, say = say )
+        if not target.is_file():
+            raise FileNotFoundError( f"{host}:{remote_root}/{path}" )
+        return
+    got = subprocess.run( [ *rsync(), "-a", *_rsh( options, host ), f"{host}:{remote_root}/{path}", here( target ) ],
+                          capture_output = True, text = True )
+    if got.returncode:
+        raise OSError( ( ( got.stderr or "" ).strip().splitlines() or [ f"rsync: {got.returncode}" ] )[ -1 ] )
+
+
 def fetch( paths, host: str, remote_root: Path, local_root: Path, options = ( ), transfer_by = None,
            finished_only = False, keep = False ):
     """Best effort: a path the remote run never created is nothing to bring back. Nothing here is

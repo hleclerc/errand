@@ -33,6 +33,9 @@ NONE, FALLBACK, LANGUAGE, FRAMEWORK, ERRAND = Level.NONE, Level.FALLBACK, Level.
 # says the word. A comment explaining that a suite is collected by errand, a
 # docstring, a string in somebody's fixture -- all of those mention it, and none
 # of them should be imported and executed on the strength of that.
+# Where errand's C++ headers are ( `#include <errand/require.hpp>` ): `{errand_include}` in a build line.
+INCLUDE = Path( __file__ ).resolve().parents[ 1 ] / "include"
+
 MARKER = re.compile( r"^[ \t]*(from[ \t]+errand(\.[\w.]+)?[ \t]+import|import[ \t]+errand\b)",
                      re.MULTILINE )
 
@@ -146,7 +149,10 @@ class Runner:
 
     def fill_tools( self, line: str, ctx: RunContext ) -> str:
         """`{python}`, `{cmake}`… in a command line written by the user, for the tools the environment
-        names: nothing else in braces is touched ( `${CC}`, `{a,b}` )."""
+        names, and `{errand_include}`, where `errand/require.hpp` is ( ADR 0014 ): nothing else in
+        braces is touched ( `${CC}`, `{a,b}` )."""
+        if "{errand_include}" in line:
+            line = line.replace( "{errand_include}", shlex.quote( str( INCLUDE ) ) )
         for name in { "python", *ctx.tools }:
             if "{" + name + "}" in line:
                 line = line.replace( "{" + name + "}", shlex.join( self.tool( name, ctx ) ) )

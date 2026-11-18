@@ -46,10 +46,18 @@ Once granted, it returns the cards, and sets `CUDA_VISIBLE_DEVICES` (and the HIP
 its own process, which a framework reads at its first use of the device. A `require` that asks for
 no more than the claim holds returns at once.
 
-**errand remembers, so that the next run asks up front.** What a run required is written in its
-record, and in the machine's state, by environment and target
-(`errand-outputs/state/needs.json`). The next run of that target claims it before it starts, as if
-it had been on the command line. It then rarely grows while running, and the cards are known from
+*Added 2026-11-18*: `require` asks for that much **in all** ( the larger of what is held and what is
+asked, a share and a size compared on the smallest card held: a claim never shrinks ), or, with
+`extra = True`, for that much **more** than the run was started with by its environment and command
+line ( the claim's `base` ), several calls adding up. What is remembered is the total the code came to
+( `wanted` ), not the calls, so that an `extra` call is not added again on top of what is claimed up
+front.
+
+**errand can remember, so that the next run asks up front.** What a run required is written in its
+record. With `errand.configure( remember_needs = True )` (off by default: what a run claims is then
+only what it is told and what its code requires, nothing it did before), it is also kept in the
+machine's state, by environment and target (`errand-outputs/state/needs.json`). The next run of
+that target claims it before it starts, as if it had been on the command line. It then rarely grows while running, and the cards are known from
 its first line. A target that no longer calls `require` drops what was remembered after one run.
 What is remembered is the machine's own: another machine, another capacity, learns its own.
 
@@ -74,7 +82,7 @@ and set what it prints in the process.
 - Python: `errand.require` (in `errand`, standard library only).
 - Shell: `require --gpus 1` from `eval "$ERRAND_STEPS_SH"`, as `step`.
 - C++: a header-only `errand/require.hpp` (`errand::require( { .gpus = 1 } )`), shipped with errand
-  and found the way the Catch2 runner finds its includes.
+  and found by a runner's build line as `-I{errand_include}`.
 - Rust: a function to copy, or a crate if one is asked for.
 
 ## Considered options
@@ -92,7 +100,8 @@ and set what it prints in the process.
 ## Consequences
 
 An environment says once what all its runs take. Work that needs more says so in its code, once. It is correct from the first run
-(it waits), and efficient from the second (claimed up front, cards known before it starts). A
+(it waits), and, when the project asks errand to remember, efficient from the second (claimed up
+front, cards known before it starts). A
 program run without errand is unchanged. The queue gains a claim that grows, a priority for it,
 and a rerun for the rare cycle. `ERRAND_CLAIM_FILE` joins the variables errand sets for a run;
 it is errand's own, not a value forwarded from the user's environment.
@@ -116,7 +125,21 @@ it is errand's own, not a value forwarded from the user's environment.
    ( `needs.run_claimed` ); `errand require` exits 75 when stopped.
 4. What is remembered: the record, `needs.json`, the claim up front. *Done 2026-11-18*:
    `errand/needs.py`, keyed by host, environment and `file::name`; `required` in `result.yaml`.
-   Not tried yet: a real card ( `nvidia-smi` sizes, `CUDA_VISIBLE_DEVICES` as Jax reads it ).
+   Made optional the same day, off by default: `configure( remember_needs = True )`. A run stopped
+   in a cycle is run again with what its claim says it required, remembered or not. Tried on lmo's
+   2080 Ti: its size read ( 11264 MiB ), `--gpu-ram 30%` claimed over `Ssh`, `require( gpu_ram = "50%" )`
+   grown in place. Not tried: Jax itself on a shared card.
 5. The C++ header, with a test through the Catch2 runner. Then otrec and sdot-ffi call
    `require( gpus = 1 )` where they use Jax on a GPU: a card is assigned, never shared, so that is
-   already the card to itself; `exclusive` is the whole machine (a benchmark). *Not started.*
+   already the card to itself; `exclusive` is the whole machine (a benchmark). *The header done
+   2026-11-18*: `errand/include/errand/require.hpp`, C++17 ( designated initializers in C++20 ),
+   `errand::Rerun` on exit 75, `{errand_include}` in runners' build lines; tested here with a plain
+   binary, and through the Catch2 runner on lmo. *otrec and sdot-ffi marked 2026-11-18*: rather than
+   `require( gpus = 1 )` in each entry ( loom's default device is the card: every run of a card
+   framework uses it ), the environments say it: in `~/Projects/errand-envs.py`, `gpus` on lmo, n22,
+   n22x2 for torch and cupy, with `gpu_ram = "75%"` for Jax ( and on Jean Zay ); `gpus = 1` on otrec's
+   own environments. The benchmarks ( sdot-ffi's `bench/bench_*.py` and `pd accelerated`, otrec's
+   `bench/eval.py` ) call `require( exclusive = True )`, which ADR 0011 had taken from `bench`. Tried
+   on lmo ( `otrec/bench/eval.py` ). Two rules found on the way: a card asked on a machine with none
+   is not waited for, and the younger growers make way when an older one waits only for them ( three
+   benchmarks under `-j` growing to the whole machine, which no pair shows ).

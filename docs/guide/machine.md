@@ -50,7 +50,7 @@ From the most general to the most precise, each one over the one before:
   `ram`, `gpus`, `gpu_ram` and `exclusive`. It also sizes the allocation of a [Slurm](./layers/slurm) layer.
 - **The command line**, as above: `--gpus 1 --gpu-ram 40G`, `-x`.
 - **The code**, while it runs: `errand.require( gpus = 1, gpu_ram = "75%" )`, called early, before
-  what it protects is allocated ( for Jax, before `import jax` ). It only adds to the claim. →
+  what it protects is allocated ( for Jax, before `import jax` ). It never shrinks the claim. →
   [The run asks, from its code](#the-run-asks-from-its-code)
 
 ## The memory of a card
@@ -78,9 +78,23 @@ grows that claim, under the queue's lock, and **waits** until it fits. Once gran
 first use of the device, and returns the cards. A `require` that asks for no more than the claim
 holds returns at once.
 
+**In all, or more.** By default `require` asks for that much **in all**: what the run already holds
+counts. `require( ram = "20G" )` on a run started with `--ram 16G` grows it to 20G, not 36G, and
+`require( gpus = 1, gpu_ram = "50%" )` on a run that holds a card at 75 % returns at once. With
+`extra = True` ( `--extra` from the command line, `.extra = true` in C++ ) it asks for that much
+**more** than the run was started with by its environment and command line, and several such calls
+add up: `gpus` more cards, `gpu_ram` more on each card it holds. A share and a size are compared, or
+added, on the smallest card the run holds. Either way, a claim never shrinks.
+
 A claim that grows is ahead of any new claim, as an exclusive request is. Two runs that grow at once
 can wait for each other, each holding what the other needs: the younger is then stopped by its
 `require` ( `errand.Rerun` ), and run again, once, with its needs up front. It says so in its output.
+More generally, a claim that grows and waits makes way for an older one that waits only for the
+younger growers: three benchmarks under `-j`, each growing to the whole machine, run one after the
+other.
+
+Cards asked on a machine that has none are not waited for: the same environment or code runs on a
+laptop as on a workstation with a GPU.
 
 Outside errand, with `--no-queue`, or in an allocation of Slurm, PBS, OAR… that errand does not hold,
 `require` does nothing and returns at once: a program run by hand never waits, never fails, and sees
@@ -103,11 +117,35 @@ ERRAND_CLAIM=1
 
 It prints nothing outside errand, and exits with 75 when it was stopped to run again.
 
-## errand remembers what a run required
+In C++, the header `errand/require.hpp` ships with errand ( header-only, C++17 ). A runner's build
+line finds it with `{errand_include}`:
 
-What a run's `require` asked is written in its [record](./output) ( `required` ) and in the machine's
-state, by environment and target: `errand-outputs/state/needs.json`. The next run of that target
-claims it **before it starts**, as if it had been on the command line, and says so:
+```python
+errand.runners.replace( errand.Catch2( dir = "cpp", build = "c++ -std=c++17 -I{errand_include} … -o cpp/test_gpu" ) )
+```
+
+```cpp
+#include <errand/require.hpp>
+
+errand::require( { .gpus = 1, .gpu_ram = "75%" } );    // C++20; in C++17, fill an errand::Needs
+```
+
+It calls `errand require`, sets what it prints in the process, and returns the cards. Stopped to run
+again, it throws `errand::Rerun`: let it go through, or exit.
+
+## Remembering what a run required
+
+What a run's `require` calls came to, in all, is always written in its [record](./output)
+( `required` ). With
+
+```python
+errand.configure( remember_needs = True )
+```
+
+it is also kept in the machine's state, by environment and target: `errand-outputs/state/needs.json`.
+The next run of that target then claims it **before it starts**, as if it had been on the command
+line, and says so. The total is kept, not the calls: an `extra` call is not added a second time on
+top of what was claimed up front.
 
 ```text
   claimed up front, as it required last time: gpus=1, gpu_ram=75%
@@ -115,7 +153,8 @@ claims it **before it starts**, as if it had been on the command line, and says 
 
 It then rarely grows while running, and its cards are known from its first line. A target that no
 longer calls `require` drops what was remembered after one run. Each machine learns its own: another
-machine, another capacity.
+machine, another capacity. It is off by default: every run then asks again, and what it claims is
+only what the environment, the command line and its code say.
 
 ## Looking at the queue
 

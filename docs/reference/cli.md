@@ -43,7 +43,7 @@ target is the target's: `errand --env gpu run t.py` and `errand run --env gpu t.
 | verb | |
 |---|---|
 | `download URL [--sha256 H]` | a file into the project's cache, as [`errand.download`](/reference/python-api#download) does; prints its path. The next push carries it |
-| `require [--gpus N] [--gpu-ram S] [--ram S] [--cpus N] [-x]` | inside a run: grows its claim, as [`errand.require`](/reference/python-api#require) does, waits, then prints what to set ( `CUDA_VISIBLE_DEVICES=1` ). Nothing outside errand; exit 75 when stopped to run again |
+| `require [--gpus N] [--gpu-ram S] [--ram S] [--cpus N] [-x] [--extra]` | inside a run: grows its claim ( to that much in all; `--extra`: that much more than it was started with ), as [`errand.require`](/reference/python-api#require) does, waits, then prints what to set ( `CUDA_VISIBLE_DEVICES=1` ). Nothing outside errand; exit 75 when stopped to run again |
 
 **Suites**
 

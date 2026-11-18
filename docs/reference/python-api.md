@@ -136,6 +136,31 @@ A run nobody follows, or a script run by hand with no route, fails and says to
 `errand download URL` here: the next push brings it. In a shell script, `eval "$ERRAND_STEPS_SH"`
 gives a `download URL` function that prints the path.
 
+### memo
+
+```python
+@errand.memo
+@errand.memo( version = 0, key = None, ignore = ( ), save = None, load = None, source = False )
+```
+
+The function's result, kept by its arguments in `errand-cache/memo/`, the project's
+[cache zone](/guide/layers/ssh#a-cache-zone): computed once, then read back, on this machine and on
+every machine the cache reaches. A result computed on lmo comes back here after the command, and
+goes to the next machine with its push.
+
+The key hashes the function ( its file from the project root and its name ), `version`, and its
+arguments bound to its signature, defaults included, by what they hold: numbers, strings, containers,
+dataclasses, enums, numpy, jax and torch arrays ( dtype, shape, bytes ), a `Path` by its file's
+contents. Anything else is an error that says what to do: `key = lambda *args, **kw: …`,
+`ignore = [ "verbose" ]`, or a `__errand_key__()` method on the class. The function's code is not
+part of the key: raise `version` when what it computes changes ( `source = True` adds its own source ).
+
+Arrays, and tuples, lists or dicts of arrays, are kept as a `.npz`; the rest is pickled.
+`save( value, directory )` and `load( directory )` replace that. Two runs that want one result
+compute it once. A kept value that does not load is computed again. `errand.memo.mode = "off"`
+( or `ERRAND_MEMO=off` ) computes and keeps nothing; `"refresh"` computes and replaces. Outside a
+project, the function runs and nothing is kept. `f.memo_dir( *args )` says where a result is.
+
 ### cache_dir
 
 ```python
@@ -151,16 +176,19 @@ no variable for it.
 ### require
 
 ```python
-require( gpus = None, gpu_ram = None, ram = None, cpus = None, exclusive = False ) -> list
+require( gpus = None, gpu_ram = None, ram = None, cpus = None, exclusive = False, extra = False ) -> list
 ```
 
 Asks the machine for more than the run was started with, and waits until it is given
 ( [The run asks, from its code](/guide/machine#the-run-asks-from-its-code) ). Call it early, before
 what it protects is allocated: for Jax, before `import jax`. `gpu_ram` is what the run takes on each
-of its cards, a size ( `"40G"` ) or a share ( `"75%"` ); `gpus` without it takes cards whole. It only
-adds to the run's claim. Once granted it sets `CUDA_VISIBLE_DEVICES`, `HIP_VISIBLE_DEVICES` and
-`ROCR_VISIBLE_DEVICES` in this process, and returns the cards. errand remembers what it asked, and
-claims it up front the next time.
+of its cards, a size ( `"40G"` ) or a share ( `"75%"` ); `gpus` without it takes cards whole. It asks
+for that much in all, what the run holds counting; with `extra = True`, for that much more than the
+run was started with ( by its environment and command line ), several such calls adding up
+( [In all, or more](/guide/machine#the-run-asks-from-its-code) ). It never shrinks the claim. Once granted it sets `CUDA_VISIBLE_DEVICES`, `HIP_VISIBLE_DEVICES` and
+`ROCR_VISIBLE_DEVICES` in this process, and returns the cards. What it asked is written in the run's
+record, and, with `configure( remember_needs = True )`, claimed up front the next time. In C++:
+`errand/require.hpp` ( [The run asks, from its code](/guide/machine#the-run-asks-from-its-code) ).
 
 Outside errand, with `--no-queue`, or in an allocation of somebody else's ( Slurm, PBS… ), it does
 nothing and returns `[ ]`. Standard library only.
@@ -185,11 +213,13 @@ errand it does nothing. → [Where a run is: steps](/guide/steps)
 ### view
 
 ```python
-view( path, title: str = None, content: str | bytes = None )
+view( path, title: str = None, content: str | bytes = None ) -> bool
 ```
 
 `path`, relative to the run's directory, is a file worth watching as it evolves. With `content`,
-errand writes it atomically. → [Where a run is: steps](/guide/steps#view-a-file-that-evolves)
+errand writes it atomically. errand says where it opens, `OUTPUT: file://...`, on the machine that
+drives the run, brought back there at once from a run elsewhere. → False outside errand: nothing said,
+the caller says it if it wants to. → [Where a run is: steps](/guide/steps#view-a-file-that-evolves)
 
 ## What only this machine can supply
 
@@ -212,7 +242,7 @@ In the project's `errand-*.py` files; see [Configuration](/guide/configuration).
 
 ```python
 errand.configure( outputs_directory = "errand-outputs", builds_directory = None, build = "build",
-                  src = [ ], exclude = [ ], zones = { } )
+                  src = [ ], exclude = [ ], zones = { }, remember_needs = False )
 ```
 
 | | |
@@ -223,6 +253,7 @@ errand.configure( outputs_directory = "errand-outputs", builds_directory = None,
 | `src` | paths prepended to every child's `PYTHONPATH` |
 | `exclude` | directories discovery must not walk into |
 | `zones` | `{ path: "back" \| "build" }`: where a run writes in the project's copy over ssh |
+| `remember_needs` | keep what a run's `require` asked, by machine, environment and target, and claim it up front the next time ( [Remembering](/guide/machine#remembering-what-a-run-required) ). Off by default |
 
 An unknown setting is a `TypeError` listing the ones that exist.
 

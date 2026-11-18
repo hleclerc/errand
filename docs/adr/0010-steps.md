@@ -91,3 +91,15 @@ the case running, `errand status` and `errand tui` show it, the TUI reads a fini
 and opens HTML views in the browser. Tried for real: a local `errand run` of a Python and a shell
 script on a terminal. Not tried for real: the line relayed from a session on another machine.
 The user guide: `docs/guide/steps.md`, with `step` and `view` in the Python API reference.
+
+## Amended, 2026-11-18: a view is said where it opens
+
+A tool that writes a page says `OUTPUT: file://...` for a ctrl+click; on a machine that does not
+share its disk, that path leads nowhere. `view` now says it on the machine that drives the run: the
+session turns each `view` of the journal into a mark, by its path from the copy's root
+(`footer.view`); the driving side (`cli/views.py`, `Views`) brings that one file back at once
+(`layers.fetch_file`, or the guest's `pull_file`), its date kept so the run's coming back leaves it,
+and says its local path, once per file. A run nobody follows (no `$ERRAND_RELAY`) says its own path.
+`view` returns whether errand says it, so a library keeps its own line outside errand. Tried for
+real: a session on this machine, and a run on lmo over ssh, by sync and by rsync, whose page arrived
+before its end (`tests/test_views.py`). Not tried: a Windows guest.

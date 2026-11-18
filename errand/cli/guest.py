@@ -188,6 +188,17 @@ class Guest:
                      sel = S.Selection( [ ".errand-work" ] ) if keep else None )
 
 
+    def pull_file( self, path: str ):
+        """One file of the guest's copy, brought back at once ( a view, `views.Views` )."""
+        from ..agents import syncop
+        target = Path( self.where.root ) / path
+        target.parent.mkdir( parents = True, exist_ok = True )
+        syncop.pull( self.host_conn(), self.there, self.where.root, [ Path( path ).as_posix() ],
+                     where = "windows", say = self.echo )
+        if not target.is_file():
+            raise FileNotFoundError( f"windows:{self.there}/{path}" )
+
+
 def unpack_line( src: str, key: str ) -> str:
     """cmd.exe: a tar.gz of errand's package on stdin into `<src>/errand`, unless it holds these sources already.
     Two shippings at once each unpack in a directory of their own, and a copy is said whole ( `.sources` ) only

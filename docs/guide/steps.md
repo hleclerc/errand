@@ -63,6 +63,36 @@ errand.view( "mesh.png", title = "current mesh" )
 A relative path is in the run's directory, beside `output.txt`, so it comes back with the record,
 from wherever the run is. Call `view` again with new `content` each time the file changes.
 
+### Where it opens
+
+errand says it, once per file, as a link a terminal opens with a click:
+
+```text
+OUTPUT: file:///Users/me/proj/errand-outputs/runs/solve/2026-11-18_10h02m11-lin@lmo/convergence.html
+```
+
+That path is on **the machine that drives the run**, not the one that runs it. A run on another machine
+names the file; errand brings that one file back **at once**, to where the run's own coming back
+would put it, and says its path here. Named again while it is on its way, it comes once more after:
+the last state always arrives, never one transfer per call. Its date is kept, so at the run's end the
+file is not sent again unless it changed.
+
+A run nobody drives ( `--batch` ) says the path where it is. A file outside the project over there
+cannot be brought back: it is said as `host:path`.
+
+`view` returns whether errand says it: False outside errand, so a library can keep its own line for a
+script run by hand:
+
+```python
+try:
+    import errand
+    said = errand.view( path )
+except ImportError:
+    said = False
+if not said:
+    print( f"OUTPUT: { path.absolute().as_uri() }" )
+```
+
 ::: warning Replace it, never rewrite it in place
 A reader must never see half a file. With `content`, errand writes a temporary file and renames it
 over the old one. A process that writes the file itself must do the same:
@@ -86,7 +116,7 @@ done
 view convergence.html
 ```
 
-`$ERRAND_STEPS_SH` holds the functions `step` and `view`, in POSIX sh, and `download URL`, which prints
+`$ERRAND_STEPS_SH` holds the functions `step` and `view` ( which says where the file opens, as above ), in POSIX sh, and `download URL`, which prints
 the path of a file fetched as [`errand.download`](/reference/python-api#download) does, and `require`,
 which grows the run's claim as [`errand.require`](/guide/machine#the-run-asks-from-its-code) does. The first argument of
 `step` is the text unless it reads `name=value`; the values are written as given, so they must be

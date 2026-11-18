@@ -4,8 +4,8 @@ Three ways to ask, one claim, each over the one before: the environment
 ( `Env( needs = … )` ), the command line ( `--gpus`, `--gpu-ram`, `-x` ), and
 the run's own code ( `errand.require` ), which grows the claim while it runs.
 
-What the code required is remembered on the machine that ran it, by
-environment and target:
+With `errand.configure( remember_needs = True )`, what the code required is
+remembered on the machine that ran it, by environment and target:
 
     errand-outputs/state/needs.json     { host: { env: { target: needs } } }
 
@@ -51,9 +51,10 @@ def remembered( root, env_name: str, target: str ) -> dict:
 
 
 def remember( root, env_name: str, target: str, row: dict ):
-    """Keep what a run's claim says it required ( `required`, `required_exclusive` ), or forget it
-    when it required nothing this time."""
-    got = dict( row.get( "required" ) or { } )
+    """Keep what a run's claim says its code came to ( `wanted`, `required_exclusive` ): the total,
+    not the calls, so that a `require( extra = True )` is not added twice the next time. Forget it
+    when the code required nothing this time."""
+    got = dict( row.get( "wanted" ) or { } )
     if row.get( "required_exclusive" ):
         got[ "exclusive" ] = True
     if remembered( root, env_name, target ) == got:
@@ -89,7 +90,7 @@ def asked( env_name: str, resources: dict, command: dict, exclusive: bool, *, ro
     base, excl = of_env( env_name )
     needs = queue.normalize( { **base, **( resources or { } ), **( command or { } ) } )
     excl = excl or exclusive
-    mem = remembered( root, env_name, target ) if root is not None and target else { }
+    mem = remembered( root, env_name, target ) if root is not None and target and config.settings.remember_needs else { }
     if mem:
         excl = excl or bool( mem.pop( "exclusive", False ) )
         needs = { **needs, **queue.merged( needs, queue.normalize( mem ) ) }
@@ -110,14 +111,20 @@ def run_claimed( e, *, env_name, ask, root, queued, run, echo, whole_if_unasked 
     all of it ( ADR 0009 )."""
     target = target_of( e, root )
     label = ask.label or f"{e.file.name}::{e.name}"
+    stopped = { }                   # what the first attempt came to, when it was stopped to run again
     for attempt in ( 1, 2 ):
         needs, exclusive, mem = asked( env_name, e.resources, ask.resources, ask.exclusive,
                                        root = root, target = target )
-        if mem and queued:
+        # what it is started with by what it is told, that `require( extra = True )` adds to
+        base = asked( env_name, e.resources, ask.resources, ask.exclusive )[ 0 ]
+        if stopped:
+            exclusive = exclusive or bool( stopped.get( "exclusive" ) )
+            needs = { **needs, **queue.merged( needs, queue.normalize( stopped ) ) }
+        elif mem and queued:
             echo( f"  claimed up front, as it required last time: {shown( mem )}" )
         whole = whole_if_unasked and not needs and not exclusive
         with queue.claim( needs, exclusive = exclusive or whole, label = label, enabled = queued,
-                          echo = echo ) as granted:
+                          echo = echo, base = base ) as granted:
             # Being told WHICH card is the whole point of asking for one. Everything this entry
             # starts inherits the claim: an errand it runs must not queue for a machine its own
             # parent is holding.
@@ -125,9 +132,9 @@ def run_claimed( e, *, env_name, ask, root, queued, run, echo, whole_if_unasked 
             devices = granted.devices if granted.devices and granted.path else None
             result = run( handed, devices )
             row = granted.row()
-        if granted.path is not None:
+        if granted.path is not None and config.settings.remember_needs:
             remember( root, env_name, target, row )
         if attempt == 2 or not row.get( "rerun" ):
             return result
-        echo( f"  {label}: run again, with what it required up front ( "
-              f"{shown( { **( row.get( 'required' ) or { } ), 'exclusive': bool( row.get( 'required_exclusive' ) ) } )} )" )
+        stopped = { **( row.get( "wanted" ) or { } ), "exclusive": bool( row.get( "required_exclusive" ) ) }
+        echo( f"  {label}: run again, with what it required up front ( {shown( stopped )} )" )

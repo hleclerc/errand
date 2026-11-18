@@ -20,6 +20,7 @@ from .entries import (          # noqa: F401  -- the public surface of a file of
     entry,
     experiment,
     has_tag,
+    memo,
     out_dir,
     require,
     tag,
@@ -37,7 +38,7 @@ default_run: list | None = None
 
 __all__ = [
     "Args", "Param", "Skipped", "bench", "cache_dir", "download", "entry", "experiment", "has_tag", "have",
-    "need", "out_dir", "require", "Rerun", "skip", "step", "tag", "test", "track", "view",
+    "memo", "need", "out_dir", "require", "Rerun", "skip", "step", "tag", "test", "track", "view",
     "configure", "default_env", "default_run", "Env", "envs", "providers", "runners", "main", "value",
     "Vars", "Venv", "Micromamba", "Conda", "Uv", "Nix", "Guix", "Module",
     "Apptainer", "Docker", "Podman", "Ssh", "Slurm", "Mpi", "Preload", "Windows", "WindowsBox", "Missing",

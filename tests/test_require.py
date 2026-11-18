@@ -80,6 +80,11 @@ if test( "cards are given by what they have left" ):
                                               { "devices": [ 0 ], "card_ram": [ 4800.0 ] } ] ) == [ 0 ]
 
 
+if test( "a card asked on a machine with none: nothing to wait for" ):
+    with private_queue( { "cpus": 8.0, "ram": 16000.0, "gpus": 0.0 } ):
+        assert Q._fits( Q.normalize( { "gpus": 1, "gpu_ram": "75%" } ), False, [ { "cpus": 1 } ] ) == ( None, [ ] )
+
+
 if test( "a card whose size is unknown is taken whole" ):
     with private_queue( { **CARDS, "card_ram": [ ] } ):
         assert given( { "gpu_ram": "30%" }, [ ] ) == [ 0 ]
@@ -111,6 +116,52 @@ if test( "require grows the claim, keeps its cards, and says what it asked" ):
             assert Q.grow( granted.path, { "gpu_ram": "30%" } ) == [ 0 ]
             assert time.monotonic() - t < 1
             assert yamlish.read( granted.path )[ "gpu_ram" ] == "50%"
+
+
+if test( "a share and a size are compared on the card: a claim never shrinks" ):
+    big = 11264.0
+    assert Q.merged( { "gpus": 1, "gpu_ram": "75%" }, { "gpu_ram": 4096.0 }, big )[ "gpu_ram" ] == "75%"
+    assert Q.merged( { "gpus": 1, "gpu_ram": "75%" }, { "gpu_ram": 10240.0 }, big )[ "gpu_ram" ] == 10240.0
+    assert Q.merged( { "gpus": 1, "gpu_ram": 4096.0 }, { "gpu_ram": "50%" }, big )[ "gpu_ram" ] == "50%"
+    # no size to read the share with: what is held stays
+    assert Q.merged( { "gpus": 1, "gpu_ram": "75%" }, { "gpu_ram": 10240.0 } )[ "gpu_ram" ] == "75%"
+
+
+if test( "extra adds: quantities, shares on each card, a share and a size on the card" ):
+    assert Q.added( { "cpus": 2, "ram": 1024 }, { "cpus": 1, "ram": 512 } ) == { "cpus": 3.0, "ram": 1536.0 }
+    assert Q.added( { "gpus": 1, "gpu_ram": "30%" }, { "gpu_ram": "20%" } ) == { "gpus": 1.0, "gpu_ram": "50%" }
+    assert Q.added( { "gpus": 1, "gpu_ram": "80%" }, { "gpu_ram": "40%" } )[ "gpu_ram" ] == "100%"
+    assert Q.added( { "gpus": 1, "gpu_ram": "50%" }, { "gpu_ram": 1024.0 }, 10240.0 )[ "gpu_ram" ] == 6144.0
+    # cards held whole stay whole
+    assert Q.added( { "gpus": 1 }, { "gpu_ram": "20%" } ) == { "gpus": 1.0 }
+
+
+if test( "require( extra = True ) adds to what the run was started with, and the calls add up" ):
+    with private_queue( CARDS ):
+        with Q.claim( { "ram": "4G", "gpus": 1, "gpu_ram": "30%" }, label = "run" ) as granted:
+            Q.grow( granted.path, { "ram": "2G" }, extra = True )
+            assert yamlish.read( granted.path )[ "ram" ] == 6144
+            Q.grow( granted.path, { "ram": "1G" }, extra = True )
+            assert yamlish.read( granted.path )[ "ram" ] == 7168
+            # at least 5G in all: already held
+            Q.grow( granted.path, { "ram": "5G" } )
+            assert yamlish.read( granted.path )[ "ram" ] == 7168
+            # more memory on the card it holds, not one more card
+            assert Q.grow( granted.path, { "gpu_ram": "20%" }, extra = True ) == [ 0 ]
+            row = yamlish.read( granted.path )
+            assert row[ "gpus" ] == 1 and row[ "gpu_ram" ] == "50%", row
+            assert row[ "wanted" ] == { "ram": 7168.0, "gpus": 1.0, "gpu_ram": "50%" }, row
+
+
+if test( "claimed up front from what was remembered, an extra call is not added twice" ):
+    with private_queue( CARDS ):
+        # the total the code came to last time, claimed up front; the run is told 4G
+        with Q.claim( { "ram": "7G" }, base = { "ram": "4G" }, label = "run" ) as granted:
+            t = time.monotonic()
+            Q.grow( granted.path, { "ram": "3G" }, extra = True )
+            assert time.monotonic() - t < 1
+            row = yamlish.read( granted.path )
+            assert row[ "ram" ] == 7168 and row[ "wanted" ] == { "ram": 7168.0 }, row
 
 
 if test( "a growing claim waits for room, and what arrives after waits behind it" ):
@@ -160,6 +211,33 @@ if test( "two claims that grow and wait for each other: the younger is stopped, 
                 a.join( 15 ); b.join( 15 )
                 assert isinstance( got.get( "younger" ), Rerun ), got
                 assert sorted( got.get( "older" ) ) == [ 0, 1 ], got
+
+
+if test( "three claims that grow to the whole machine: the younger two make way, the oldest goes" ):
+    from errand import Rerun
+    with private_queue( { "cpus": 8.0, "ram": 16000.0, "gpus": 0.0 } ):
+        claims = [ ]
+        with contextlib.ExitStack() as stack:
+            for name in ( "a", "b", "c" ):
+                claims.append( stack.enter_context( Q.claim( { "cpus": 1 }, label = name ) ) )
+                time.sleep( 0.01 )
+            got = { }
+
+            def grow( name, granted ):
+                try:
+                    got[ name ] = Q.grow( granted.path, { }, exclusive = True )
+                except Rerun as r:
+                    got[ name ] = r
+                    Q.release( granted.path )
+
+            threads = [ threading.Thread( target = grow, args = ( n, c ) ) for n, c in zip( "abc", claims ) ]
+            for t in threads:
+                t.start()
+                time.sleep( 0.2 )
+            for t in threads:
+                t.join( 15 )
+            assert got.get( "a" ) == [ ], got
+            assert isinstance( got.get( "b" ), Rerun ) and isinstance( got.get( "c" ), Rerun ), got
 
 
 # ── errand.require ───────────────────────────────────────────────────────────
@@ -239,12 +317,18 @@ if test( "Env( needs = … ): checked when declared, under the command line" ):
 if test( "what a run required is remembered by machine, environment and target, and forgotten when it stops" ):
     from errand import config, needs as N
     with tempfile.TemporaryDirectory() as root:
-        N.remember( root, "gpu", "a.py::x", { "required": { "gpus": 1.0, "gpu_ram": "75%" } } )
+        N.remember( root, "gpu", "a.py::x", { "wanted": { "gpus": 1.0, "gpu_ram": "75%" } } )
         assert N.remembered( root, "gpu", "a.py::x" ) == { "gpus": 1.0, "gpu_ram": "75%" }
         assert N.remembered( root, "cpu", "a.py::x" ) == { }
         data = json.loads( ( config.state( Path( root ) ) / N.FILE ).read_text() )
         assert list( data ) == [ Q.host() ], data
         got, _, mem = N.asked( "gpu", { }, { "cpus": 2 }, False, root = root, target = "a.py::x" )
+        assert got == { "cpus": 2.0 } and not mem, "off by default: nothing claimed from memory"
+        config.settings.remember_needs = True
+        try:
+            got, _, mem = N.asked( "gpu", { }, { "cpus": 2 }, False, root = root, target = "a.py::x" )
+        finally:
+            config.settings.remember_needs = False
         assert got == { "cpus": 2.0, "gpus": 1.0, "gpu_ram": "75%" } and mem, got
         N.remember( root, "gpu", "a.py::x", { } )
         assert N.remembered( root, "gpu", "a.py::x" ) == { }
@@ -273,10 +357,23 @@ if test( "the environment's needs reach the claim, under the command line" ):
         assert "cpus: 1" in line and "ram: 1024" in line, line
 
 
-if test( "what a run required is claimed up front the next time", tags = [ "slow" ] ):
+if test( "what a run required is not remembered unless the project says so", tags = [ "slow" ] ):
     WORK = 'import errand\n\nif p := errand.test( "needs" ):\n    errand.require( cpus = 1 )\n'
     with tempfile.TemporaryDirectory() as tmp:
         project = write_project( Path( tmp ) / "p", "", { "test_needs.py": WORK } )
+        for _ in range( 2 ):
+            rc, out = run_errand( project, "run", "test_needs.py::*" )
+            assert rc == 0 and "claimed up front" not in out, out
+        assert not ( project / "errand-outputs" / "state" / "needs.json" ).exists()
+        result = next( ( project / "errand-outputs" ).rglob( "result.yaml" ) )
+        assert "required" in result.read_text(), "the record says it all the same"
+
+
+if test( "what a run required is claimed up front the next time", tags = [ "slow" ] ):
+    WORK = 'import errand\n\nif p := errand.test( "needs" ):\n    errand.require( cpus = 1 )\n'
+    with tempfile.TemporaryDirectory() as tmp:
+        project = write_project( Path( tmp ) / "p", "import errand\nerrand.configure( remember_needs = True )\n",
+                                 { "test_needs.py": WORK } )
         rc, out = run_errand( project, "run", "test_needs.py::*" )
         assert rc == 0, out
         assert "claimed up front" not in out, out
@@ -309,3 +406,119 @@ if test( "two runs that grow into each other: the younger runs again, with its n
         # which of the two claimed first is up to the machine: exactly one is the younger
         again = [ o for o in outs if "run again" in o ]
         assert len( again ) == 1 and "stopped by errand.require" in again[ 0 ], outs
+
+
+# ── C++: errand/require.hpp ──────────────────────────────────────────────────
+
+REQUIRE_CPP = r"""
+#include <errand/require.hpp>
+#include <cstdlib>
+#include <fstream>
+#include <iostream>
+#include <sstream>
+
+int main() {
+    errand::Needs needs;
+    needs.cpus = 1;
+    needs.ram  = "1G";
+    try {
+        auto got = errand::require( needs );
+        std::cout << "CARDS " << got.size() << std::endl;
+    } catch ( const errand::Rerun & ) {
+        std::cout << "RERUN" << std::endl;
+        return 75;
+    }
+    if ( const char *claim = std::getenv( "ERRAND_CLAIM_FILE" ) ) {
+        std::ifstream f( claim );
+        std::stringstream ss;
+        ss << f.rdbuf();
+        std::string text = ss.str();
+        for ( char &c : text ) if ( c == '\n' ) c = ' ';
+        std::cout << "CLAIM " << text << std::endl;
+    }
+}
+"""
+
+
+def compiler( ):
+    import shutil
+    from errand import skip
+    for cxx in ( "c++", "g++", "clang++" ):
+        if shutil.which( cxx ):
+            return cxx
+    skip( "no C++ compiler" )
+
+
+def build_require( directory: Path ) -> Path:
+    from errand.runner.base import INCLUDE
+    source, binary = directory / "req.cpp", directory / "req"
+    source.write_text( REQUIRE_CPP )
+    got = subprocess.run( [ compiler(), "-std=c++17", "-Wall", "-I", str( INCLUDE ), str( source ), "-o", str( binary ) ],
+                          capture_output = True, text = True )
+    assert got.returncode == 0, got.stderr
+    return binary
+
+
+if test( "errand::require grows the claim of a C++ run, and does nothing outside errand", tags = [ "cpp" ] ):
+    with tempfile.TemporaryDirectory() as tmp:
+        project = write_project( Path( tmp ) / "p", "", { } )
+        binary = build_require( project )
+        alone = subprocess.run( [ str( binary ) ], capture_output = True, text = True,
+                                env = { k: v for k, v in os.environ.items() if k != Q.CLAIM_FILE } )
+        assert alone.returncode == 0 and alone.stdout.strip() == "CARDS 0", alone.stdout + alone.stderr
+        rc, out = run_errand( project, "run", str( binary ) )
+        assert rc == 0, out
+        line = next( l for l in out.splitlines() if l.startswith( "CLAIM" ) )
+        assert "required: { ram: 1024.0, cpus: 1.0 }" in line or "required: { cpus: 1.0, ram: 1024.0 }" in line, line
+
+
+if test( "errand::require throws Rerun when errand stops it to run again", tags = [ "cpp" ] ):
+    with tempfile.TemporaryDirectory() as tmp:
+        binary = build_require( Path( tmp ) )
+        fake = Path( tmp ) / "python"
+        fake.write_text( "#!/bin/sh\nexit 75\n" )
+        fake.chmod( 0o755 )
+        got = subprocess.run( [ str( binary ) ], capture_output = True, text = True,
+                              env = { **os.environ, Q.CLAIM_FILE: "/x", "ERRAND_PYTHON": str( fake ) } )
+        assert got.returncode == 75 and "RERUN" in got.stdout, got.stdout + got.stderr
+
+
+if test( "{errand_include} in a build line is where the header is" ):
+    from errand.runner import Catch2
+    from errand.runner.base import INCLUDE, RunContext
+    assert ( INCLUDE / "errand" / "require.hpp" ).is_file()
+    ctx = RunContext( root = Path( "/" ), out_dir = Path( "/" ), params = { }, env = { } )
+    line = Catch2( build = "c++ -I{errand_include} x.cpp" ).build_lines( [ ], ctx )[ 0 ]
+    assert line == f"c++ -I{INCLUDE} x.cpp", line
+
+
+CATCH_REQUIRE = r"""
+#include <catch2/catch_test_macros.hpp>
+#include <errand/require.hpp>
+#include <cstdlib>
+
+TEST_CASE( "asks for a core" ) {
+    errand::Needs needs;
+    needs.cpus = 1;
+    errand::require( needs );
+    REQUIRE( std::getenv( "ERRAND_CLAIM_FILE" ) != nullptr );
+}
+"""
+
+
+if test( "a Catch2 suite finds the header through {errand_include}", tags = [ "cpp", "slow" ] ):
+    from errand import skip
+    prefixes = [ p for p in ( os.environ.get( "CONDA_PREFIX" ), "/usr", "/usr/local", "/opt/homebrew" ) if p ]
+    prefix = next( ( p for p in prefixes if Path( p, "include", "catch2", "catch_test_macros.hpp" ).exists() ), None )
+    if prefix is None:
+        skip( "catch2 headers are not installed" )
+    with tempfile.TemporaryDirectory() as tmp:
+        build = ( f"{compiler()} -std=c++17 -I{{errand_include}} -I{prefix}/include cpp/test_req.cpp "
+                  f"-L{prefix}/lib -lCatch2Main -lCatch2 -o cpp/test_req" )
+        config = ( "import errand\nerrand.configure( exclude = [ '_lib' ] )\n"
+                   f"errand.runners.replace( errand.Catch2( dir = 'cpp', build = {build!r} ) )\n" )
+        project = write_project( Path( tmp ) / "p", config, { "cpp/test_req.cpp": CATCH_REQUIRE } )
+        rc, out = run_errand( project, "run", "**::*", timeout = 900 )
+        assert rc == 0 and "PASS test_req.cpp" in out, out
+        result = yamlish.read( next( ( project / "errand-outputs" / "runs" ).rglob( "result.yaml" ) ) )
+        assert result.get( "required" ) == { "cpus": 1.0 }, result

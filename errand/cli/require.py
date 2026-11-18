@@ -30,6 +30,8 @@ def main( argv ) -> int:
     p.add_argument( "--ram", default = None, help = "memory it needs, e.g. 8G" )
     p.add_argument( "--cpus", default = None, help = "cores it needs" )
     p.add_argument( "-x", "--exclusive", action = "store_true", help = "the machine to itself" )
+    p.add_argument( "--extra", action = "store_true",
+                    help = "that much more than the run was started with, rather than that much in all" )
     known = p.parse_args( argv )
     needs = { k: getattr( known, k ) for k in ( "gpus", "gpu_ram", "ram", "cpus" ) if getattr( known, k ) is not None }
     path = os.environ.get( queue.CLAIM_FILE )
@@ -37,7 +39,7 @@ def main( argv ) -> int:
         entries._check_allocation( needs )
         return 0
     try:
-        got = queue.grow( path, needs, exclusive = known.exclusive,
+        got = queue.grow( path, needs, exclusive = known.exclusive, extra = known.extra,
                           echo = lambda m: print( f"errand require: {m.strip()}", file = sys.stderr, flush = True ) )
     except entries.Rerun as r:
         print( f"errand require: stopped, {r}", file = sys.stderr, flush = True )

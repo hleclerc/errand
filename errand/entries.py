@@ -244,16 +244,20 @@ _said_allocation = False
 
 
 def require( gpus: int | None = None, gpu_ram: str | int | None = None, ram: str | int | None = None,
-             cpus: int | None = None, exclusive: bool = False ) -> list:
+             cpus: int | None = None, exclusive: bool = False, extra: bool = False ) -> list:
     """Ask the machine for more than the run was started with, and wait until it is given ( ADR 0014 ).
     Call it early, before what it protects is allocated: for Jax, before `import jax`.
 
         errand.require( gpus = 1, gpu_ram = "75%" )
 
     `gpu_ram` is what the run takes on each of its cards: a size ( `"40G"` ) or a share ( `"75%"` );
-    `gpus` without it takes cards whole. It only adds to the run's claim. Once granted, it sets
-    `CUDA_VISIBLE_DEVICES` ( and the HIP / ROCR ones ) in this process, and returns the cards.
-    errand remembers it, and claims it up front the next time.
+    `gpus` without it takes cards whole. It asks for that much in all: what the run already holds
+    counts ( `ram = "20G"` on a run started with 16G grows it to 20G ). With `extra = True`, it asks
+    for that much more than the run was started with ( by its environment and command line ), and
+    several such calls add up: `gpus` more cards, `gpu_ram` more on each card held.
+
+    It never shrinks the claim. Once granted, it sets `CUDA_VISIBLE_DEVICES` ( and the HIP / ROCR
+    ones ) in this process, and returns the cards.
 
     Outside errand, with `--no-queue`, or in an allocation of Slurm, PBS… it does nothing and returns
     `[ ]` at once."""
@@ -264,7 +268,7 @@ def require( gpus: int | None = None, gpu_ram: str | int | None = None, ram: str
         _check_allocation( needs )
         return [ ]
     from . import queue                     # the standard library, and only when errand runs this
-    got = queue.grow( path, needs, exclusive = exclusive,
+    got = queue.grow( path, needs, exclusive = exclusive, extra = extra,
                       echo = lambda m: print( m.strip(), file = sys.stderr, flush = True ) )
     if got:
         listed = ",".join( str( d ) for d in got )
@@ -283,6 +287,17 @@ def _check_allocation( needs: dict ):
     visible = os.environ.get( "CUDA_VISIBLE_DEVICES" )
     if needs.get( "gpus" ) and visible is not None and len( [ v for v in visible.split( "," ) if v.strip() ] ) < int( needs[ "gpus" ] ):
         print( f"errand.require: {needs[ 'gpus' ]} gpus asked, the allocation has {visible!r}", file = sys.stderr )
+
+
+def memo( fn = None, **kw ):
+    """`@errand.memo` or `@errand.memo( version = 2 )`: the function's result kept by its arguments, in the
+    project's cache ( `errand-cache/memo/` ), computed once across every machine that runs it ( ADR 0015 ).
+    `memo.mode`: None ( `ERRAND_MEMO`, else "on" ), "off" ( compute, keep nothing ), "refresh" ( compute, replace )."""
+    from .memos import memo as _memo                 # only when a function is decorated
+    return _memo( fn, **kw )
+
+
+memo.mode = None
 
 
 def has_tag( expr: str ) -> bool:

@@ -12,6 +12,7 @@ import os
 import shutil
 import sys
 import threading
+from pathlib import Path
 
 from .. import steps
 
@@ -80,12 +81,25 @@ def want( what: dict ):
     out.flush()
 
 
+def view( path: str ):
+    """A file the case shows ( `errand.view` ), by its path from the copy's root: the side that drives
+    this session brings it back at once and says where it opens there ( `views.Views` )."""
+    from ..agents.ops import MARK
+    out = sys.__stdout__
+    out.flush()
+    out.write( MARK + json.dumps( { "op": "view", "path": path } ) + "\n" )
+    out.flush()
+
+
 class Followed:
     """`with Followed( journal, say ):` -- while the case runs, its line goes to `say` when it changes;
-    `say( None )` when it ends. `want`: told each file the case asks up the chain for ( ADR 0013 )."""
+    `say( None )` when it ends. `want`: told each file the case asks up the chain for ( ADR 0013 ).
+    `view`: told each view the case names ( `errand.view` ), from `root` when it is under it ( the copy's
+    root, the same on both sides ), else absolute."""
 
-    def __init__( self, journal, say, want = None ):
-        self.journal, self.say, self.want = journal, say, want
+    def __init__( self, journal, say, want = None, view = None, root = None ):
+        self.journal, self.say, self.want, self.view = journal, say, want, view
+        self.root   = Path( root ).resolve() if root is not None else None
         self.read_to = 0                    # how far the journal was read for wants
         self.stop   = threading.Event()
         self.seen   = None                  # ( size, mtime ) of the journal at the last look
@@ -99,6 +113,11 @@ class Followed:
     def __exit__( self, *exc ):
         self.stop.set()
         self.thread.join()
+        if self.view is not None:
+            try:
+                self.look()                 # a view named just before the end is still said
+            except Exception:
+                pass
         if self.said:
             self.say( None )
 
@@ -117,16 +136,28 @@ class Followed:
         if ( st.st_size, st.st_mtime ) == self.seen:
             return
         self.seen = ( st.st_size, st.st_mtime )
-        if self.want is not None and st.st_size > self.read_to:
+        if ( self.want is not None or self.view is not None ) and st.st_size > self.read_to:
             with open( self.journal, "rb" ) as f:
                 f.seek( self.read_to )
                 data = f.read( st.st_size - self.read_to )
             cut = data.rfind( b"\n" )                       # whole lines only: the last may be under way
             self.read_to += cut + 1
             for e in steps.parse( data[ : cut + 1 ] ):
-                if isinstance( e.get( "want" ), dict ):
+                if isinstance( e.get( "want" ), dict ) and self.want is not None:
                     self.want( e[ "want" ] )
+                if isinstance( e.get( "view" ), str ) and self.view is not None:
+                    self.view( self.view_path( e[ "view" ] ) )
         text = steps.line( steps.summary( self.journal ) )
         if text and text != self.said:
             self.said = text
             self.say( text )
+
+    def view_path( self, view: str ) -> str:
+        """A view as the side that drives the session reads it: from the copy's root when it is under it."""
+        p = Path( view )
+        if not p.is_absolute():
+            p = Path( self.journal ).parent / p
+        p = p.resolve()
+        if self.root is not None and ( p == self.root or self.root in p.parents ):
+            return p.relative_to( self.root ).as_posix()
+        return str( p )

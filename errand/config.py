@@ -242,6 +242,10 @@ class Settings:
     #     cache   added to on both sides, never replaced nor deleted ( ADR 0012 ): downloaded data,
     #             memoized results. `errand.cache_dir( "/data-cache" )` gives a run its path.
     zones            : dict = field( default_factory = dict )
+    # What a run's `errand.require` asked, kept by machine, environment and target
+    # ( `errand-outputs/state/needs.json` ) and claimed up front the next time ( ADR 0014 ).
+    # Off: every run asks again, from what it is told and what its code requires.
+    remember_needs   : bool = False
 
 
 class Envs( dict ):

@@ -9,6 +9,9 @@ Every call is a dated event, one JSON line of the run's journal, `$ERRAND_STEPS`
     {"t": 1763220000.12, "text": "iteration 41", "done": 0.41, "residual": 3e-07}
     {"t": 1763220001.40, "view": "convergence.html"}
 
+A view is also said where it opens, `OUTPUT: file://...`: by the run itself when nobody drives it,
+else by the side that drives it, once the file is brought back there ( `cli.views` ).
+
 At most `RATE` writes per second: calls in between are merged and written at the next write, or at
 exit. Without `$ERRAND_STEPS` ( a process errand did not start ) nothing is written and nothing raised.
 
@@ -29,6 +32,7 @@ import time
 from pathlib import Path
 
 ENV    = "ERRAND_STEPS"
+RELAY  = "ERRAND_RELAY"     # set on a run whose session is followed ( `downloads.RELAY` ): it says its views
 SH_ENV = "ERRAND_STEPS_SH"
 FILE   = "steps.jsonl"
 RATE   = 0.1               # seconds between two writes, at least
@@ -54,6 +58,11 @@ step() {
 view() {
     [ -n "$ERRAND_STEPS" ] || return 0
     printf '{"t": %s, "view": "%s"}\n' "$( date +%s )" "$1" >> "$ERRAND_STEPS" 2>/dev/null
+    if [ -z "$ERRAND_RELAY" ]; then
+        case "$1" in /*) errand_v="$1" ;; *) errand_v="$( dirname "$ERRAND_STEPS" )/$1" ;; esac
+        case "|$errand_views|" in *"|$errand_v|"*) ;; *)       # once per file
+            errand_views="$errand_views|$errand_v"; printf 'OUTPUT: file://%s\n' "$errand_v" ;; esac
+    fi
     return 0
 }
 download() {
@@ -142,9 +151,16 @@ def step( text: str | None = None, *, done: float | None = None, **values ):
         journal.add( event )
 
 
-def view( path, title: str | None = None, content: str | bytes | None = None ):
+_announced: set = set()          # the views this process said itself, once each
+
+
+def view( path, title: str | None = None, content: str | bytes | None = None ) -> bool:
     """`path` ( relative to the run's directory ) is a file of the run worth looking at as it
-    evolves. With `content`, errand writes it, atomically: a reader never sees half of it."""
+    evolves. With `content`, errand writes it, atomically: a reader never sees half of it.
+
+    -> whether errand says where to open it ( `OUTPUT: file://...`, once per file ): the side that
+    drives a run elsewhere brings the file back at once and says its path there ( `cli.views` ); a run
+    nobody drives says its own. False outside errand: the caller says it, if it wants to."""
     journal = _current()
     target = Path( path )
     if not target.is_absolute() and journal is not None:
@@ -157,8 +173,13 @@ def view( path, title: str | None = None, content: str | bytes | None = None ):
         else:
             tmp.write_text( content )
         tmp.replace( target )
-    if journal is not None:
-        journal.add( { "view": str( path ), **( { "title": title } if title else { } ) }, now = True )
+    if journal is None:
+        return False
+    journal.add( { "view": str( path ), **( { "title": title } if title else { } ) }, now = True )
+    if not os.environ.get( RELAY ) and str( target ) not in _announced:
+        _announced.add( str( target ) )
+        print( f"OUTPUT: { target.absolute().as_uri() }", flush = True )
+    return True
 
 
 # ── reading ──────────────────────────────────────────────────────────────────

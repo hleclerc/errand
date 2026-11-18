@@ -187,9 +187,10 @@ def _step( text ):
     _footer.show( text )
 
 
-def follow( session, report, box: dict, relay = None ) -> int:
+def follow( session, report, box: dict, relay = None, views = None ) -> int:
     """Read a session to its end: what it prepared, how each case went. -> its return code. `relay( want )`:
-    what fetches a file a case asked up the chain for ( ADR 0013 ), on a thread of its own."""
+    what fetches a file a case asked up the chain for ( ADR 0013 ), on a thread of its own. `views( mark )`:
+    what brings back a file a case shows ( `errand.view`, `views.Views` ) and says where it opens."""
     rc = 0
     running = None                     # the case under way: what a session that dies was doing
     while True:
@@ -200,6 +201,9 @@ def follow( session, report, box: dict, relay = None ) -> int:
         elif op == "want":
             if relay is not None:
                 threading.Thread( target = relay, args = ( m, ), daemon = True ).start()
+        elif op == "view":
+            if views is not None:
+                views( m )
         elif op in ( "ran", "exit", "lost" ):
             _step( None )
         if op == "prepared":
@@ -243,13 +247,13 @@ def died( session, report, code: int, running ):
         tally( report, _stub( running ), "FAIL", with_tail( f"{how}: the process died during the run", err ), None )
 
 
-def follow_all( sessions, report, boxes, relay = None ):
+def follow_all( sessions, report, boxes, relay = None, views = None ):
     """Every session to its end, each on a thread of its own. -> their return codes, or None after
     Ctrl-C: then each was stopped -- SIGINT, SIGTERM, SIGKILL, whatever it takes -- and is gone."""
     rcs = [ 0 ] * len( sessions )
 
     def one( i ):
-        rcs[ i ] = follow( sessions[ i ], report, boxes[ i ], relay )
+        rcs[ i ] = follow( sessions[ i ], report, boxes[ i ], relay, views )
 
     threads = [ threading.Thread( target = one, args = ( i, ), daemon = True ) for i in range( len( sessions ) ) ]
     for t in threads:

@@ -163,7 +163,8 @@ errand.configure( zones = { "/data-cache": "cache" } )
 A run finds it with `errand.cache_dir( "/data-cache" )`, which it passes to whatever downloads or
 memoizes. For a file at a URL, `errand.download( url )` does it all, in `errand-cache`, a cache zone
 every project has: the file under its hash, and, on a node with no internet, asked of the host over
-there, then of this side, which sends it. With `transfer = "rsync"`, the same rules hold, by `--ignore-existing`, but conflicts are
+there, then of this side, which sends it. For a result too long to compute twice, `@errand.memo` keeps
+it there by its inputs: computed on one machine, it reaches the others. With `transfer = "rsync"`, the same rules hold, by `--ignore-existing`, but conflicts are
 not said. The why: ADR 0012.
 
 `errand-outputs` is excluded both ways on purpose: each side's records, plans and builds are its

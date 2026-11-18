@@ -160,21 +160,24 @@ def _kept( names ):
 
 
 def _required( handed ) -> dict | None:
-    """What the run's `errand.require` asked, as its claim says ( ADR 0014 ), for its record."""
+    """What the run's `errand.require` calls came to, in all, as its claim says ( ADR 0014 ), for its
+    record."""
     path = handed.get( queue.CLAIM_FILE )
     if not path:
         return None
     from .. import yamlish
     row = yamlish.read( Path( path ) ) if Path( path ).exists() else None
-    return ( row or { } ).get( "required" ) or None
+    row = row or { }
+    got = { **( row.get( "wanted" ) or { } ), **( { "exclusive": True } if row.get( "required_exclusive" ) else { } ) }
+    return got or None
 
 
-def _followed( journal, marks ):
+def _followed( journal, marks, root = None ):
     """The case's line at the bottom of the terminal, or said as marks by a session, or nothing."""
     import contextlib
     from . import footer
     if marks:
-        return footer.Followed( journal, footer.mark, want = footer.want )
+        return footer.Followed( journal, footer.mark, want = footer.want, view = footer.view, root = root )
     if footer.Footer.usable():
         return footer.Followed( journal, footer.Footer().show )
     return contextlib.nullcontext()
@@ -228,7 +231,7 @@ def run_case( e, modules, *, root, out_root, overrides, env_name, tags, version,
     crashed = R.crash_record( entry = e, root = root, env_name = env_name, where = where, tags = tags,
                               params = shown, version = version, provenance = provenance )
     # `errand.require` sets the cards in this process when the run is in it: put back as they were.
-    with _with_env( handed ), _kept( E._DEVICE_VARS + ( queue.CLAIM, ) ), _followed( journal, marks ), \
+    with _with_env( handed ), _kept( E._DEVICE_VARS + ( queue.CLAIM, ) ), _followed( journal, marks, root ), \
             streams.raw( leaf, crashed ):
         if devices:
             print( dim( f"  gpu {','.join( str( d ) for d in devices )}" ), flush = True )

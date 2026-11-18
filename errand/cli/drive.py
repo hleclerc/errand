@@ -35,6 +35,7 @@ from .parallel import job_count
 from .plans import plans_rel, read_plan
 from .project import build_dir_for, child_env_for
 from . import alive, guest, relay
+from .views import Views
 from .sessions import follow_all, INTERRUPTED, LocalSession, Session, WatchedSession
 from .style import bad, dim, head, warn
 
@@ -257,7 +258,9 @@ def drive( env, tags, verb, known, *, root, out_root, report, pull = ( ) ) -> in
 
     live = _remember( root, env, reach, sessions, where, pull )
     boxes = [ dict( box ) for _ in sessions ]
-    rcs = follow_all( sessions, report, boxes, relay = _relay( where.ssh, root ) )
+    shown = _views( where, root )
+    rcs = follow_all( sessions, report, boxes, relay = _relay( where.ssh, root ), views = shown )
+    shown.wait()
     if rcs is None:
         if live:
             if all( getattr( s, "stop_delivered", True ) for s in sessions ):
@@ -303,8 +306,10 @@ def _drive_guest( env, tags, verb, known, *, root, report, pull ) -> int:
             else:
                 sessions = [ g.start( { **base, "known": { **base[ "known" ], "phase": "run" } }, child ) ]
             boxes = [ dict( box ) for _ in sessions ]
+            shown = Views( root, lambda rel: g.pull_file( rel ), "windows" )
             rcs = follow_all( sessions, report, boxes,
-                              relay = relay.through( g.host_conn, root, "windows" ) )
+                              relay = relay.through( g.host_conn, root, "windows" ), views = shown )
+            shown.wait()
             if rcs is None:
                 return INTERRUPTED
             box.update( next( ( b for b in boxes if b.get( "plan" ) ), { } ) )
@@ -324,6 +329,17 @@ def _relay( ssh, root ):
     if ssh is None:
         return None
     return relay.through( lambda: agents.open( U.of_host( ssh.host, ssh.options ) ), root, ssh.host )
+
+
+def _views( where, root ) -> Views:
+    """What brings back each file a run over there shows ( `errand.view` ), as it shows it: into the project
+    here, where its coming back would put it. A run here only says it."""
+    ssh = where.ssh
+    if ssh is None:
+        return Views( root )
+    return Views( root, lambda rel: L.fetch_file( rel, ssh.host, where.there, root, ssh.options,
+                                                  transfer_by = getattr( ssh, "transfer", None ), say = say ),
+                  ssh.host )
 
 
 # ── coming back ──────────────────────────────────────────────────────────────
@@ -398,9 +414,13 @@ def attach( root, ident = None, *, report ) -> int:
             conn = agents.open( rec[ "target" ] )
             boxes = [ { } for _ in rec[ "procs" ] ]
             ssh = rec.get( "ssh" )
+            over = SimpleNamespace( root = root, there = L.remote_path( rec[ "there" ] ) if ssh else Path( rec[ "there" ] ),
+                                    ssh = SimpleNamespace( **{ "transfer": None, **ssh } ) if ssh else None )
+            shown = _views( over, root )
             rcs = follow_all( [ Session( conn, pid, rec.get( "store" ) ) for pid in rec[ "procs" ] ], report, boxes,
                               relay = _relay( SimpleNamespace( host = ssh[ "host" ], options = ssh[ "options" ] )
-                                              if ssh else None, root ) )
+                                              if ssh else None, root ), views = shown )
+            shown.wait()
             if rcs is None:
                 path.unlink( missing_ok = True )
                 return INTERRUPTED

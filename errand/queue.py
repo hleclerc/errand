@@ -384,8 +384,8 @@ def _fits( needs: dict, exclusive: bool, others: list, ahead: list = ( ), keep =
     wanted_gpus = int( needs.get( "gpus", 0 ) )
     if exclusive:
         return None, devices()
-    if not wanted_gpus:
-        return None, [ ]
+    if not wanted_gpus or not devices():
+        return None, [ ]        # no card asked, or none here to share: nothing to wait for
     # A card's memory is counted per card ( ADR 0014 ): two runs that each take 30 % share one, two
     # that take 75 % do not. Without `gpu_ram`, or without the card's size, a card is taken whole.
     spec = needs.get( "gpu_ram" )
@@ -435,7 +435,7 @@ def _shares( needs: dict, got: list, exclusive: bool ) -> dict:
     return { } if any( s is None for s in shares ) else { "card_ram": shares }
 
 
-def _acquire( needs: dict, exclusive: bool, label: str, mine: Path, echo ) -> list:
+def _acquire( needs: dict, exclusive: bool, label: str, mine: Path, echo, base = None ) -> list:
     """Block until the claim fits, then write it. Returns the devices given."""
     queued = _waiting_dir() / mine.name
     waited_for = None
@@ -457,7 +457,8 @@ def _acquire( needs: dict, exclusive: bool, label: str, mine: Path, echo ) -> li
                 if waiting is None:
                     yamlish.write( mine, { "label": label, "pid": os.getpid(), "host": host(),
                                            "exclusive": exclusive, "since": time.time(),
-                                           "devices": got, **needs, **_shares( needs, got, exclusive ) } )
+                                           "devices": got, **needs, **_shares( needs, got, exclusive ),
+                                           **( { "base": base } if base is not None else { } ) } )
                     return got
                 if exclusive:
                     if queued.exists():
@@ -480,8 +481,10 @@ def _acquire( needs: dict, exclusive: bool, label: str, mine: Path, echo ) -> li
 
 
 @contextlib.contextmanager
-def claim( needs: dict, *, exclusive = False, label = "", enabled = True, echo = None ):
-    """Hold a share of the machine for the duration of the block."""
+def claim( needs: dict, *, exclusive = False, label = "", enabled = True, echo = None, base = None ):
+    """Hold a share of the machine for the duration of the block. `base`: what the run is started
+    with, by what it is told ( the environment, the command line ), when `needs` is more ( claimed up
+    front ): what `require( extra = True )` adds to. `needs` by default."""
     inherited = os.environ.get( CLAIM )
     if inherited is not None:
         # Already paid for by whoever started us. Queueing again would wait for
@@ -498,7 +501,7 @@ def claim( needs: dict, *, exclusive = False, label = "", enabled = True, echo =
 
     needs = normalize( needs )
     mine = _claims_dir() / f"{host()}-{os.getpid()}-{time.time_ns()}.yaml"
-    got = _acquire( needs, exclusive, label, mine, echo )
+    got = _acquire( needs, exclusive, label, mine, echo, base = None if base is None else normalize( base ) )
 
     stop = threading.Event()
     beat = threading.Thread( target = _heartbeat, args = ( mine, stop ), daemon = True )
@@ -526,9 +529,17 @@ def _pct( v ) -> float:
     return float( v[ : -1 ] )
 
 
-def merged( row: dict, needs: dict ) -> dict:
-    """What a claim holds once `needs` is added to it: the larger of each. Cards held whole already
-    hold any share of them; a share and a size, which cannot be compared, take the newer."""
+def _in_mb( spec, size: float ) -> float | None:
+    """A share or a size, in MB on a card of `size` MB. None: a share, and no size to read it with."""
+    if isinstance( spec, str ):
+        return size * _pct( spec ) / 100 if size else None
+    return float( spec )
+
+
+def merged( row: dict, needs: dict, size: float = 0.0 ) -> dict:
+    """What a claim holds once it holds `needs` too: the larger of each. Cards held whole already hold
+    any share of them. A share and a size are compared on a card of `size` MB; with no size to read
+    the share, what is held is kept: a claim never shrinks."""
     out = { }
     for k in ( "cpus", "ram", "gpus" ):
         v = max( float( row.get( k ) or 0 ), float( needs.get( k ) or 0 ) )
@@ -537,21 +548,59 @@ def merged( row: dict, needs: dict ) -> dict:
     a, b = row.get( "gpu_ram" ), needs.get( "gpu_ram" )
     whole = bool( row.get( "gpus" ) ) and a is None
     if not whole and ( a is not None or b is not None ):
-        if a is not None and b is not None and isinstance( a, str ) == isinstance( b, str ):
+        if a is None or b is None:
+            out[ "gpu_ram" ] = b if a is None else a
+        elif isinstance( a, str ) == isinstance( b, str ):
             out[ "gpu_ram" ] = max( a, b, key = _pct if isinstance( a, str ) else float )
         else:
-            out[ "gpu_ram" ] = b if b is not None else a
+            ma, mb = _in_mb( a, size ), _in_mb( b, size )
+            out[ "gpu_ram" ] = b if ma is not None and mb is not None and mb > ma else a
     return out
 
 
-def grow( path, needs: dict, *, exclusive = False, label = None, echo = None ) -> list:
+def added( row: dict, needs: dict, size: float = 0.0 ) -> dict:
+    """What a claim holds once `needs` is added to it ( `require( extra = True )` ): the sum of each.
+    `gpu_ram` is added on each card: two shares add up, two sizes too, a share and a size on a card
+    of `size` MB ( with none known, the cards are taken whole ). Cards held whole stay whole."""
+    out = { }
+    for k in ( "cpus", "ram", "gpus" ):
+        v = float( row.get( k ) or 0 ) + float( needs.get( k ) or 0 )
+        if v:
+            out[ k ] = v
+    a, b = row.get( "gpu_ram" ), needs.get( "gpu_ram" )
+    whole = bool( row.get( "gpus" ) ) and a is None
+    if not whole and ( a is not None or b is not None ):
+        if a is None or b is None:
+            out[ "gpu_ram" ] = b if a is None else a
+        elif isinstance( a, str ) and isinstance( b, str ):
+            out[ "gpu_ram" ] = f"{min( _pct( a ) + _pct( b ), 100.0 ):g}%"
+        else:
+            ma, mb = _in_mb( a, size ), _in_mb( b, size )
+            if ma is not None and mb is not None:
+                out[ "gpu_ram" ] = ma + mb
+    return out
+
+
+def _reference_size( row: dict ) -> float:
+    """The card a share and a size are compared on: the smallest the claim holds, else the smallest
+    of the machine, else 0 ( unknown )."""
+    held = [ card_size( int( d ) ) for d in row.get( "devices" ) or [ ] ]
+    sizes = [ s for s in ( held or [ card_size( d ) for d in range( len( capacity().get( "card_ram" ) or [ ] ) ) ] ) if s ]
+    return min( sizes ) if sizes else 0.0
+
+
+def grow( path, needs: dict, *, exclusive = False, extra = False, label = None, echo = None ) -> list:
     """Grow the claim at `path` to hold `needs` too, and wait until it does. -> the cards it holds.
 
-    What was asked is kept in the claim ( `required` ), for errand to remember once the run is over,
-    even when the claim already held it."""
+    `needs` is what the run needs in all ( at least that much ), or, with `extra`, what it needs on
+    top of what it was started with ( `base`, written when the claim was taken ): several `extra`
+    calls add up. What the code asked is kept in the claim -- `required`, `required_extra`, and the
+    total it comes to, `wanted` -- for the run's record, and for errand to remember."""
     from .entries import Rerun
     mine = Path( path )
     asked = normalize( needs )
+    if extra and "gpus" not in needs:
+        asked.pop( "gpus", None )               # more memory on the cards held, not one more card
     request = _waiting_dir() / f"{mine.stem}.grow.yaml"
     waited_for = None
     try:
@@ -560,10 +609,26 @@ def grow( path, needs: dict, *, exclusive = False, label = None, echo = None ) -
                 row = yamlish.read( mine ) if mine.exists() else None
                 if not row:
                     raise RuntimeError( f"the claim {mine.name} is gone ( reclaimed? ): there is nothing to grow" )
-                note = { "required": merged( row.get( "required" ) or { }, asked ) }
+                size = _reference_size( row )
+                base = row.get( "base" )
+                if base is None:
+                    base = { k: row[ k ] for k in QUANTITIES if row.get( k ) is not None }
+                note = { "base": base }
+                required = row.get( "required" ) or { }
+                plus = row.get( "required_extra" ) or { }
+                if extra:
+                    plus = added( plus, asked, size )
+                else:
+                    required = merged( required, asked, size )
+                if required:
+                    note[ "required" ] = required
+                if plus:
+                    note[ "required_extra" ] = plus
                 if exclusive or row.get( "required_exclusive" ):
                     note[ "required_exclusive" ] = True
-                want = merged( row, asked )
+                # what the code comes to: what it started with and what was added, and at least what was asked
+                note[ "wanted" ] = merged( added( base, plus, size ), required, size )
+                want = merged( row, note[ "wanted" ], size )
                 excl = bool( exclusive or row.get( "exclusive" ) )
                 if want == merged( row, { } ) and excl == bool( row.get( "exclusive" ) ):
                     yamlish.write( mine, { **row, **note } )
@@ -602,19 +667,26 @@ def grow( path, needs: dict, *, exclusive = False, label = None, echo = None ) -
 
 
 def _younger_in_a_cycle( row, mine: Path, want: dict, excl: bool, others: list ) -> bool:
-    """Is another growing claim waiting for what this one holds, while this one waits for what it
-    holds -- and is this one the younger of the two? Then it is the one to stop."""
-    for g in waiting_exclusive():
-        if not g.get( "grows" ) or g.get( "claim" ) == mine.name:
+    """Is this growing claim, waiting, among what holds back an older one that waits too? Then it is
+    the one to stop ( and run again ): an older claim that grows is blocked only by younger ones that
+    grow -- this one among them -- when it would fit without them, and does not with them. Two that
+    wait for each other are the simplest such case; three or more growing to the whole machine
+    ( benchmarks under `-j` ) are another, which no pair shows."""
+    growing = { g.get( "claim" ): g for g in waiting_exclusive() if g.get( "grows" ) }
+    since = lambda o: float( o.get( "since", 0 ) )
+    mine_row = { **row, "path": str( mine ) }
+    everyone = others + [ mine_row ]
+    for name, g in growing.items():
+        if name == mine.name:
             continue
-        theirs = next( ( o for o in others if Path( o[ "path" ] ).name == g.get( "claim" ) ), None )
-        if theirs is None or float( row.get( "since", 0 ) ) < float( theirs.get( "since", 0 ) ):
-            continue                            # gone, or older than this one: it is the other that stops
-        without = [ o for o in others if o is not theirs ]
-        mine_row = { **row, "path": str( mine ) }
-        if ( _fits( want, excl, without )[ 0 ] is None
-             and _fits( g.get( "want" ) or { }, bool( g.get( "exclusive" ) ), without + [ mine_row ] )[ 0 ] is not None
-             and _fits( g.get( "want" ) or { }, bool( g.get( "exclusive" ) ), without )[ 0 ] is None ):
+        theirs = next( ( o for o in others if Path( o[ "path" ] ).name == name ), None )
+        if theirs is None or since( theirs ) > since( row ):
+            continue                            # gone, or younger than this one: not for this one to make way
+        younger = [ o for o in everyone if Path( o[ "path" ] ).name in growing and since( o ) > since( theirs ) ]
+        rest = [ o for o in everyone if o is not theirs and o not in younger ]
+        g_want, g_excl = g.get( "want" ) or { }, bool( g.get( "exclusive" ) )
+        if _fits( g_want, g_excl, rest )[ 0 ] is None and \
+           _fits( g_want, g_excl, [ o for o in everyone if o is not theirs ] )[ 0 ] is not None:
             return True
     return False
 
