@@ -30,6 +30,7 @@ from .style import bad
 
 _MARK = MARK.encode()
 INTERRUPTED = 130
+STDERR_KEPT = 64 * 1024
 
 
 class Marked:
@@ -38,6 +39,7 @@ class Marked:
     def __init__( self ):
         self.marks = Q.Queue()
         self._held = b""
+        self.stderr_tail = b""         # the last of what it wrote on stderr: said if it dies
 
     def _out( self, payload: bytes, end = False ):
         data = self._held + payload
@@ -65,8 +67,8 @@ class Marked:
             sys.stdout.buffer.write( data )
             sys.stdout.flush()
 
-    @staticmethod
-    def _err( data: bytes ):
+    def _err( self, data: bytes ):
+        self.stderr_tail = ( self.stderr_tail + data )[ -STDERR_KEPT : ]
         sys.stderr.buffer.write( data )
         sys.stderr.flush()
 
@@ -188,6 +190,7 @@ def _step( text ):
 def follow( session, report, box: dict ) -> int:
     """Read a session to its end: what it prepared, how each case went. -> its return code."""
     rc = 0
+    running = None                     # the case under way: what a session that dies was doing
     while True:
         m = session.next()
         op = m.get( "op" )
@@ -200,7 +203,10 @@ def follow( session, report, box: dict ) -> int:
             rc |= m[ "rc" ]
             if m.get( "plan" ):
                 box.update( m )
+        elif op == "start":
+            running = m.get( "entry" )
         elif op == "ran":
+            running = None
             if m.get( "output" ):
                 sys.stdout.write( m[ "output" ] )
                 sys.stdout.flush()
@@ -208,12 +214,29 @@ def follow( session, report, box: dict ) -> int:
         elif op == "done":
             box[ "done" ] = True
         elif op == "exit":
-            return rc or ( 1 if m.get( "code" ) and not box.get( "done" ) else 0 )
+            code = m.get( "code" )
+            if code and not box.get( "done" ):
+                died( session, report, code, running )
+            return rc or ( 1 if code and not box.get( "done" ) else 0 )
         elif op == "lost":
             box[ "lost" ] = True
             print( bad( "  the connection to the environment was lost: the work goes on over there "
                         "( errand attach )" ) )
             return 1
+
+
+def died( session, report, code: int, running ):
+    """A session that ended before its work: how ( its exit code, a signal ), in which case, and the
+    last of what it said on stderr -- often all there is ( a segfault prints nothing else )."""
+    from ..streams import ended, tail_of, with_tail
+    how = ended( code )
+    err = tail_of( getattr( session, "stderr_tail", b"" ).decode( errors = "replace" ) )
+    where = f" in {running[ 'name' ]} ({running[ 'file' ]}:{running[ 'line' ]})" if running else ""
+    print( bad( f"  the session over there ended ( {how} ){where}" ), flush = True )
+    if err and not running:            # with a case, the report says it under the case
+        print( "\n".join( f"    {l}" for l in [ "last lines of stderr:", *err.splitlines() ] ), flush = True )
+    if running:
+        tally( report, _stub( running ), "FAIL", with_tail( f"{how}: the process died during the run", err ), None )
 
 
 def follow_all( sessions, report, boxes ):

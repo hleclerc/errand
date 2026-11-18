@@ -25,6 +25,7 @@ import datetime
 import hashlib
 import os
 import platform
+import re
 import shutil
 import socket
 import subprocess
@@ -35,7 +36,13 @@ from . import yamlish
 RESULT   = "result.yaml"
 SUMMARY  = "summary.yaml"
 OUTPUT   = "output.txt"
+STDOUT   = "stdout.txt"      # the process's own streams, as written to its descriptors
+STDERR   = "stderr.txt"
 LATEST   = "latest"
+
+# What a run directory holds from its start on ( `steps.FILE` included ): with them and without
+# `result.yaml`, a run is still going -- or died before its record was written.
+RUN_MARKS = ( OUTPUT, STDOUT, STDERR, "steps.jsonl" )
 
 
 _STAMP = None
@@ -145,6 +152,36 @@ def params_tag( resolved: dict ) -> str:
     return text if len( text ) <= ROOM else text[ : ROOM ] + "~" + param_hash( resolved )[ : 6 ]
 
 
+def kept_params_tag( resolved: dict, keep ) -> str:
+    """`case=a,n=5000` -- only the parameters `keep` names, in that order ( `{params:case,n}` ).
+
+    A name says what was chosen to tell runs apart, and stays short. When the
+    run has parameters left out of it, the hash of ALL of them goes on the end:
+    two runs that differ only by those are still two directories. A kept name
+    the run does not have is not written.
+    """
+    if not resolved:
+        return ""
+    keep = [ k.strip() for k in keep if k.strip() ]
+    text = ",".join( f"{slug( k )}={slug( resolved[ k ] )}" for k in keep if k in resolved )
+    if len( text ) > ROOM:
+        text = text[ : ROOM ]
+    elif set( resolved ) <= set( keep ):
+        return text
+    return ( text + "~" if text else "" ) + param_hash( resolved )[ : 6 ]
+
+
+class _Params:
+    """`{params}` in a `--out` pattern, and `{params:a,b}`: the format spec names what is kept."""
+
+    def __init__( self, resolved: dict ):
+        self.resolved = resolved
+
+    def __format__( self, spec: str ) -> str:
+        tag = kept_params_tag( self.resolved, spec.split( "," ) ) if spec else params_tag( self.resolved )
+        return tag or "-"
+
+
 def run_name( resolved: dict, where: str ) -> str:
     """When, where, and with what -- in the order you would say it out loud."""
     tag = params_tag( resolved )
@@ -155,7 +192,8 @@ def run_name( resolved: dict, where: str ) -> str:
 # project root, rather than the tree below. Set by the command line.
 pattern: str | None = None
 
-DYNAMIC = ( "{when}", "{place}", "{params}", "{env}" )
+# What changes from one run to the next, `{params:a,b}` included.
+DYNAMIC = re.compile( r"\{(?:when|place|params|env)(?::[^}]*)?\}" )
 
 
 def dirs_for( out_root: Path, entry, resolved, where, root: Path ):
@@ -177,11 +215,9 @@ def _from_pattern( entry, resolved, where, root: Path ):
     path = label( entry, root )
     name = path.rsplit( "/", 1 )[ -1 ] if "/" in path else path
     values = { "path": path, "name": slug( getattr( entry, "name", name ) ), "when": stamp(),
-               "place": where, "env": where.split( "@" )[ 0 ], "params": params_tag( resolved ) or "-" }
+               "place": where, "env": where.split( "@" )[ 0 ], "params": _Params( resolved or { } ) }
     leaf = Path( root ) / pattern.format( **values )
-    fixed = pattern
-    for d in DYNAMIC:
-        fixed = fixed.split( d )[ 0 ]
+    fixed = DYNAMIC.split( pattern, maxsplit = 1 )[ 0 ]
     top = Path( root ) / fixed.format( **values ).rsplit( "/", 1 )[ 0 ] if "/" in fixed else Path( root )
     return leaf, top if top != leaf else leaf.parent
 
@@ -203,6 +239,48 @@ def point_latest_at( leaf: Path ):
         link.symlink_to( leaf.name, target_is_directory = True )
     except OSError:
         pass          # a filesystem without symlinks is a loss, not a failure
+
+
+# ── bringing runs back ───────────────────────────────────────────────────────
+
+def unfinished_runs( dirs, files, empty = None ) -> set:
+    """The directories of a run tree that are not to come back yet: a run that has
+    not written its `result.yaml` -- still going, or just created and still empty.
+
+    A run comes back whole, once: its record is written last ( atomically ), so a
+    pull that finds it finds everything the run wrote. Fetched before, it would
+    come back half written, and nothing would say so.
+
+    `dirs`, `files`: paths relative to the tree, posix. `files` must hold at least
+    the files named `result.yaml` and `RUN_MARKS`. `empty`: the directories with
+    nothing in them -- worked out from `dirs` and `files` when they list everything.
+    -> the directories to leave out, with everything under them.
+    """
+    dirs = { d.strip( "/" ) for d in dirs } - { "", "." }
+    files = { f.strip( "/" ) for f in files }
+    holds = { }
+    for f in files:
+        parent, _, name = f.rpartition( "/" )
+        holds.setdefault( parent, set() ).add( name )
+    if empty is None:
+        used = { p.rpartition( "/" )[ 0 ] for p in ( *dirs, *files ) }
+        empty = { d for d in dirs if d not in used }
+    else:
+        empty = { d.strip( "/" ) for d in empty }
+    finished = { d for d in dirs if RESULT in holds.get( d, ( ) ) }
+    out = set()
+    for d in dirs:
+        names = holds.get( d, set() )
+        if RESULT in names:
+            continue
+        if names & set( RUN_MARKS ) or ( d in empty and not under_any( d, finished ) ):
+            out.add( d )                   # an empty directory inside a finished run is the run's
+    return out
+
+
+def under_any( key: str, tops ) -> bool:
+    """`key` is one of `tops`, or under one of them."""
+    return any( key == t or key.startswith( t + "/" ) for t in tops )
 
 
 # ── provenance ───────────────────────────────────────────────────────────────
@@ -256,8 +334,21 @@ def _peak_windows( ) -> float | None:
 
 # ── writing ──────────────────────────────────────────────────────────────────
 
+def crash_record( *, entry, root, env_name, where, tags, params, version, provenance = None ) -> str:
+    """The record of a run whose process ended before writing its own, rendered when it starts: what
+    the keeper of its streams writes then ( `streams.raw` ), so that it reads as what it was."""
+    commit, dirty = provenance if provenance is not None else git_commit( root )
+    return yamlish.dump( {
+        "name": entry.name, "file": _under( entry.file, root ), "line": entry.line, "date": now(),
+        "stamp": stamp(), "env": env_name, "place": where, "host": socket.gethostname().split( "." )[ 0 ],
+        "commit": commit, "dirty": dirty, "errand": version, "status": "FAIL",
+        "error": f"the process ended during the run, before its record was written ( see {STDERR} )",
+        "duration_s": None, "ram_mb": None, "params": _plain( params ), "tags": _plain( tags ),
+        "results": { }, "output_file": None } )
+
+
 def write_result( leaf: Path, *, entry, root, env_name, where, tags, status, error,
-                  duration_s, ram, params, results, output_text, version ):
+                  duration_s, ram, params, results, output_text, version, provenance = None ):
     # The output file is normally written live, as the run talks; all that is
     # left here is to say whether it holds anything. Writing it again would
     # only risk replacing a complete file with a truncated buffer.
@@ -272,7 +363,7 @@ def write_result( leaf: Path, *, entry, root, env_name, where, tags, status, err
         output_file = OUTPUT
         live.write_text( output_text )
 
-    commit, dirty = git_commit( root )
+    commit, dirty = provenance if provenance is not None else git_commit( root )
     data = {
         "name"       : entry.name,
         "file"       : _under( entry.file, root ),

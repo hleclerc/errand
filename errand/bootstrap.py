@@ -6,7 +6,7 @@ true over there before anything else can be, and neither is the environment's
 business:
 
 * **errand is importable.** Its sources travel: `ship` sends the package, one tar on stdin, to
-  `~/.cache/errand/src/<key>/errand/`, one copy per checkout here, and the
+  `~/.cache/errand/src/<version>-<content key>/errand/`, one copy per content of the sources, and the
   command becomes `python <copy>/errand/_boot.py ...`. Nothing is installed,
   and the errand that answers is the one that asked -- no version skew.
 
@@ -72,11 +72,20 @@ def is_errand( argv ) -> bool:
 
 
 def key() -> str:
-    """One copy over there per checkout here: two checkouts of different
-    versions reaching the same machine must not overwrite each other."""
+    """One copy over there per content of the sources: an edit here is a new directory there, never
+    one rewritten under an agent or a run that started from it. Two checkouts that hold the same
+    sources share one copy; two that do not never overwrite each other."""
     from . import __version__
-    digest = hashlib.sha1( str( PACKAGE ).encode() ).hexdigest()[ : 8 ]
-    return f"{__version__}-{digest}"
+    return f"{__version__}-{sources_key()}"
+
+
+def _shipped( ):
+    """The files of the package that travel: no caches, no `.sources`."""
+    for p in sorted( PACKAGE.rglob( "*" ) ):
+        rel = p.relative_to( PACKAGE )
+        if "__pycache__" in rel.parts or rel.name == ".sources" or p.is_dir():
+            continue
+        yield p, rel
 
 
 _sources = None
@@ -89,8 +98,8 @@ def sources_key( fresh = False ) -> str:
     global _sources
     if _sources is None or fresh:
         h = hashlib.sha1()
-        for p in sorted( PACKAGE.rglob( "*.py" ) ):
-            h.update( str( p.relative_to( PACKAGE ) ).encode() + b"\0" + p.read_bytes() )
+        for p, rel in _shipped():                # what is shipped, all of it: not only the `.py`
+            h.update( rel.as_posix().encode() + b"\0" + p.read_bytes() )
         if not fresh or _sources is None:
             _sources = h.hexdigest()[ : 12 ]
         return h.hexdigest()[ : 12 ]
@@ -114,8 +123,12 @@ def ship( host: str, options = ( ), agent = True ) -> str:
     from .layers import _remote
     sub = shlex.quote( src_rel() )
     key = sources_key()
+    # `.sources` is written last, once every file is there; a copy without `_boot.py` is not one either.
     got = _remote( host, options, f'b={SH_BASE}; mkdir -p "$b"/{sub} && echo "ERRAND_CACHE=$b" && '
-                                  f'cat "$b"/{sub}/errand/.sources 2>/dev/null; true', agent = agent, interactive = True )
+                                  # touched: a copy in use is not one to prune ( `prune_sources` )
+                                  f'{{ [ -f "$b"/{sub}/errand/_boot.py ] && touch "$b"/{sub}/errand/.sources && '
+                                  f'cat "$b"/{sub}/errand/.sources 2>/dev/null; true; }}',
+                   agent = agent, interactive = True )
     from .layers.gateways import unreachable
     stop = unreachable( host, got )
     if stop is not None:
@@ -130,6 +143,61 @@ def ship( host: str, options = ( ), agent = True ) -> str:
         if done.returncode:
             raise subprocess.CalledProcessError( done.returncode, "unpack errand's sources", done.stdout, done.stderr )
     return cache
+
+
+KEEP_SOURCES_DAYS = 14     # a copy nothing names any more stays that long after its last use: a job
+                           # waiting in a queue starts from the copy it was submitted with
+
+
+def _key_of_copy( d: Path ) -> str:
+    """The sources key a copy holds: what its `.sources` says, else the end of its name."""
+    try:
+        return ( d / "errand" / ".sources" ).read_text().strip() or d.name.rsplit( "-", 1 )[ -1 ]
+    except OSError:
+        return d.name.rsplit( "-", 1 )[ -1 ]
+
+
+def keys_in_use( base: Path ) -> set:
+    """The sources keys an agent or a hub of this machine was started from ( `env-<key>-…`, `host-<key>…`,
+    `hub-<key>` ): while its directory is there -- it serves, or holds a session somebody may come back
+    for -- the copy it starts from is needed."""
+    names = [ d.name for d in ( base / "agents" ).iterdir() ] if ( base / "agents" ).is_dir() else [ ]
+    names += [ d.name for d in base.glob( "hub-*" ) ]
+    return { n.split( "-" )[ 1 ] for n in names if n.split( "-" )[ 0 ] in ( "env", "host", "hub" ) and "-" in n }
+
+
+def prune_sources( base: Path, keep = ( ), days = KEEP_SOURCES_DAYS, now = None ) -> list:
+    """The copies of errand's sources in `base/src` that nothing needs any more, removed: no agent or hub
+    started from them ( `keys_in_use` ), not `keep`, and not used for `days` ( `ship` touches `.sources`
+    each time it finds a copy whole ). What a shipping left half done goes after an hour.
+    -> the directories removed."""
+    import shutil
+    import time
+    now = time.time() if now is None else now
+    src = base / "src"
+    if not src.is_dir():
+        return [ ]
+    used = keys_in_use( base ) | set( keep )
+    gone = [ ]
+    for d in src.iterdir():
+        try:
+            if not d.is_dir() or d.is_symlink():
+                continue
+            name = d.name
+            if ".part" in name or ".old." in name:
+                stale = now - d.stat().st_mtime > 3600
+            else:
+                if _key_of_copy( d ) in used:
+                    continue
+                stamp = d / "errand" / ".sources"
+                last = max( p.stat().st_mtime for p in ( d, stamp ) if p.exists() )
+                stale = now - last > days * 86400
+        except OSError:
+            continue
+        if stale:
+            shutil.rmtree( d, ignore_errors = True )
+            gone.append( d )
+    return gone
 
 
 def _said( name, out ):
@@ -263,29 +331,100 @@ def package_tar( ) -> bytes:
     import tarfile
     buf = io.BytesIO()
     with tarfile.open( fileobj = buf, mode = "w:gz", compresslevel = 6 ) as t:
-        for p in sorted( PACKAGE.rglob( "*" ) ):
-            rel = p.relative_to( PACKAGE )
-            if "__pycache__" in rel.parts or rel.name == ".sources" or p.is_dir():
-                continue
+        names = [ ]
+        for p, rel in _shipped():
             t.add( str( p ), arcname = rel.as_posix() )
+            names.append( rel.as_posix() )
+        # Last: what the copy must hold, for the side that unpacks it to check before saying it is whole.
+        listing = ( "\n".join( names ) + "\n" ).encode()
+        info = tarfile.TarInfo( MANIFEST )
+        info.size = len( listing )
+        t.addfile( info, io.BytesIO( listing ) )
     return buf.getvalue()
 
 
-# Over there, from stdin: unpacked beside the copy, then put in its place. Python when there is one
-# ( any errand runs on ), `tar` otherwise. `$1` the copy, `$2` the sources key.
+MANIFEST = ".manifest"
+
+
+# The same, where there is no `sh` but always a Python ( a Windows guest, whose agent runs on one ): `$1`
+# the copy, `$2` the sources key. Nothing is unpacked when the copy says it is these sources already.
+UNPACK_PY = r"""
+import os, shutil, sys, tarfile, uuid
+d, key = sys.argv[ 1 ], sys.argv[ 2 ]
+
+def whole( p ):
+    try:
+        with open( os.path.join( p, ".sources" ) ) as f:
+            return f.read().strip() == key and os.path.isfile( os.path.join( p, "_boot.py" ) )
+    except OSError:
+        return False
+
+if whole( d ):
+    os.utime( os.path.join( d, ".sources" ) )     # in use: not one to prune
+else:
+    part, old = d + ".part." + uuid.uuid4().hex[ : 8 ], d + ".old." + uuid.uuid4().hex[ : 8 ]
+    try:
+        kw = { "filter": "data" } if hasattr( tarfile, "data_filter" ) else { }
+        with tarfile.open( fileobj = sys.stdin.buffer, mode = "r|gz" ) as t:
+            t.extractall( part, **kw )
+        try:
+            with open( os.path.join( part, ".manifest" ) ) as f:
+                names = [ n for n in f.read().split( "\n" ) if n ]
+        except OSError:
+            sys.exit( "errand: the sources arrived cut short" )
+        missing = [ n for n in names if not os.path.isfile( os.path.join( part, n ) ) ]
+        if missing:
+            sys.exit( "errand: the sources arrived without " + missing[ 0 ] )
+        with open( os.path.join( part, ".sources" ), "w" ) as f:
+            f.write( key + "\n" )
+        if not whole( d ):                     # else another shipping of the same sources finished first
+            if os.path.exists( d ):
+                os.rename( d, old )
+            os.rename( part, d )
+            shutil.rmtree( old, ignore_errors = True )
+    finally:
+        shutil.rmtree( part, ignore_errors = True )
+"""
+
+
+def unpack_py_line( python: str, dest: str, key: str ) -> str:
+    """One command line, for cmd.exe as for `sh`: `UNPACK_PY` by `python`, the tar on its stdin. The script
+    crosses in base64, which neither shell reads anything into."""
+    import base64
+    code = base64.b64encode( UNPACK_PY.encode() ).decode()
+    return f'{python} -c "import base64;exec(base64.b64decode(\'{code}\'))" "{dest}" {key}'
+
+
+# Over there, from stdin: unpacked beside the copy, in a directory of this shipping's own, then put in
+# its place. Python when there is one ( any errand runs on ), `tar` otherwise. `$1` the copy, `$2` the
+# sources key.
+#
+# A copy is said to be whole ( `.sources` ) only once every file the tar lists ( `.manifest`, its last
+# member ) is there: a stream cut short -- a network drop -- fails before, and so does a part another
+# shipping started at the same moment, which has a directory of its own and never touches this one.
+# Two shippings of the same sources: the first to finish wins, the other leaves.
 UNPACK = r"""
 d="$1"; set -e
-rm -rf "$d.part" "$d.old"; mkdir -p "$d.part"
+part="$d.part.$$"; old="$d.old.$$"
+trap 'rm -rf "$part"' EXIT
+rm -rf "$part"; mkdir -p "$part"
 if command -v python3 >/dev/null 2>&1; then
-    python3 -c 'import sys, tarfile
+    python3 -c 'import os, sys, tarfile
 kw = { "filter": "data" } if hasattr( tarfile, "data_filter" ) else { }
 with tarfile.open( fileobj = sys.stdin.buffer, mode = "r|gz" ) as t:
-    t.extractall( sys.argv[ 1 ], **kw )' "$d.part"
+    t.extractall( sys.argv[ 1 ], **kw )' "$part"
 else
-    tar xzf - -C "$d.part"
+    tar xzf - -C "$part"
 fi
-echo "$2" > "$d.part/.sources"
-[ -e "$d" ] && mv "$d" "$d.old"
-mv "$d.part" "$d"
-rm -rf "$d.old"
+[ -f "$part/.manifest" ] || { echo "errand: the sources arrived cut short" >&2; exit 1; }
+while IFS= read -r f; do
+    [ -f "$part/$f" ] || { echo "errand: the sources arrived without $f" >&2; exit 1; }
+done < "$part/.manifest"
+echo "$2" > "$part/.sources"
+if [ -f "$d/_boot.py" ] && [ "$(cat "$d/.sources" 2>/dev/null)" = "$2" ]; then
+    exit 0                                   # another shipping of the same sources finished first
+fi
+[ -e "$d" ] && mv "$d" "$old"
+mv "$part" "$d"
+rm -rf "$old"
 """

@@ -71,7 +71,9 @@ def build_parser( tag_names = ( ) ):
                     help = "an output directory for each run, brought back: errand-outputs/runs/… ( $ERRAND_OUT_DIR )" )
     p.add_argument( "--out", default = None, metavar = "PATTERN",
                     help = "the same, under another tree, or as a pattern: "
-                           "\"results/{env}/{when}\" ( {path} {name} {when} {place} {env} {params} )" )
+                           "\"results/{env}/{when}\" ( {path} {name} {when} {place} {env} {params} ); "
+                           "{params:a,b} keeps only those parameters, in that order, and a hash of all when "
+                           "some are left out" )
     p.add_argument( "--at", default = None,
                     help = argparse.SUPPRESS )   # internal: run exactly the entry at FILE:LINE
     # internal: which phase this process is, when a command is run in two

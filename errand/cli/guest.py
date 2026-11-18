@@ -89,10 +89,11 @@ class Guest:
 
     def _ship( self ):
         """errand's sources into the guest: a tar of this checkout's, on the stdin of one cmd.exe line, unpacked by
-        Windows' own `tar` beside their place and moved into it. Nothing crosses when the guest has them already: a
-        sources key names one content."""
+        the guest's Python in a directory of this shipping's own, checked against the tar's manifest, then moved
+        into place ( `bootstrap.UNPACK_PY` ). Nothing is unpacked when the guest has them already: a sources key
+        names one content."""
         from ..vm.common import VmError
-        got = self.m.guest( unpack_line( self.src ), input = bootstrap.package_tar(), capture = True )
+        got = self.m.guest( unpack_line( self.src, self.key ), input = bootstrap.package_tar(), capture = True )
         if got.returncode:
             said = ( ( got.stderr or b"" ) + ( got.stdout or b"" ) )
             said = said.decode( errors = "replace" ) if isinstance( said, bytes ) else said
@@ -174,21 +175,19 @@ class Guest:
         return Session.start( conn, [ python, self.boot, "-m", "errand.agents.ops", "session", json.dumps( request ) ],
                               cwd = self.there, env = child, store = f"{self.there}/{config.state_rel( Path( self.there ) )}/procs" )
 
-    def fetch( self, paths ):
+    def fetch( self, paths, runs = False ):
+        """`runs`: the paths are run trees, whose runs come back once finished."""
         if not paths:
             return
         from ..agents import syncop
         from ..layers.base import WINDOWS
         self.echo( f"  sync pull  <- windows:{self.there} [{', '.join( paths )}]" )
         syncop.pull( self.host_conn(), self.there, self.where.root, [ Path( p ).as_posix() for p in paths ],
-                     where = "windows", say = self.echo, links = not WINDOWS )
+                     where = "windows", say = self.echo, links = not WINDOWS, finished_only = runs )
 
 
-def unpack_line( src: str ) -> str:
-    """cmd.exe: a tar.gz of errand's package on stdin into `<src>/errand`, unless `<src>` has it already. Unpacked
-    beside it ( `.part` ), then moved into place: an interrupted copy is never taken for one."""
-    d = src.replace( "/", "\\" )
-    return ( f'if exist "{d}\\errand\\_boot.py" ( exit 0 ) else ( '
-             f'( if exist "{d}.part" rmdir /s /q "{d}.part" ) & ( if exist "{d}" rmdir /s /q "{d}" ) & '
-             f'mkdir "{d}.part\\errand" && tar -xzf - -C "{d}.part\\errand" && move "{d}.part" "{d}" >nul )' )
-
+def unpack_line( src: str, key: str ) -> str:
+    """cmd.exe: a tar.gz of errand's package on stdin into `<src>/errand`, unless it holds these sources already.
+    Two shippings at once each unpack in a directory of their own, and a copy is said whole ( `.sources` ) only
+    once every file the tar lists is there: an interrupted copy is never taken for one."""
+    return bootstrap.unpack_py_line( "python", f"{src}/errand", key )

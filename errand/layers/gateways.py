@@ -316,7 +316,11 @@ def push( local_root: Path, host: str, remote_root: Path, options = ( ), echo = 
         return _push_sync( local_root, host, remote_root, options, echo )
     # The copy's manifest for the sync ( ADR 0006 ) too: switching between the two keeps it.
     own = [ f"/{rel}", f"/{config.LEGACY}", "/.errand-copy*" ]
+    # The records of runs made over there that are not here ( a `--out` tree in the project ): never deleted.
+    kept = runs_over_there( host, options, remote_root )
+    _say_kept_runs( kept, host, echo )
     done = subprocess.run( [ *rsync(), "-a", "--delete", "-i", *_rsh( options, host ),
+                             *[ f"--filter=P {k}" for k in protect_runs( kept ) ],
                              *[ f"--exclude={e}" for e in RSYNC_EXCLUDES + own + own_paths()
                                                           + list( config.zones() ) ],
                              here( f"{local_root}/" ), f"{host}:{remote_root}/" ],
@@ -330,6 +334,45 @@ def push( local_root: Path, host: str, remote_root: Path, options = ( ), echo = 
         echo( f"    ...and {len( gone ) - 20} more" )
 
 
+def _say_kept_runs( kept, host, echo ):
+    from .. import results as R
+    marks = { R.RESULT, *R.RUN_MARKS }
+    runs = sorted( { k.rpartition( "/" )[ 0 ] for k in kept if "/" in k and k.rpartition( "/" )[ 2 ] in marks } )
+    if runs:
+        echo( f"    left on {host}: {len( runs )} run director{'y' if len( runs ) == 1 else 'ies'} made there, "
+              f"not in the project here ( {runs[ 0 ]}{', …' if len( runs ) > 1 else ''} )" )
+
+
+# The run directories of a copy, for an rsync push to leave: the directories holding a run's files.
+_RUNS_LISTING = r"""cd "$1" 2>/dev/null || exit 0; shift
+for n in "$@"; do find . -name .git -prune -o -type f -name "$n" -print; done
+"""
+
+
+def runs_over_there( host, options, remote_root ) -> list:
+    """The files of the copy over there that say a run's directory ( `results.RUN_MARKS` ): relative paths."""
+    from .. import results as R
+    line = "sh -c " + shlex.quote( _RUNS_LISTING ) + " _ " + " ".join(
+        shlex.quote( x ) for x in ( str( remote_root ), R.RESULT, *R.RUN_MARKS ) )
+    got = _remote( host, options, line )
+    return sorted( l[ 2 : ] if l.startswith( "./" ) else l for l in ( got.stdout or "" ).splitlines() if l.strip() )
+
+
+def protect_runs( marks ) -> list:
+    """rsync `P` rules for the runs whose files `marks` names: each run's directory and all in it, and the
+    `summary.yaml` and `latest` above it."""
+    from .. import results as R
+    runs = sorted( { m.rpartition( "/" )[ 0 ] for m in marks if "/" in m } )
+    out = set()
+    for r in runs:
+        out.add( f"/{r}/***" )
+        parts = r.split( "/" )
+        for i in range( len( parts ) ):
+            d = "/".join( parts[ : i ] )
+            out.update( f"/{d}/{n}" if d else f"/{n}" for n in ( R.SUMMARY, R.LATEST ) )
+    return sorted( out )
+
+
 def _push_sync( local_root: Path, host: str, remote_root, options, echo ):
     """The push by manifest, through the host's agent ( `agents/syncop.py` )."""
     from .. import config
@@ -341,6 +384,7 @@ def _push_sync( local_root: Path, host: str, remote_root, options, echo ):
         echo( f"    deleted on {host}: {name}" )
     if len( r.deleted ) > 20:
         echo( f"    ...and {len( r.deleted ) - 20} more" )
+    _say_kept_runs( r.kept_runs, host, echo )
     if r:
         echo( f"    {len( r.sent )} sent ( {r.bytes / 1e6:.1f} MB ), {len( r.touched )} touched, "
               f"{len( r.deleted )} deleted" )
@@ -356,12 +400,56 @@ def back_zones( env_name = None ) -> list:
                    if kind == "back" and p.startswith( "/" ) and not any( c in p for c in "*?[" ) )
 
 
-def _fetch_sync( paths, host: str, remote_root, local_root: Path, options ):
+def _fetch_sync( paths, host: str, remote_root, local_root: Path, options, finished_only = False ):
     from ..agents import syncop, upstream
     from .base import WINDOWS
     conn = agents.open( upstream.of_host( host, options ) )
     return syncop.pull( conn, remote_root, local_root, [ Path( p ).as_posix() for p in paths ],
-                        where = host, links = not WINDOWS )
+                        where = host, links = not WINDOWS, finished_only = finished_only )
+
+
+# What a run tree holds over there, for rsync to leave the unfinished runs: its directories, the
+# empty ones, the files that tell a run ( `results.unfinished_runs` ), and where its links lead.
+# One line each: a kind, then a path.
+_RUN_LISTING = r"""cd "$1" 2>/dev/null || exit 0; shift
+find . -type d | sed 's/^/d /'
+find . -type d -empty | sed 's/^/e /'
+for n in "$@"; do find . -type f -name "$n" | sed 's/^/f /'; done
+find . -type l | while IFS= read -r l; do printf 't %s %s\n' "$l" "$(readlink "$l")"; done
+"""
+
+
+def _listing_paths( text: str ):
+    kinds = { "d": set(), "e": set(), "f": set() }
+    targets = { }
+    strip = lambda p: p[ 2 : ] if p.startswith( "./" ) else ( "" if p == "." else p )
+    for line in text.splitlines():
+        kind, _, rest = line.partition( " " )
+        if kind in kinds:
+            kinds[ kind ].add( strip( rest ) )
+        elif kind == "t":
+            path, _, target = rest.partition( " " )
+            targets[ strip( path ) ] = target
+    return kinds, targets
+
+
+def unfinished_excludes( text: str ) -> list:
+    """From a `_RUN_LISTING`: the rsync excludes, anchored at the tree, of the runs not to come back yet
+    and of the links that lead into them ( a `latest` )."""
+    import posixpath
+    from .. import results as R
+    kinds, targets = _listing_paths( text )
+    skip = R.unfinished_runs( kinds[ "d" ], kinds[ "f" ], kinds[ "e" ] )
+    links = [ k for k, t in targets.items()
+              if R.under_any( posixpath.normpath( posixpath.join( posixpath.dirname( k ), t ) ), skip ) ]
+    return sorted( f"/{d}/" for d in skip ) + sorted( f"/{k}" for k in links )
+
+
+def unfinished_over_there( host, options, top: str ) -> list:
+    from .. import results as R
+    line = "sh -c " + shlex.quote( _RUN_LISTING ) + " _ " + " ".join(
+        shlex.quote( x ) for x in ( top, R.RESULT, *R.RUN_MARKS ) )
+    return unfinished_excludes( _remote( host, options, line ).stdout or "" )
 
 
 def put( local_dir: Path, host: str, remote_dir, options = ( ), transfer_by = None, echo = print ):
@@ -379,10 +467,13 @@ def put( local_dir: Path, host: str, remote_dir, options = ( ), transfer_by = No
                       here( f"{local_dir}/" ), f"{host}:{remote}/" ], check = True )
 
 
-def fetch( paths, host: str, remote_root: Path, local_root: Path, options = ( ), transfer_by = None ):
-    """Best effort: a path the remote run never created is nothing to bring back."""
+def fetch( paths, host: str, remote_root: Path, local_root: Path, options = ( ), transfer_by = None,
+           finished_only = False ):
+    """Best effort: a path the remote run never created is nothing to bring back. Nothing here is
+    deleted. `finished_only`: the paths are run trees, and a run comes back only once it has written
+    its `result.yaml` ( `results.unfinished_runs` ): never half of one."""
     if transfer( transfer_by ) == "sync":
-        return _fetch_sync( paths, host, remote_root, local_root, options )
+        return _fetch_sync( paths, host, remote_root, local_root, options, finished_only = finished_only )
     for p in paths:
         target = local_root / p
         p = Path( p ).as_posix()        # a path over there: `a/b`, though this is a Windows
@@ -391,5 +482,9 @@ def fetch( paths, host: str, remote_root: Path, local_root: Path, options = ( ),
         # directory INSIDE the local one whenever the latter already exists.
         from .base import WINDOWS
         # a link ( a run's `latest` ) is not made on a Windows without its developer mode: left over there
+        excludes = [ ]
+        if finished_only:
+            excludes = [ f"--exclude={x}" for x in unfinished_over_there( host, options, f"{remote_root}/{p}" ) ]
+        # No `--delete`, ever: what is here and no longer over there stays.
         subprocess.run( [ *rsync(), "-a", *( [ "--no-links" ] if WINDOWS else [ ] ), *_rsh( options, host ),
-                          f"{host}:{remote_root}/{p}/", here( f"{target}/" ) ] )
+                          *excludes, f"{host}:{remote_root}/{p}/", here( f"{target}/" ) ] )

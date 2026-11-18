@@ -38,6 +38,17 @@ errand run --out "results/{env}/{when}" python train.py    # results/gpu/2026-09
 
 The pattern takes `{path}` `{name}` `{when}` `{place}` `{env}` `{params}`, described below.
 
+`{params:a,b}` keeps only the parameters it names, in that order:
+
+```bash
+errand run --out "results/{params:case,method,n}/{when}" bench.py --case=ring --method=lu --n=5000 --path=data/x
+# results/case=ring,method=lu,n=5000~3f9c1e/2026-09-25_18h04m11/
+```
+
+A name stays short, and says what tells your runs apart. When the run has parameters left out of it
+( `path` above ), a short hash of all of them goes on the end: two runs that differ only by those
+are still two directories. With every parameter named, there is no hash.
+
 An [entry](./declaring-work) always has its directory, as `p.out_dir`.
 
 ## Bringing back more: `--pull`
@@ -88,7 +99,9 @@ runs/{path}/{when}-{place}[-{params}]/
 - **`{place}`** is the environment and the machine: `gpu@gpu-box`. The same environment on two
   machines gives two sets of numbers, and so does one machine with two environments.
 - **`{params}`** is what was asked for, in words: the arguments ( `args=-j16` ) or an entry's
-  parameters ( `method=newton,n=5000` ). Past a readable width it is cut, with a short hash on the end.
+  parameters ( `method=newton,n=5000` ), sorted. Past a readable width it is cut, with a short hash on
+  the end: what falls past the cut is not in the name. To choose what is, name it in a `--out`
+  pattern: `{params:case,n}`.
 
 The directory is cleared and recreated when its run starts; everything above it accumulates. A
 [grid](./matrices) adds names, never levels.
@@ -100,10 +113,28 @@ On a filesystem without symlinks it is simply missing.
 
 ```text
 2026-09-25_18h04m11-gpu@gpu-box/
-  result.yaml      always: what ran, where, how it ended
+  result.yaml      always: what ran, where, how it ended -- written last
   output.txt       what it printed, when it printed anything
+  stdout.txt       the process's standard output, as written to it
+  stderr.txt       its standard error, apart
   model.pt         what it wrote there, with -o
 ```
+
+**`stdout.txt` and `stderr.txt` are the raw streams**: what the process wrote to its descriptors,
+the C library's writes, a child's, and a fault handler's included. `output.txt` is what was shown,
+both interleaved. On Linux and macOS a small process of its own copies them, and outlives the run:
+a segfault or an abort leaves in `stderr.txt` everything written up to the end -- with Python's word
+on where it crashed -- and that process writes the run's `result.yaml` for it ( `status: FAIL`,
+`error: the process ended during the run…`, no `duration_s` ). A stream that is a terminal is left
+alone ( colors, progress bars ): what Python writes to it is copied instead, and so on Windows.
+
+**A process that fails says the last of its stderr.** When a run ends by a nonzero exit status or a
+signal ( `exit 3`, `signal SIGSEGV` ), the last lines of `stderr.txt` follow the reason, in the
+report and in `error:`. A session that dies over there is said the same way, with the case it was in.
+
+**A run comes back once finished.** From another machine, a run's directory is brought back only
+once its `result.yaml` is written: never half of one, however early you ask ( `errand status` on a
+`--batch` ). And a pull never deletes here: what you have that is gone over there stays.
 
 ```yaml
 name: train.py                       # the file, or the entry's name

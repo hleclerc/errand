@@ -27,6 +27,7 @@ from __future__ import annotations
 import errno
 import json
 import os
+import posixpath
 import queue
 import threading
 import time
@@ -407,7 +408,10 @@ def push( conn, local_root, remote_root, sel: S.Selection, *, src_cache = None, 
             S.save( src_cache, src )
         got = c.get()
         dst = S.Manifest( ( k, S.Entry( *v ) ) for k, v in got[ "dst" ].items() )
-        report.findings = [ S.Finding( *f ) for f in got[ "findings" ] ]
+        records = S.run_records( dst )
+        # A run's record that appeared over there is a run made there: no finding, and it stays.
+        report.findings = [ f for f in ( S.Finding( *f ) for f in got[ "findings" ] )
+                            if not ( f.what == "added" and f.key in records ) ]
         S.say_findings( report.findings, where, say, sel )
         if got[ "ci" ]:
             clash = S.collisions( src )
@@ -421,6 +425,7 @@ def push( conn, local_root, remote_root, sel: S.Selection, *, src_cache = None, 
             c.send( { "hash": ask } )
             digests = c.get()[ "digests" ]
         p = S.plan( src, dst, lambda k: digests.get( k, "" ) )
+        report.kept_runs = p.kept_runs
         c.send( { "apply": { "delete": p.delete, "dirs": p.dirs,
                              "links": [ [ k, src[ k ].target ] for k in p.links ] } } )
         applied = c.get()
@@ -452,10 +457,27 @@ def push( conn, local_root, remote_root, sel: S.Selection, *, src_cache = None, 
     return report
 
 
+def finished( src: S.Manifest ) -> S.Manifest:
+    """`src` without the runs that have not written their record yet."""
+    from .. import results as R
+    skip = R.unfinished_runs( [ k for k, e in src.items() if e.kind == "d" ],
+                              [ k for k, e in src.items() if e.kind == "f" ] )
+    if not skip:
+        return src
+    def pointing_in( k, e ):            # a `latest` to a run not back yet: it would lead nowhere here
+        return e.kind == "l" and R.under_any( posixpath.normpath( posixpath.join( posixpath.dirname( k ), e.target ) ), skip )
+    out = S.Manifest( ( k, e ) for k, e in src.items() if not R.under_any( k, skip ) and not pointing_in( k, e ) )
+    out.real = { k: v for k, v in src.real.items() if k in out }
+    return out
+
+
 def pull( conn, remote_root, local_root, paths, *, sel: S.Selection | None = None, where = "the copy",
-          say = print, links = True ) -> S.Report:
+          say = print, links = True, finished_only = False ) -> S.Report:
     """What is under `paths` in `remote_root` over there, into `local_root` here. Nothing here is
-    deleted. Without `links` ( a Windows without its developer mode ), a link is left over there."""
+    deleted: a file or a directory here that is something else over there stays as it is. Without
+    `links` ( a Windows without its developer mode ), a link is left over there. `finished_only`:
+    the paths are run trees, and a run comes back once its `result.yaml` is written
+    ( `results.unfinished_runs` )."""
     local_root = Path( local_root )
     sel = sel or S.Selection()
     report = S.Report()
@@ -468,6 +490,8 @@ def pull( conn, remote_root, local_root, paths, *, sel: S.Selection | None = Non
         src = S.Manifest( ( k, S.Entry( *v ) ) for k, v in got[ "src" ].items() )
         if not links:
             src = S.Manifest( ( k, e ) for k, e in src.items() if e.kind != "l" )
+        if finished_only:
+            src = finished( src )
         here, _ = _under( local_root, [ p for p in paths if p.strip( "/" ) not in got[ "missing" ] ], sel )
         same_size = [ k for k, s in src.items() if s.kind == "f" and k in here and here[ k ].kind == "f"
                       and not s.same( here[ k ] ) and here[ k ].size == s.size ]
@@ -479,10 +503,20 @@ def pull( conn, remote_root, local_root, paths, *, sel: S.Selection | None = Non
         p = S.plan( S.Manifest( ( k, e._replace( digest = theirs.get( k, "" ) ) ) for k, e in src.items() ),
                     here, lambda k: S.hash_file( w.path( k ) ) if k in theirs else "" )
         for key in p.delete:                       # only what changed kind: nothing here is removed
-            if key in src and not w.delete( key ):
-                say( f"  {key}: a directory here, something else over there -- left as it is" )
-                src.pop( key, None )
-                p.send = [ k for k in p.send if k != key ]
+            if key not in src:
+                continue
+            if here[ key ].kind == "l":            # a link ( a run's `latest` ): pointed anew
+                w.delete( key )
+                continue
+            say( f"  {key}: a {'directory' if here[ key ].kind == 'd' else 'file'} here, something else "
+                 f"over there -- left as it is" )
+            gone = { k for k in src if k == key or k.startswith( key + "/" ) }
+            for k in gone:
+                src.pop( k, None )
+            p.send = [ k for k in p.send if k not in gone ]
+            p.dirs = [ k for k in p.dirs if k not in gone ]
+            p.links = [ k for k in p.links if k not in gone ]
+            p.touch = [ k for k in p.touch if k not in gone ]
         for key in p.dirs:
             if key in src:
                 w.mkdir( key )

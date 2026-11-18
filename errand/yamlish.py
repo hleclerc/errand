@@ -200,4 +200,11 @@ def read( path ):
 
 
 def write( path, data ):
-    path.write_text( dump( data ) )
+    """Written beside, then renamed: a reader -- a pull that takes a `result.yaml`
+    for a finished run -- never sees half a file."""
+    import os
+    from pathlib import Path
+    path = Path( path )
+    part = path.with_name( f".{path.name}.part" )
+    part.write_text( dump( data ) )
+    os.replace( part, path )

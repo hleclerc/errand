@@ -9,7 +9,7 @@ import sys
 import time
 import traceback
 
-from .. import config, discovery, entries as E, local, mpi, queue, results as R, runner as P, steps
+from .. import config, discovery, entries as E, local, mpi, queue, results as R, runner as P, steps, streams
 from .style import bad, capture, dim, GREEN, head, RED, RESET, YELLOW
 from .project import _src_paths, _with_env, build_dir_for, tools_for, TAGS
 from .parsing import shown_params, target_argv
@@ -193,7 +193,11 @@ def run_case( e, modules, *, root, out_root, overrides, env_name, tags, version,
 
     E.begin_run( e, resolved, leaf )
     status, error, hint = "PASS", None, None
-    with _with_env( handed ), _followed( journal, marks ):
+    exit_code = None                  # a process's that ended the run otherwise than well: its stderr is said
+    provenance = R.git_commit( root )
+    crashed = R.crash_record( entry = e, root = root, env_name = env_name, where = where, tags = tags,
+                              params = shown, version = version, provenance = provenance )
+    with _with_env( handed ), _followed( journal, marks ), streams.raw( leaf, crashed ):
         if devices:
             print( dim( f"  gpu {','.join( str( d ) for d in devices )}" ), flush = True )
         started = time.perf_counter()
@@ -248,6 +252,7 @@ def run_case( e, modules, *, root, out_root, overrides, env_name, tags, version,
                         args = target_argv( e, resolved, overrides ),
                         wrap = ask.wrap + _ranks_wrap( e, ask, env_name, tags ) ) )
                     status, error = got.status, got.error
+                    exit_code = getattr( got, "exit", None )
                     E.results.update( got.results )
                     if got.output:
                         print( got.output, end = "" )
@@ -258,10 +263,15 @@ def run_case( e, modules, *, root, out_root, overrides, env_name, tags, version,
                 raise
             except BaseException as exc:         # SystemExit included
                 status, error = "FAIL", f"{type( exc ).__name__}: {exc}"
+                if isinstance( exc, SystemExit ) and isinstance( exc.code, int ) and exc.code:
+                    exit_code = exc.code
                 traceback.print_exc()
         duration = time.perf_counter() - started
         steps.flush()
     E.end_run()
+    if status == "FAIL" and exit_code:
+        # Ended by its exit status or a signal: what it said last on stderr is what says why.
+        error = streams.with_tail( error, streams.tail( leaf / R.STDERR ) )
 
     if status == "PASS":
         print( f"{GREEN}PASS{RESET} {e.name} {dim( f'({site})' )}", flush = True )
@@ -274,7 +284,7 @@ def run_case( e, modules, *, root, out_root, overrides, env_name, tags, version,
         leaf, entry = e, root = root, env_name = env_name, where = where, tags = tags,
         status = status, error = error, duration_s = duration, ram = R.ram_mb(),
         params = shown, results = dict( E.results ), output_text = buf.getvalue(),
-        version = version,
+        version = version, provenance = provenance,
     )
     R.refresh( entry_root )
     return status, error, hint

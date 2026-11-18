@@ -6,8 +6,10 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
+from ..streams import ended
 from .base import Outcome, RunContext, Runner
 
 
@@ -37,26 +39,36 @@ class _WholeFile( Runner ):
     def run( self, entry, ctx: RunContext ) -> Outcome:
         argv = [ *ctx.wrap, *( str( a ) for a in self.command( entry.key, ctx ) ), *ctx.args ]
         # A directory only when one was asked for, which `ctx.env` says.
-        env = { **{ k: v for k, v in os.environ.items() if k != OUT_DIR },
+        # A Python that crashes says where ( `faulthandler` ), unless it was told otherwise.
+        env = { "PYTHONFAULTHANDLER": "1",
+                **{ k: v for k, v in os.environ.items() if k != OUT_DIR },
                 **( { "ERRAND_BUILD_DIR": str( ctx.build_dir ) } if ctx.build_dir else { } ),
                 **ctx.env }
         try:
             child = subprocess.Popen( argv, cwd = str( ctx.root ), env = env, text = True,
-                                      stdout = subprocess.PIPE, stderr = subprocess.STDOUT,
+                                      stdout = subprocess.PIPE, stderr = subprocess.PIPE,
                                       errors = "replace" )
         except OSError as err:
             return Outcome( status = "FAIL", error = f"{argv[ 0 ]}: {err.strerror or err}" )
         # Line by line, as it comes: a build or a long computation that says
         # nothing until it is over is one nobody can follow -- here, in
-        # `output.txt`, or on the screen.
-        for line in child.stdout:
-            sys.stdout.write( line )
-            sys.stdout.flush()
+        # `output.txt`, or on the screen. Each stream to its own: stderr ends
+        # in the run's `stderr.txt`, and is what a failure is said with.
+        pump = threading.Thread( target = _relay, args = ( child.stderr, sys.stderr ), daemon = True )
+        pump.start()
+        _relay( child.stdout, sys.stdout )
         code = child.wait()
+        pump.join()
         if code == SKIP_CODE:
             return Outcome( status = "SKIP", error = "exit 77" )
         return Outcome( status = "PASS" if code == 0 else "FAIL",
-                        error = None if code == 0 else f"exit {code}" )
+                        error = None if code == 0 else ended( code ), exit = code or None )
+
+
+def _relay( src, dst ):
+    for line in src:
+        dst.write( line )
+        dst.flush()
 
 
 # The exit code that means "this does not apply here", as automake and ctest have it.

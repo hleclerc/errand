@@ -51,6 +51,7 @@ class Outcome:
     error  : str | None = None
     results: dict = field( default_factory = dict )
     output : str = ""
+    exit   : int | None = None                    # the tool's exit code, when it ended badly: its stderr is said
 
 
 @dataclass
@@ -200,12 +201,49 @@ class Runner:
         made.key = key if key is not None else name
         return made
 
-    def shell( self, argv, ctx: RunContext, *, cwd = None, timeout = None ):
-        """Run something and bring back its output, whatever it did."""
+    def shell( self, argv, ctx: RunContext, *, cwd = None, timeout = None, live_stderr = False ):
+        """Run something and bring back its output, whatever it did. `live_stderr`: its stderr is also
+        written to this process's as it comes -- into the run's `stderr.txt`, kept even if all ends
+        badly -- and `shown` says so: what is printed afterwards is `shown_output( got )`."""
         extra = { "ERRAND_BUILD_DIR": str( ctx.build_dir ) } if ctx.build_dir else { }
-        return subprocess.run( [ str( a ) for a in argv ], cwd = str( cwd or ctx.root ),
-                               env = { **os.environ, **extra, **ctx.env }, capture_output = True,
-                               text = True, timeout = timeout )
+        env = { "PYTHONFAULTHANDLER": "1", **os.environ, **extra, **ctx.env }
+        argv = [ str( a ) for a in argv ]
+        if not live_stderr:
+            return subprocess.run( argv, cwd = str( cwd or ctx.root ), env = env, capture_output = True,
+                                   text = True, timeout = timeout )
+        import threading
+        child = subprocess.Popen( argv, cwd = str( cwd or ctx.root ), env = env, stdout = subprocess.PIPE,
+                                  stderr = subprocess.PIPE, text = True, errors = "replace" )
+        err = [ ]
+
+        def pump():
+            for line in child.stderr:
+                err.append( line )
+                sys.stderr.write( line )
+                sys.stderr.flush()
+
+        t = threading.Thread( target = pump, daemon = True )
+        t.start()
+        try:
+            out = child.stdout.read()
+            child.wait( timeout = timeout )
+        except subprocess.TimeoutExpired:
+            child.kill()
+            raise
+        t.join()
+        got = subprocess.CompletedProcess( argv, child.returncode, out, "".join( err ) )
+        got.shown = True
+        return got
+
+    @staticmethod
+    def shown_output( got ) -> str:
+        """What of a `shell`'s output is still to print: its stderr was shown as it came, with `live_stderr`."""
+        return got.stdout if getattr( got, "shown", False ) else got.stdout + got.stderr
+
+    @staticmethod
+    def exit_of( got ):
+        """The exit code a failure is told by, None for a success."""
+        return got.returncode or None
 
 
 def selector_of( specs, path: Path ) -> str | None:

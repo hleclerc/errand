@@ -126,7 +126,10 @@ def _epilogue( report, rc ):
                     print( dim( f"      {line}" ) )
     if report.failed:
         for e, why in report.failed:
-            print( f"  {bad( 'FAILED' )} {e.name}  ({e.file}:{e.line})  {why}" )
+            first, *rest = str( why ).splitlines() or [ "" ]
+            print( f"  {bad( 'FAILED' )} {e.name}  ({e.file}:{e.line})  {first}" )
+            for line in rest:                  # the last lines of stderr, for a process that failed
+                print( dim( f"  {line}" ) )
         return 1
     if report.broken:
         return 1

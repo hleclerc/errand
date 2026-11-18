@@ -51,6 +51,10 @@ def session( req: dict ) -> int:
     from ..cli.style import dim, head
     from .. import results as R
 
+    import faulthandler
+    # A crash in an extension says where it was, on stderr: kept in the run's `stderr.txt`, and said
+    # by the side that drives this session ( `cli.sessions.follow` ).
+    faulthandler.enable( all_threads = True )
     root = Path( req[ "root" ] )
     try:
         os.chdir( root )
@@ -94,6 +98,8 @@ def session( req: dict ) -> int:
                 n = len( p.selected )
                 print( head( f"\n{'=' * 10} {n} entr{'y' if n == 1 else 'ies'}  {env.name}  {where} {'=' * 10}" ),
                        flush = True )
+        # The case under way, for the side that drives: what to name if this process dies in it.
+        say( { "op": "start", "case": [ i, j ], "entry": _entry( e, root ) } )
         kept, buf = sys.stdout, io.StringIO()
         if blocks:
             # Several sessions at once: each case is said as one block, or nobody could read them.

@@ -359,3 +359,35 @@ if test( "a zone may name the environment: its build directory, its name" ):
         assert sel.zone( "build/gpu/target/criterion" ).kind == "back"
     finally:
         C.reset()
+
+
+if test( "a push never deletes the records of runs only the copy has, wherever their tree is" ):
+    src, dst, state = pair( { "src.py": "s", "runs/a/2026-x/result.yaml": "here too\n" } )
+    run( src, dst, state )
+    # Runs made over there, in a `--out` tree of the project: never brought back here.
+    tree( { "runs/a/2026-y/result.yaml": "status: PASS\n", "runs/a/2026-y/stdout.txt": "o", "runs/a/2026-y/fig/f.png": "p",
+            "runs/a/2026-z/output.txt": "still going", "runs/a/summary.yaml": "runs: 2\n", "runs/a/latest": ( "->", "2026-y" ),
+            "stray.txt": "by hand" }, dst )
+    r, said = run( src, dst, state )
+    for k in ( "2026-y/result.yaml", "2026-y/stdout.txt", "2026-y/fig/f.png", "2026-z/output.txt", "summary.yaml" ):
+        assert ( dst / "runs/a" / k ).exists(), ( k, r )
+    assert os.path.islink( dst / "runs/a/latest" )
+    assert "runs/a/2026-y/result.yaml" in r.kept_runs and not any( k.startswith( "runs/" ) for k in r.deleted ), r
+    assert not any( "runs/" in s for s in said ), said                 # a run made there is no finding
+    assert "stray.txt" in r.deleted, "what is not a run's goes, as before"
+    # Gone from the source here, a run the copy holds stays there too.
+    shutil.rmtree( src / "runs" )
+    r, _ = run( src, dst, state )
+    assert ( dst / "runs/a/2026-x/result.yaml" ).exists() and not any( k.startswith( "runs/" ) for k in r.deleted ), r
+
+
+if test( "an rsync push is told the same: the run directories over there, protected" ):
+    from errand.layers import gateways as G
+    import subprocess as sp
+    root = tree( { "runs/a/r1/result.yaml": "x", "runs/a/r1/f.png": "p", "deep/x/r2/stderr.txt": "e", ".git/result.yaml": "no" } )
+    found = sp.run( [ "sh", "-c", G._RUNS_LISTING, "_", str( root ), "result.yaml", "stderr.txt" ],
+                    capture_output = True, text = True, check = True ).stdout.split()
+    assert sorted( found ) == [ "./deep/x/r2/stderr.txt", "./runs/a/r1/result.yaml" ], found
+    rules = G.protect_runs( [ "runs/a/r1/result.yaml", "deep/x/r2/stderr.txt" ] )
+    assert "/runs/a/r1/***" in rules and "/deep/x/r2/***" in rules and "/runs/a/summary.yaml" in rules, rules
+    assert "/runs/a/latest" in rules and "/summary.yaml" in rules

@@ -258,6 +258,9 @@ class Agent:
             self.web = web.start( self.root )
 
         def closing():
+            # After its runs: the copies of errand's sources nothing needs any more go.
+            from .endpoint import prune_sources
+            prune_sources( self.root )
             if self.web is not None:
                 self.web.stop()
             syncop.closing()

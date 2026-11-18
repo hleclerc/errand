@@ -280,15 +280,45 @@ class Plan:
     links : list = field( default_factory = list )
     send  : list = field( default_factory = list )   # files whose contents cross
     touch : list = field( default_factory = list )   # files with the same contents: only mtime and mode set
+    kept_runs: list = field( default_factory = list ) # records of runs only the destination has: left there
 
 
 def depth_first( keys ) -> list:
     return sorted( set( keys ), key = lambda k: ( -k.count( "/" ), k ) )
 
 
+def run_records( m ) -> set:
+    """The keys of `m` that are records of runs: everything in a run's directory ( one holding a
+    `result.yaml`, an `output.txt`… ), and the `summary.yaml` and `latest` of the directories above it.
+    Wherever the tree is -- `errand-outputs/runs/`, or one a `--out` pattern named in the project."""
+    from .results import LATEST, RESULT, RUN_MARKS, SUMMARY
+    marks = { RESULT, *RUN_MARKS }
+    runs = { k.rpartition( "/" )[ 0 ] for k, e in m.items() if e.kind == "f" and k.rpartition( "/" )[ 2 ] in marks }
+    runs.discard( "" )                           # the root itself is no run
+    if not runs:
+        return set()
+    above = set()
+    for r in runs:
+        parts = r.split( "/" )
+        for i in range( len( parts ) ):
+            d = "/".join( parts[ : i ] )
+            above.update( f"{d}/{n}" if d else n for n in ( SUMMARY, LATEST ) )
+
+    def in_run( k ):
+        while k:
+            if k in runs:
+                return True
+            k = k.rpartition( "/" )[ 0 ]
+        return False
+    return { k for k in m if k in above or in_run( k ) }
+
+
 def plan( src: Manifest, dst: Manifest, hash_dst = None ) -> Plan:
     """What brings `dst` in line with `src`. A file of the same size whose mtime differs is hashed on
-    the destination ( `hash_dst( key )` ) before its contents are sent: a `touch` costs no transfer."""
+    the destination ( `hash_dst( key )` ) before its contents are sent: a `touch` costs no transfer.
+
+    The records of runs the destination holds and the source does not ( `run_records` ) are never
+    deleted: they are the results of runs made over there, not yet brought back -- maybe never to be."""
     p = Plan()
     for key, s in src.items():
         d = dst.get( key )
@@ -306,7 +336,11 @@ def plan( src: Manifest, dst: Manifest, hash_dst = None ) -> Plan:
         elif not s.same( d ):
             theirs = d.digest or ( hash_dst( key ) if hash_dst is not None and d.size == s.size else "" )
             ( p.touch if s.digest and theirs == s.digest else p.send ).append( key )
-    p.delete += [ key for key in dst if key not in src ]
+    theirs = [ key for key in dst if key not in src ]
+    if theirs:
+        records = run_records( dst )
+        p.kept_runs = sorted( k for k in theirs if k in records )
+        p.delete += [ k for k in theirs if k not in records ]
     p.delete = depth_first( p.delete )
     p.dirs.sort()
     return p
@@ -481,6 +515,7 @@ class Report:
     spared  : list = field( default_factory = list )     # ( key, what, mtime ): moved aside rather than lost
     spared_in: str = ""                                  # where, relative to the destination's root
     unstable: list = field( default_factory = list )     # changed while being read, twice
+    kept_runs: list = field( default_factory = list )    # records of runs only the destination has: left there
 
     def __bool__( self ):
         return bool( self.sent or self.touched or self.deleted )
@@ -549,7 +584,9 @@ def sync( src_root, dst_root, sel: Selection, *, src_cache = None, trusted = Non
         dst = scan( dst_root, sel, known, hashing = False )
         if known is not None:
             first = { f.key: f for f, _ in known.found }         # a check saw it first: its time is the one
-            report.findings = [ first.get( f.key, f ) for f in compare( known, dst ) ]
+            records = run_records( dst )
+            report.findings = [ first.get( f.key, f ) for f in compare( known, dst )
+                                if not ( f.what == "added" and f.key in records ) ]
     else:
         dst = Manifest( known )                # the disk, as the agent's checks left it: the trusted
         dst.real = dict( known.real )          # manifest, and what they found since
@@ -575,6 +612,7 @@ def sync( src_root, dst_root, sel: Selection, *, src_cache = None, trusted = Non
             return ""
 
     p = plan( src, dst, theirs )
+    report.kept_runs = p.kept_runs
     for key in p.delete:
         if w.delete( key ):
             report.deleted.append( key )

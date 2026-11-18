@@ -190,6 +190,12 @@ its results as its last step. [`errand attach`](../detached#close-the-laptop) co
 command whose connection was lost, and `errand status` or `errand watch` those of a
 [`--batch`](../detached) submission.
 
+A run comes back once it has written its `result.yaml`, which it writes last: one still under way
+stays over there until the next collection, rather than coming back half written. A pull never
+deletes here, by either transfer: a run you have that is gone over there stays. Nor does a push
+delete over there the records of runs made there: a run tree a `--out` pattern put in the project
+( `runs/…` ) is left alone by the push for every run it holds that is not here, and the push says so.
+
 ## What only this machine can supply
 
 A host name you can reach, a partition you may submit to: none of it can be committed, none of it

@@ -88,7 +88,7 @@ target, `run` runs `errand.default_run`, the targets the project declares in `er
 | `--grid SEP` | several values, split on SEP, make a [matrix](/guide/matrices) — of environments, tags and declared parameters: `--grid=+ --env a+b t.py::x --n=1+2` is four runs. Without it a value is one value, commas included. `run`, `list`, `setup`, `shell` |
 | `--batch` | launch and give the shell back — [detached](/guide/detached) |
 | `-o` | an output directory of its own for each run — the run's directory under `errand-outputs/runs/` — exported as `$ERRAND_OUT_DIR`, and what it holds brought back |
-| `--out PATTERN` | the same under another tree, or a pattern: `"results/{env}/{when}"`, with `{path}` `{name}` `{when}` `{place}` `{env}` `{params}` |
+| `--out PATTERN` | the same under another tree, or a pattern: `"results/{env}/{when}"`, with `{path}` `{name}` `{when}` `{place}` `{env}` `{params}`; `{params:a,b}` keeps only those parameters, in that order ( a hash of all of them on the end when some are left out ) |
 | `--no-setup` | skip the freshness check for this run |
 | `--no-queue` | this run does not wait, and does not hold |
 | `--pull DIR` | on another machine: bring DIR ( relative to the project root ) back afterwards. Repeatable |

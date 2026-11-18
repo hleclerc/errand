@@ -213,3 +213,48 @@ if test( "a first sync over a copy errand never wrote keeps what it removes or r
         assert ( kept / "a.py" ).read_text() == "an older a" and ( kept / "old.py" ).read_text() == "only there"
         assert not ( kept / "same.py" ).exists() and ( dst / "results/r.txt" ).exists()
         assert any( "old.py: not written by errand" in s for s in said ), said
+
+
+if test( "a pull of run trees brings a run back once finished, and never deletes here" ):
+    with scratch() as d:
+        from errand.agents import syncop
+        runs = "errand-outputs/runs/t.py/case"
+        there = tree( d / "copy", { f"{runs}/done/result.yaml": "status: PASS\n", f"{runs}/done/output.txt": "o",
+                                    f"{runs}/going/output.txt": "half", f"{runs}/going/stderr.txt": "e",
+                                    f"{runs}/summary.yaml": "runs: 1\n" } )
+        ( there / runs / "fresh" ).mkdir()
+        os.symlink( "going", there / runs / "latest" )
+        here = tree( d / "here", { f"{runs}/mine/result.yaml": "status: PASS\n", f"{runs}/clash": "a file here" } )
+        ( there / runs / "clash" ).mkdir()
+        ( there / runs / "clash" / "result.yaml" ).write_text( "x" )
+        conn = agent( d / "ag" )
+        said = [ ]
+        syncop.pull( conn, there, here, [ runs ], say = said.append, finished_only = True )
+        assert ( here / runs / "done" / "output.txt" ).exists()
+        # Under way, or just made: left over there, and the `latest` that leads to one with it.
+        assert not ( here / runs / "going" ).exists() and not ( here / runs / "fresh" ).exists()
+        assert not ( here / runs / "latest" ).is_symlink()
+        # Nothing here goes: not a run of its own, not a file where the other side has a directory.
+        assert ( here / runs / "mine" / "result.yaml" ).exists()
+        assert ( here / runs / "clash" ).read_text() == "a file here" and any( "clash" in s for s in said ), said
+        # Once its record is written, the run comes back whole.
+        ( there / runs / "going" / "result.yaml" ).write_text( "status: PASS\n" )
+        syncop.pull( conn, there, here, [ runs ], say = said.append, finished_only = True )
+        assert ( here / runs / "going" / "output.txt" ).read_text() == "half"
+        assert os.readlink( here / runs / "latest" ) == "going"
+
+
+if test( "rsync is told the same: a listing over there, the unfinished runs excluded" ):
+    import subprocess
+    from errand import results as R
+    from errand.layers import gateways as G
+    with scratch() as d:
+        there = tree( d / "runs", { "a/done/result.yaml": "x", "a/going/output.txt": "o", "a/done/f/x.png": "p" } )
+        ( there / "a" / "fresh" ).mkdir()
+        os.symlink( "going", there / "a" / "latest" )
+        listing = subprocess.run( [ "sh", "-c", G._RUN_LISTING, "_", str( there ), R.RESULT, *R.RUN_MARKS ],
+                                  capture_output = True, text = True, check = True ).stdout
+        assert G.unfinished_excludes( listing ) == [ "/a/fresh/", "/a/going/", "/a/latest" ], listing
+        listing = subprocess.run( [ "sh", "-c", G._RUN_LISTING, "_", str( d / "nothing" ), R.RESULT ],
+                                  capture_output = True, text = True ).stdout
+        assert G.unfinished_excludes( listing ) == [ ]

@@ -8,6 +8,7 @@ import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from ..streams import ended
 from .base import _read, FRAMEWORK, NONE, Outcome, RunContext, Runner
 
 
@@ -72,14 +73,16 @@ class Catch2( Runner ):
         report = ctx.out_dir / "catch2.xml"
         argv = [ binary, "--reporter", f"xml::out={report}", *self.args,
                  *( [ ctx.selector ] if ctx.selector else [ ] ), *ctx.args ]
-        got = self.shell( argv, ctx )
-        text = got.stdout + got.stderr
+        got = self.shell( argv, ctx, live_stderr = True )
+        text = self.shown_output( got )
         outcome = _from_catch2( report )
         if outcome is None:
             return Outcome( status = "PASS" if got.returncode == 0 else "FAIL",
-                            error = None if got.returncode == 0 else f"exit {got.returncode}",
-                            output = text )
+                            error = None if got.returncode == 0 else ended( got.returncode ),
+                            output = text, exit = self.exit_of( got ) )
         outcome.output = text
+        if got.returncode < 0:          # a crash the report does not say
+            outcome.status, outcome.error, outcome.exit = "FAIL", ended( got.returncode ), got.returncode
         return outcome
 
 

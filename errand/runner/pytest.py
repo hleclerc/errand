@@ -9,6 +9,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from ..streams import ended
 from .base import FRAMEWORK, NONE, Outcome, RunContext, Runner, junit_outcome
 
 
@@ -141,15 +142,17 @@ class Pytest( Runner ):
             else:
                 workers = [ "-n", str( ctx.jobs ) ]
         got = self.shell( [ *self.py( ctx ), "-m", "pytest", "-q", f"--junitxml={report}",
-                            *workers, *self.args, *ids, *ctx.args ], ctx )
-        text = got.stdout + got.stderr
+                            *workers, *self.args, *ids, *ctx.args ], ctx, live_stderr = True )
+        text = self.shown_output( got )
         outcome = junit_outcome( report )
         if got.returncode == 5:
             # Nothing collected: an empty run looks exactly like a passing one.
             return Outcome( status = "FAIL", error = "pytest collected no test", output = text )
         if outcome is None:
             return Outcome( status = "PASS" if got.returncode == 0 else "FAIL",
-                            error = None if got.returncode == 0 else f"exit {got.returncode}",
-                            output = text )
+                            error = None if got.returncode == 0 else ended( got.returncode ),
+                            output = text, exit = self.exit_of( got ) )
         outcome.output = text
+        if got.returncode < 0:          # a crash the report does not say
+            outcome.status, outcome.error, outcome.exit = "FAIL", ended( got.returncode ), got.returncode
         return outcome

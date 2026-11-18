@@ -147,9 +147,10 @@ if test( "files cross through an agent of the guest that no layer starts" ):
     line = host[ "argv" ][ -1 ]
     assert host[ "argv" ][ 0 ] == "ssh" and "me@winbox" in host[ "argv" ] and host[ "id" ] != envt[ "id" ]
     assert f"connect C:/errand/agents/host-{g.key}" in line and "cd /d" not in line and "vcvars" not in line, line
-    unpack = G.unpack_line( "C:/errand/src/k1" )
-    assert unpack.startswith( r'if exist "C:\errand\src\k1\errand\_boot.py" ( exit 0 )' ) and "tar -xzf - -C" in unpack
-    assert r'move "C:\errand\src\k1.part" "C:\errand\src\k1"' in unpack
+    unpack = G.unpack_line( "C:/errand/src/k1", "k1" )
+    # The guest's Python unpacks it ( `bootstrap.UNPACK_PY` ): nothing in the line for cmd.exe to read into.
+    assert unpack.startswith( 'python -c "import base64;exec(' ) and unpack.endswith( '"C:/errand/src/k1/errand" k1' )
+    assert not any( c in unpack.split( '"' )[ 1 ] for c in "%^&|<>" ), unpack
 
 
 if test( "bytes on a line's stdin come back as bytes: the tar of errand's sources into a guest" ):

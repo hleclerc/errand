@@ -9,6 +9,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from ..streams import ended
 from .base import FRAMEWORK, NONE, Outcome, RunContext, Runner
 
 
@@ -135,18 +136,19 @@ class Cargo( Runner ):
                  *( [ "--test-threads", str( ctx.jobs ) ] if ctx.jobs > 1 else [ ] ), *ctx.args ]
         if tail:
             argv += [ "--", *tail ]
-        got = self.shell( argv, ctx )
+        got = self.shell( argv, ctx, live_stderr = True )
         text = got.stdout + got.stderr
+        shown = self.shown_output( got )
 
         ( ctx.out_dir / "cargo.txt" ).write_text( text )
         counts = _from_cargo( text )
         if counts is None:
             return Outcome( status = "PASS" if got.returncode == 0 else "FAIL",
-                            error = None if got.returncode == 0 else f"exit {got.returncode}",
-                            output = text )
+                            error = None if got.returncode == 0 else ended( got.returncode ),
+                            output = shown, exit = self.exit_of( got ) )
         status = "FAIL" if counts[ "failed" ] else (
             "SKIP" if counts[ "passed" ] == 0 and counts[ "ignored" ] else "PASS" )
-        return Outcome( status = status, results = counts, output = text,
+        return Outcome( status = status, results = counts, output = shown,
                         error = f"{counts[ 'failed' ]} test(s) failed" if counts[ "failed" ] else None )
 
 

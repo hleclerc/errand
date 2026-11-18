@@ -8,7 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .. import discovery, entries as E, results as R
+from .. import discovery, entries as E, results as R, streams
 from .style import bad, head
 from .here import run_entries
 from .parsing import shown_params
@@ -84,7 +84,12 @@ def run_in_processes( entries, combos, *, root, out_root, env, tags, how_many, r
         if status == "SKIP":
             report.skipped.append( ( e, got.get( "error" ), None ) )
         elif status != "PASS":
-            report.failed.append( ( e, got.get( "error" ) or f"exit {child.returncode}" ) )
+            why = got.get( "error" ) or streams.ended( child.returncode )
+            if child.returncode and got.get( "duration_s" ) is None:
+                # it died before writing its record ( the keeper of its streams wrote one ): how, and its stderr
+                why = streams.with_tail( f"{streams.ended( child.returncode )}: {why}",
+                                         streams.tail( leaf / R.STDERR ) )
+            report.failed.append( ( e, why ) )
     return report
 
 

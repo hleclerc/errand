@@ -205,6 +205,18 @@ def sweep( root: Path, older = 3600.0 ):
             shutil.rmtree( d, ignore_errors = True )
         finally:
             free.close()
+    prune_sources( root )
+
+
+def prune_sources( root: Path ):
+    """After the agents' directories, the copies of errand's sources none of them needs any more
+    ( `bootstrap.prune_sources` ): an agent's directory is `<base>/agents/<name>`, a hub's `<base>/hub-<key>`."""
+    from .. import bootstrap
+    base = root.parent.parent if root.parent.name == "agents" else root.parent
+    try:
+        bootstrap.prune_sources( base, keep = { bootstrap.sources_key() } )
+    except Exception:
+        pass                               # a cleanup: never a reason for an agent not to serve
 
 
 def _attachable( d: Path, now: float ) -> bool:

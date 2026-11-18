@@ -117,3 +117,109 @@ if test( "ERRAND_CACHE_DIR moves errand's per-user directory" ):
 if test( "the oldest Python errand runs on is said once, and pyproject agrees" ):
     text = ( B.PACKAGE.parent / "pyproject.toml" ).read_text()
     assert f'requires-python = ">={B.MIN[ 0 ]}.{B.MIN[ 1 ]}"' in text
+
+
+if test( "the shipped copy is said whole only once every file is there, by one shipping at a time" ):
+    tar = B.package_tar()
+    with tempfile.TemporaryDirectory() as tmp:
+        def unpack( d, data ):
+            return subprocess.run( [ "sh", "-c", B.UNPACK, "sh", str( d ), "K" ], input = data, capture_output = True )
+        whole = Path( tmp ) / "a" / "errand"
+        assert unpack( whole, tar ).returncode == 0
+        assert ( whole / ".sources" ).read_text().strip() == "K" and ( whole / "_boot.py" ).exists()
+        # Cut short ( a network drop ): it fails, and nothing takes the place of a copy.
+        cut = Path( tmp ) / "b" / "errand"
+        assert unpack( cut, tar[ : len( tar ) // 2 ] ).returncode != 0
+        assert not cut.exists() and not list( cut.parent.glob( "errand.part*" ) ), list( cut.parent.iterdir() )
+        # A whole tar whose files are not all there ( its manifest says so ): no `.sources` either.
+        import io, tarfile
+        buf = io.BytesIO()
+        with tarfile.open( fileobj = buf, mode = "w:gz" ) as t:
+            listing = b"_boot.py\nyamlish.py\n"
+            info = tarfile.TarInfo( B.MANIFEST ); info.size = len( listing )
+            t.addfile( info, io.BytesIO( listing ) )
+            info = tarfile.TarInfo( "yamlish.py" ); info.size = 1
+            t.addfile( info, io.BytesIO( b"x" ) )
+        part = Path( tmp ) / "c" / "errand"
+        got = unpack( part, buf.getvalue() )
+        assert got.returncode != 0 and b"without _boot.py" in got.stderr and not part.exists(), got
+        # Two shippings at once each unpack in a directory of their own: the copy is whole.
+        both = Path( tmp ) / "d" / "errand"
+        procs = [ subprocess.Popen( [ "sh", "-c", B.UNPACK, "sh", str( both ), "K" ], stdin = subprocess.PIPE,
+                                    stdout = subprocess.DEVNULL, stderr = subprocess.DEVNULL ) for _ in range( 4 ) ]
+        for p in procs:
+            p.stdin.write( tar )
+            p.stdin.close()
+        assert all( p.wait() == 0 for p in procs )
+        names = { l for l in ( both / B.MANIFEST ).read_text().splitlines() if l }
+        assert all( ( both / n ).is_file() for n in names ) and ( both / ".sources" ).exists()
+
+
+if test( "the copy's place follows the sources' content, all of it" ):
+    from errand import __version__
+    assert B.key() == f"{__version__}-{B.sources_key()}" and B.src_rel() == f"src/{B.key()}"
+    shipped = { rel.as_posix() for _, rel in B._shipped() }
+    assert "_boot.py" in shipped and not any( "__pycache__" in s for s in shipped )
+    # Every shipped file counts, `.py` or not: what the key hashes is what the tar holds.
+    import io, tarfile
+    with tarfile.open( fileobj = io.BytesIO( B.package_tar() ), mode = "r:gz" ) as t:
+        assert { m.name for m in t.getmembers() } == shipped | { B.MANIFEST }
+
+
+if test( "a Windows guest's copy: the same guarantees, by its Python" ):
+    tar = B.package_tar()
+    with tempfile.TemporaryDirectory() as tmp:
+        def unpack( d, data, key = "K" ):
+            return subprocess.run( [ "sh", "-c", B.unpack_py_line( sys.executable, str( d ), key ) ],
+                                   input = data, capture_output = True )
+        whole = Path( tmp ) / "a" / "errand"
+        assert unpack( whole, tar ).returncode == 0
+        assert ( whole / ".sources" ).read_text().strip() == "K" and ( whole / "_boot.py" ).exists()
+        assert unpack( whole, b"" ).returncode == 0, "already there: nothing read"
+        cut = Path( tmp ) / "b" / "errand"
+        assert unpack( cut, tar[ : len( tar ) // 2 ] ).returncode != 0
+        assert not cut.exists() and not list( cut.parent.iterdir() ), list( cut.parent.iterdir() )
+        both = Path( tmp ) / "c" / "errand"
+        procs = [ subprocess.Popen( [ "sh", "-c", B.unpack_py_line( sys.executable, str( both ), "K" ) ],
+                                    stdin = subprocess.PIPE, stdout = subprocess.DEVNULL, stderr = subprocess.DEVNULL )
+                  for _ in range( 4 ) ]
+        for p in procs:
+            p.stdin.write( tar )
+            p.stdin.close()
+        assert all( p.wait() == 0 for p in procs )
+        names = { l for l in ( both / B.MANIFEST ).read_text().splitlines() if l }
+        assert all( ( both / n ).is_file() for n in names ) and sorted( x.name for x in both.parent.iterdir() ) == [ "errand" ]
+
+
+if test( "a copy of the sources goes once nothing needs it: no agent started from it, and unused for a while" ):
+    import time
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path( tmp )
+        def copy( name, key, age_days ):
+            d = base / "src" / name / "errand"
+            d.mkdir( parents = True )
+            ( d / ".sources" ).write_text( key + "\n" )
+            t = time.time() - age_days * 86400
+            for p in ( d / ".sources", d.parent ):
+                os.utime( p, ( t, t ) )
+            return d.parent
+        served = copy( "v-aaa", "aaa", 30 )            # an agent of it is there: kept, however old
+        recent = copy( "v-bbb", "bbb", 2 )             # used two days ago ( a job may wait in a queue ): kept
+        mine = copy( "v-ccc", "ccc", 30 )              # the asking agent's own: kept
+        old = copy( "v-ddd", "ddd", 30 )               # nothing names it, unused for a month: goes
+        legacy = copy( "2026.11.03.2-a4e77e0b", "eee", 30 )   # a copy named after a checkout's path: by what it holds
+        half = base / "src" / "v-fff.part.123"         # a shipping left half done
+        half.mkdir()
+        t = time.time() - 7200
+        os.utime( half, ( t, t ) )
+        ( base / "agents" / "env-aaa-1234" ).mkdir( parents = True )
+        ( base / "hub-zzz" ).mkdir()
+        assert B.keys_in_use( base ) == { "aaa", "zzz" }
+        gone = B.prune_sources( base, keep = { "ccc" } )
+        assert sorted( d.name for d in gone ) == sorted( [ old.name, legacy.name, half.name ] ), gone
+        assert served.exists() and recent.exists() and mine.exists()
+        # The agent, after its runs, does the same from its own directory.
+        from errand.agents import endpoint
+        copy( "v-ggg", "ggg", 30 )
+        endpoint.prune_sources( base / "agents" / "env-aaa-1234" )
+        assert not ( base / "src" / "v-ggg" ).exists() and served.exists()

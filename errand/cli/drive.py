@@ -305,7 +305,8 @@ def _drive_guest( env, tags, verb, known, *, root, report, pull ) -> int:
                 return INTERRUPTED
             box.update( next( ( b for b in boxes if b.get( "plan" ) ), { } ) )
             plan = box.get( "plan" ) or { }
-            g.fetch( [ plans_rel( root ), *sorted( { r[ "under" ] for r in plan.get( "runs", [ ] ) } ), *pull, *L.back_zones( env.name ) ] )
+            g.fetch( [ plans_rel( root ), *pull, *L.back_zones( env.name ) ] )
+            g.fetch( sorted( { r[ "under" ] for r in plan.get( "runs", [ ] ) } ), runs = True )
     except VmError as err:
         say( f"  {err}" )
         return 1
@@ -344,15 +345,17 @@ def _bring_back( where, env_name, box, pull ):
     if ssh is None:
         return
 
-    def fetch( paths ):
+    def fetch( paths, runs = False ):
         if paths:
             say( f"  {L.transfer( ssh.transfer )} pull  <- {ssh.host}:{where.there} [{', '.join( paths )}]" )
-            L.fetch( paths, ssh.host, where.there, where.root, ssh.options, transfer_by = ssh.transfer )
+            L.fetch( paths, ssh.host, where.there, where.root, ssh.options, transfer_by = ssh.transfer,
+                     finished_only = runs )
 
     fetch( [ plans_rel( where.root ) ] )
     plan = box.get( "plan" ) or read_plan( where.root, env_name )
     if plan:
-        fetch( sorted( { r[ "under" ] for r in plan[ "runs" ] } ) )
+        # A run comes back once it has written its record: never half of one.
+        fetch( sorted( { r[ "under" ] for r in plan[ "runs" ] } ), runs = True )
     fetch( [ *pull, *L.back_zones( env_name ) ] )
 
 

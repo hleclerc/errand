@@ -178,8 +178,9 @@ def collect( root: Path, record: dict ):
         L.fetch( [ str( Path( place[ "plan" ] ).parent ) ], place[ "host" ], there, root, options )
         plan = plan_of_place( root, place )
         if plan is not None:
+            # a run still going over there stays there: it comes back whole, once finished
             L.fetch( sorted( { r[ "under" ] for r in plan[ "runs" ] } ), place[ "host" ], there,
-                     root, options )
+                     root, options, finished_only = True )
 
 
 def states( root: Path, record: dict ) -> list:

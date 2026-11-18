@@ -169,3 +169,37 @@ if test( "the record says when, and not only which day" ):
         assert when.tzinfo is not None, data[ "date" ]
         assert abs( ( datetime.datetime.now().astimezone() - when ).total_seconds() ) < 120
         assert R.yamlish.read( leaf / R.RESULT )[ "date" ] == data[ "date" ]
+
+
+if test( "{params:a,b} keeps only the parameters named, in that order" ):
+    e = an_entry()
+    run = { "args": "--device=cpu", "case": "ring", "kernels": "compile", "n": 5000, "path": "a/b", "method": "lu" }
+    R.pattern = "results/{env}/{params:case,method,n}/{when}"
+    try:
+        leaf, top = R.dirs_for( Path( "/out" ), e, run, "gpu@box", ROOT )
+        name = leaf.parent.name
+        # The names chosen, in the order chosen; the others only through the hash that keeps runs apart.
+        assert name.startswith( "case=ring,method=lu,n=5000~" ), name
+        assert "path" not in name and "kernels" not in name and len( name ) < 40, name
+        assert top == ROOT / "results", top              # what does not change from run to run
+        other, _ = R.dirs_for( Path( "/out" ), e, { **run, "path": "c/d" }, "gpu@box", ROOT )
+        assert other.parent.name != name, "a left-out parameter that differs still separates the runs"
+        # Every parameter kept: nothing to separate, no hash.
+        exact, _ = R.dirs_for( Path( "/out" ), e, { "n": 1, "case": "x" }, "gpu@box", ROOT )
+        assert exact.parent.name == "case=x,n=1", exact
+        # Plain `{params}` is what it was.
+        R.pattern = "results/{params}/{when}"
+        plain, _ = R.dirs_for( Path( "/out" ), e, run, "gpu@box", ROOT )
+        assert plain.parent.name == R.params_tag( run ), plain
+        assert R.kept_params_tag( { }, [ "n" ] ) == ""
+    finally:
+        R.pattern = None
+
+
+if test( "a run comes back once its record is written: the unfinished ones are left over there" ):
+    dirs = [ "c", "c/done", "c/done/figs", "c/going", "c/fresh", "c/done/empty" ]
+    files = [ "c/summary.yaml", "c/done/result.yaml", "c/done/output.txt", "c/done/figs/a.png",
+              "c/going/output.txt", "c/going/stderr.txt" ]
+    # `going` has started and not finished, `fresh` was just made; an empty directory a finished run made is its own.
+    assert R.unfinished_runs( dirs, files ) == { "c/going", "c/fresh" }, R.unfinished_runs( dirs, files )
+    assert R.under_any( "c/going/x", { "c/going" } ) and not R.under_any( "c/goingx", { "c/going" } )
