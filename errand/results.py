@@ -348,7 +348,7 @@ def crash_record( *, entry, root, env_name, where, tags, params, version, proven
 
 
 def write_result( leaf: Path, *, entry, root, env_name, where, tags, status, error,
-                  duration_s, ram, params, results, output_text, version, provenance = None ):
+                  duration_s, ram, params, results, output_text, version, provenance = None, required = None ):
     # The output file is normally written live, as the run talks; all that is
     # left here is to say whether it holds anything. Writing it again would
     # only risk replacing a complete file with a truncated buffer.
@@ -385,6 +385,8 @@ def write_result( leaf: Path, *, entry, root, env_name, where, tags, status, err
         "results"    : _plain( results ),
         "output_file": output_file,
     }
+    if required:
+        data[ "required" ] = _plain( required )        # what its `errand.require` asked ( ADR 0014 )
     yamlish.write( leaf / RESULT, data )
     return data
 

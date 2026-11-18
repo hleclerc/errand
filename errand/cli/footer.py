@@ -70,12 +70,23 @@ def mark( text: str | None ):
     out.flush()
 
 
+def want( what: dict ):
+    """A file the case wants and cannot download ( `errand.download`, ADR 0013 ): asked of the side that
+    drives this session, which answers in the file the case waits on."""
+    from ..agents.ops import MARK
+    out = sys.__stdout__
+    out.flush()
+    out.write( MARK + json.dumps( { "op": "want", **what } ) + "\n" )
+    out.flush()
+
+
 class Followed:
     """`with Followed( journal, say ):` -- while the case runs, its line goes to `say` when it changes;
-    `say( None )` when it ends."""
+    `say( None )` when it ends. `want`: told each file the case asks up the chain for ( ADR 0013 )."""
 
-    def __init__( self, journal, say ):
-        self.journal, self.say = journal, say
+    def __init__( self, journal, say, want = None ):
+        self.journal, self.say, self.want = journal, say, want
+        self.read_to = 0                    # how far the journal was read for wants
         self.stop   = threading.Event()
         self.seen   = None                  # ( size, mtime ) of the journal at the last look
         self.said   = None
@@ -106,6 +117,15 @@ class Followed:
         if ( st.st_size, st.st_mtime ) == self.seen:
             return
         self.seen = ( st.st_size, st.st_mtime )
+        if self.want is not None and st.st_size > self.read_to:
+            with open( self.journal, "rb" ) as f:
+                f.seek( self.read_to )
+                data = f.read( st.st_size - self.read_to )
+            cut = data.rfind( b"\n" )                       # whole lines only: the last may be under way
+            self.read_to += cut + 1
+            for e in steps.parse( data[ : cut + 1 ] ):
+                if isinstance( e.get( "want" ), dict ):
+                    self.want( e[ "want" ] )
         text = steps.line( steps.summary( self.journal ) )
         if text and text != self.said:
             self.said = text

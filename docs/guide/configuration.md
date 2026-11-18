@@ -77,7 +77,7 @@ errand.configure(
 | `build` | where a runner's build goes, `build/<env>/`: the `{build_dir}` of [Catch2](/guide/runners/catch2) |
 | `src` | your package layout, so a child process imports your code without an install |
 | `exclude` | vendored code, fixtures, a copy of something that should not be imported |
-| `zones` | the paths a run writes in the project's copy over ssh, each a kind: `{ "/results": "back" }` ( written there, brought back ), `{ "cache": "build" }` ( built there ). A push never sends into a zone nor deletes in one. A leading `/` anchors a path at the root; without, a name matches anywhere. See [Ssh](/guide/layers/ssh) |
+| `zones` | the paths a run writes in the project's copy over ssh, each a kind: `{ "/results": "back" }` ( written there, brought back ), `{ "cache": "build" }` ( built there ), `{ "/data-cache": "cache" }` ( added to on both sides, never replaced nor deleted ). A push never sends into a `back` or `build` zone nor deletes in one; into a `cache` it sends only what the copy lacks. A leading `/` anchors a path at the root; without, a name matches anywhere. See [Ssh](/guide/layers/ssh) |
 
 An unknown setting is a `TypeError` listing the ones that exist. The `out` and `state` of an older
 errand are ignored with a warning: what they named is in `errand-outputs/` now.

@@ -30,10 +30,11 @@ from types import SimpleNamespace
 from .. import agents, batch, bootstrap, config, layers as L, results as R
 from ..agents import envs, upstream as U
 from ..agents.ops import KNOWN
+from ..needs import of_env as env_needs
 from .parallel import job_count
 from .plans import plans_rel, read_plan
 from .project import build_dir_for, child_env_for
-from . import alive, guest
+from . import alive, guest, relay
 from .sessions import follow_all, INTERRUPTED, LocalSession, Session, WatchedSession
 from .style import bad, dim, head, warn
 
@@ -233,7 +234,9 @@ def drive( env, tags, verb, known, *, root, out_root, report, pull = ( ) ) -> in
 
     # One job sized before any plan ( watched ): what the command line asks is all there is to size it from
     # ( `--ranks 8` ). An entry's own `ranks = …` is known only from the plan.
-    asked = { k: getattr( known, k ) for k in ( "ranks", "cpus", "gpus", "ram" ) if getattr( known, k, None ) }
+    # Under it, the environment's own needs ( ADR 0014 ).
+    asked = { k: getattr( known, k ) for k in ( "ranks", "cpus", "gpus", "gpu_ram", "ram" ) if getattr( known, k, None ) }
+    asked = { **env_needs( env.name )[ 0 ], **asked }
     needs = ( box.get( "plan" ) or { } ).get( "needs" ) if not single else asked
     reach = Reach( env, tags, "run", where, needs = needs, time = getattr( known, "time", None ) )
     runs = { **base, "known": { **base[ "known" ], **told, "from_plan": not single, "phase": "run" } }
@@ -254,7 +257,7 @@ def drive( env, tags, verb, known, *, root, out_root, report, pull = ( ) ) -> in
 
     live = _remember( root, env, reach, sessions, where, pull )
     boxes = [ dict( box ) for _ in sessions ]
-    rcs = follow_all( sessions, report, boxes )
+    rcs = follow_all( sessions, report, boxes, relay = _relay( where.ssh, root ) )
     if rcs is None:
         if live:
             if all( getattr( s, "stop_delivered", True ) for s in sessions ):
@@ -300,17 +303,27 @@ def _drive_guest( env, tags, verb, known, *, root, report, pull ) -> int:
             else:
                 sessions = [ g.start( { **base, "known": { **base[ "known" ], "phase": "run" } }, child ) ]
             boxes = [ dict( box ) for _ in sessions ]
-            rcs = follow_all( sessions, report, boxes )
+            rcs = follow_all( sessions, report, boxes,
+                              relay = relay.through( g.host_conn, root, "windows" ) )
             if rcs is None:
                 return INTERRUPTED
             box.update( next( ( b for b in boxes if b.get( "plan" ) ), { } ) )
             plan = box.get( "plan" ) or { }
             g.fetch( [ plans_rel( root ), *pull, *L.back_zones( env.name ) ] )
             g.fetch( sorted( { r[ "under" ] for r in plan.get( "runs", [ ] ) } ), runs = True )
+            g.fetch( L.cache_zones( env.name ), keep = True )
     except VmError as err:
         say( f"  {err}" )
         return 1
     return max( rcs ) if rcs else 0           # what the guest wrote came straight here
+
+
+def _relay( ssh, root ):
+    """What answers a run over there that asks up the chain for a file ( ADR 0013 ): its host's agent, then
+    here. None for a run here: nothing is above it."""
+    if ssh is None:
+        return None
+    return relay.through( lambda: agents.open( U.of_host( ssh.host, ssh.options ) ), root, ssh.host )
 
 
 # ── coming back ──────────────────────────────────────────────────────────────
@@ -345,11 +358,12 @@ def _bring_back( where, env_name, box, pull ):
     if ssh is None:
         return
 
-    def fetch( paths, runs = False ):
+    def fetch( paths, runs = False, keep = False ):
         if paths:
-            say( f"  {L.transfer( ssh.transfer )} pull  <- {ssh.host}:{where.there} [{', '.join( paths )}]" )
+            say( f"  {L.transfer( ssh.transfer )} pull  <- {ssh.host}:{where.there} [{', '.join( paths )}]"
+                 + ( " ( cache )" if keep else "" ) )
             L.fetch( paths, ssh.host, where.there, where.root, ssh.options, transfer_by = ssh.transfer,
-                     finished_only = runs )
+                     finished_only = runs, keep = keep )
 
     fetch( [ plans_rel( where.root ) ] )
     plan = box.get( "plan" ) or read_plan( where.root, env_name )
@@ -357,6 +371,7 @@ def _bring_back( where, env_name, box, pull ):
         # A run comes back once it has written its record: never half of one.
         fetch( sorted( { r[ "under" ] for r in plan[ "runs" ] } ), runs = True )
     fetch( [ *pull, *L.back_zones( env_name ) ] )
+    fetch( L.cache_zones( env_name ), keep = True )
 
 
 def attach( root, ident = None, *, report ) -> int:
@@ -382,7 +397,10 @@ def attach( root, ident = None, *, report ) -> int:
         else:
             conn = agents.open( rec[ "target" ] )
             boxes = [ { } for _ in rec[ "procs" ] ]
-            rcs = follow_all( [ Session( conn, pid, rec.get( "store" ) ) for pid in rec[ "procs" ] ], report, boxes )
+            ssh = rec.get( "ssh" )
+            rcs = follow_all( [ Session( conn, pid, rec.get( "store" ) ) for pid in rec[ "procs" ] ], report, boxes,
+                              relay = _relay( SimpleNamespace( host = ssh[ "host" ], options = ssh[ "options" ] )
+                                              if ssh else None, root ) )
             if rcs is None:
                 path.unlink( missing_ok = True )
                 return INTERRUPTED

@@ -117,7 +117,20 @@ class Agent:
                     # Forced: what runs is stopped first, not left behind without its owner.
                     writer.send( channel, F.REPLY, { "ok": True, "running": running } )
                     threading.Thread( target = self.shut, daemon = True ).start()
-            elif op in ( "sync", "pull" ):
+            elif op == "download":
+                # A file a run over there wants and cannot reach ( ADR 0013 ): this agent tries, from a thread.
+                def fetch():
+                    from ..downloads import serve_want
+                    try:
+                        got = serve_want( req[ "want" ] )
+                    except Exception as err:
+                        got = { "error": f"{type( err ).__name__}: {err}" }
+                    # `failed`, not `error`: a reply that names an error is the request's failure, and this one
+                    # is an answer the client goes on with.
+                    writer.send( channel, F.REPLY, { "ok": "sha256" in got, "sha256": got.get( "sha256" ),
+                                                     "failed": got.get( "error" ), "offline": bool( got.get( "offline" ) ) } )
+                threading.Thread( target = fetch, daemon = True ).start()
+            elif op in ( "sync", "pull", "receive" ):
                 from . import syncop
                 syncop.serve( self, writer, channels, channel, req )      # its own REPLY, from its thread
             elif op in look.OPS:

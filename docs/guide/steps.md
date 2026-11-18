@@ -86,7 +86,9 @@ done
 view convergence.html
 ```
 
-`$ERRAND_STEPS_SH` holds the two functions, `step` and `view`, in POSIX sh. The first argument of
+`$ERRAND_STEPS_SH` holds the functions `step` and `view`, in POSIX sh, and `download URL`, which prints
+the path of a file fetched as [`errand.download`](/reference/python-api#download) does, and `require`,
+which grows the run's claim as [`errand.require`](/guide/machine#the-run-asks-from-its-code) does. The first argument of
 `step` is the text unless it reads `name=value`; the values are written as given, so they must be
 numbers. There is no merging: each call is a line.
 

@@ -18,7 +18,7 @@ from pathlib import Path
 VERBS = {
     "run"   : ( "run a file, a command or entries, in one or several environments",
                 [ "runner", "entry_tags", "jobs", "no_queue", "no_setup", "batch", "keep_out",
-                  "out", "grid", "pull", "exclusive", "cpus", "ram", "gpus", "ranks", "time", "mem", "label", "quiet", "log",
+                  "out", "grid", "pull", "exclusive", "cpus", "ram", "gpus", "gpu_ram", "ranks", "time", "mem", "label", "quiet", "log",
                   "at" ] ),
     "list"  : ( "what a target designates, with its parameters",
                 [ "runner", "entry_tags", "grid", "no_setup" ] ),
@@ -36,6 +36,9 @@ VERBS = {
     "attach": ( "follow again what a command left running ( a lost connection ), and bring it back", [ ] ),
     "vm"    : ( "the virtual machines kept warm between commands: errand vm stop", [ ] ),
     "agents": ( "what is kept between commands: errand agents [stop [NAME]]", [ "force" ] ),
+    "download": ( "a file into the project's cache, as errand.download does: errand download URL", [ "sha256" ] ),
+    "require": ( "inside a run: grow its claim, as errand.require does, then print what to set ( ADR 0014 )",
+                 [ "exclusive", "cpus", "ram", "gpus", "gpu_ram" ] ),
 }
 COMMON = [ "env", "env_tags", "root", "help", "version", "verbose" ]
 
@@ -91,6 +94,9 @@ def build_parser( tag_names = ( ) ):
     p.add_argument( "--cpus", dest = "cpus", default = None, help = "cores it needs" )
     p.add_argument( "--ram", dest = "ram", default = None, help = "memory it needs, e.g. 8G" )
     p.add_argument( "--gpus", dest = "gpus", default = None, help = "cards it needs" )
+    p.add_argument( "--gpu-ram", dest = "gpu_ram", default = None,
+                    help = "memory it takes on each of its cards: a size ( 40G ) or a share ( 75%% ); "
+                           "without it, cards are taken whole" )
     p.add_argument( "--ranks", dest = "ranks", default = None,
                     help = "MPI processes: the launcher of the place starts that many ( an entry's `ranks =` )" )
     p.add_argument( "--time", dest = "time", default = None,
@@ -105,6 +111,7 @@ def build_parser( tag_names = ( ) ):
     p.add_argument( "--force", action = "store_true",
                     help = "setup: from scratch; init: replace what is there; agents stop: even with something running" )
     p.add_argument( "--dry-run", action = "store_true", help = "say what setup would do, and do nothing" )
+    p.add_argument( "--sha256", default = None, help = "download: the hash the file must have ( never required )" )
     p.add_argument( "--all", dest = "all", action = "store_true", help = "status: every project in full, not one line each" )
 
     for name in tag_names:

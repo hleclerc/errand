@@ -175,15 +175,17 @@ class Guest:
         return Session.start( conn, [ python, self.boot, "-m", "errand.agents.ops", "session", json.dumps( request ) ],
                               cwd = self.there, env = child, store = f"{self.there}/{config.state_rel( Path( self.there ) )}/procs" )
 
-    def fetch( self, paths, runs = False ):
-        """`runs`: the paths are run trees, whose runs come back once finished."""
+    def fetch( self, paths, runs = False, keep = False ):
+        """`runs`: the paths are run trees, whose runs come back once finished. `keep`: caches ( ADR 0012 )."""
         if not paths:
             return
+        from .. import sync as S
         from ..agents import syncop
         from ..layers.base import WINDOWS
         self.echo( f"  sync pull  <- windows:{self.there} [{', '.join( paths )}]" )
         syncop.pull( self.host_conn(), self.there, self.where.root, [ Path( p ).as_posix() for p in paths ],
-                     where = "windows", say = self.echo, links = not WINDOWS, finished_only = runs )
+                     where = "windows", say = self.echo, links = not WINDOWS, finished_only = runs, keep = keep,
+                     sel = S.Selection( [ ".errand-work" ] ) if keep else None )
 
 
 def unpack_line( src: str, key: str ) -> str:

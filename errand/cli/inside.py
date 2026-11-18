@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 
-from .. import config, discovery, layers as L, results as R
+from .. import config, discovery, layers as L, needs, results as R
 from .style import bad, dim, head
 from .project import _put_src_on_path
 from .grid import describe_grid, expand
@@ -94,8 +94,10 @@ def prepare_here( env, tags, verb, known, *, root, out_root, report ):
         return 1, None
 
     ask = Ask( known )
+    # What an allocation is asked for: the environment's needs under the command line ( ADR 0014 ).
+    base, whole = needs.of_env( env.name )
     plan = make_plan( env, tags, selected, combos, root = root, out_root = out_root,
-                      asked = { **ask.resources, **( { "exclusive": True } if ask.exclusive else { } ) } )
+                      asked = { **base, **ask.resources, **( { "exclusive": True } if ask.exclusive or whole else { } ) } )
     where = plan_path( root, env.name )
     from_plan = bool( getattr( known, "from_plan", False ) )
     if from_plan:

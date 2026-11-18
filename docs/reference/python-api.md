@@ -118,6 +118,58 @@ out_dir( ) -> Path
 
 This run's own directory, the one `p.out_dir` gives. Outside errand it answers `./out`.
 
+### download
+
+```python
+download( url: str, sha256: str | None = None, name: str | None = None ) -> Path
+```
+
+The path of the file at `url`, downloaded if it is not there yet, into
+`errand-cache/downloads/<sha256>/<name>` at the project root. `errand-cache` is a
+[cache zone](/guide/layers/ssh#a-cache-zone) of every project: pushed when missing over there,
+brought back when missing here. `sha256` is checked when given, never required; a URL already
+downloaded is found again without the network. Two runs that want one file at once download it once.
+
+A run over `Ssh` that cannot reach the URL asks up the chain: the agent of the host over there
+downloads it into the copy, else this side downloads it and sends it. The run waits meanwhile.
+A run nobody follows, or a script run by hand with no route, fails and says to
+`errand download URL` here: the next push brings it. In a shell script, `eval "$ERRAND_STEPS_SH"`
+gives a `download URL` function that prints the path.
+
+### cache_dir
+
+```python
+cache_dir( zone: str ) -> Path
+```
+
+Where a [cache zone](/guide/layers/ssh#a-cache-zone) is: `zone` ( `"/data-cache"` ), a path from the
+project root, joined to the root, and created if missing. The root is the nearest directory above the
+current one that holds a project file ( `errand-*.py` ), so the answer is the same in a run over there
+and in a script run by hand here. Pass it down to the library that downloads or memoizes: errand sets
+no variable for it.
+
+### require
+
+```python
+require( gpus = None, gpu_ram = None, ram = None, cpus = None, exclusive = False ) -> list
+```
+
+Asks the machine for more than the run was started with, and waits until it is given
+( [The run asks, from its code](/guide/machine#the-run-asks-from-its-code) ). Call it early, before
+what it protects is allocated: for Jax, before `import jax`. `gpu_ram` is what the run takes on each
+of its cards, a size ( `"40G"` ) or a share ( `"75%"` ); `gpus` without it takes cards whole. It only
+adds to the run's claim. Once granted it sets `CUDA_VISIBLE_DEVICES`, `HIP_VISIBLE_DEVICES` and
+`ROCR_VISIBLE_DEVICES` in this process, and returns the cards. errand remembers what it asked, and
+claims it up front the next time.
+
+Outside errand, with `--no-queue`, or in an allocation of somebody else's ( Slurm, PBS… ), it does
+nothing and returns `[ ]`. Standard library only.
+
+### Rerun
+
+Raised by `require` when two runs that grow their claims wait for each other: the younger is stopped,
+and errand runs it again, once, with what it required up front. Let it go through.
+
 ## Saying where the run is
 
 ### step
@@ -177,7 +229,7 @@ An unknown setting is a `TypeError` listing the ones that exist.
 ### envs, Env, default_env
 
 ```python
-errand.envs[ name ] = errand.Env( stack = ( ), prepare = None, tools = None, **tags )
+errand.envs[ name ] = errand.Env( stack = ( ), prepare = None, tools = None, needs = None, **tags )
 errand.default_env = "name"          # optional: else the first one declared
 ```
 
@@ -186,7 +238,9 @@ Declares an [environment](/guide/environments); the key is its name. `stack` is 
 right after an `Ssh`. `prepare`, when given, is the list the [preparation](/guide/environments#preparing-then-running)
 goes through instead, on the same machine or on another one, whose build is then carried to the
 run's copy. `tools` names what the runners start there,
-where the usual name is wrong ( [Tools](/guide/environments#tools-an-environment-names) ). Keyword arguments are its [tags](/guide/tags). A name or a
+where the usual name is wrong ( [Tools](/guide/environments#tools-an-environment-names) ). `needs` is what
+every run in it takes of the machine, under the command line: `{ "gpus": 1, "gpu_ram": "75%", "ram": "16G" }`,
+with `cpus` and `exclusive` too ( [Three ways to ask](/guide/machine#three-ways-to-ask-one-claim) ). Keyword arguments are its [tags](/guide/tags). A name or a
 tag value cannot hold a comma. Only an `Env` can be stored.
 
 ### default_run

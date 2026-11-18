@@ -22,7 +22,8 @@ RSYNC_EXCLUDES = [
     "node_modules", "target", ".venv", "*.egg-info", ".mypy_cache", ".pytest_cache",
 ]
 # The same, as a sync reads them ( ADR 0006 ): what is no part of a copy, and what is built over there.
-NOT_COPIED  = [ ".git", "__pycache__", "*.pyc", ".mypy_cache", ".pytest_cache" ]
+NOT_COPIED  = [ ".git", "__pycache__", "*.pyc", ".mypy_cache", ".pytest_cache", ".errand-work" ]
+DOWNLOADS   = "errand-cache"      # `errand.download`'s cache zone, every project's ( ADR 0013 )
 BUILT_THERE = [ "build", "dist", "target", "node_modules", ".venv", "*.egg-info", "*.so", "*.o" ]
 
 
@@ -50,6 +51,7 @@ def selection( local_root: Path, follow_links = False ):
     # errand's outputs at any depth: a project that holds others ( a checkout of several ) holds theirs too
     zones = [ Zone( f"/{rel}", "errand" ), Zone( f"/{config.LEGACY}", "errand" ),
               Zone( "errand-outputs", "errand" ), Zone( config.LEGACY.strip( "/" ), "errand" ),
+              Zone( f"/{DOWNLOADS}", "cache" ),
               *[ Zone( p, kind ) for p, kind in config.zones().items() ],
               *[ Zone( p, "build" ) for p in own_paths() ],
               *[ Zone( p, "build" ) for p in BUILT_THERE ] ]
@@ -138,6 +140,10 @@ class Ssh( Gateway ):
         if pull:
             echo( f"  {transfer( self.transfer )} pull  <- {self.host}:{remote_ctx.root} [{', '.join( pull )}]" )
             fetch( pull, self.host, remote_ctx.root, ctx.root, self.options, transfer_by = self.transfer )
+        caches = cache_zones()
+        if caches:
+            echo( f"  {transfer( self.transfer )} pull  <- {self.host}:{remote_ctx.root} [{', '.join( caches )}] ( cache )" )
+            fetch( caches, self.host, remote_ctx.root, ctx.root, self.options, transfer_by = self.transfer, keep = True )
         return code
 
 
@@ -332,6 +338,12 @@ def push( local_root: Path, host: str, remote_root: Path, options = ( ), echo = 
         echo( f"    deleted on {host}: {name}" )
     if len( gone ) > 20:
         echo( f"    ...and {len( gone ) - 20} more" )
+    # The caches ( ADR 0012 ): what the copy lacks, nothing replaced, nothing deleted.
+    for p in cache_zones():
+        if ( local_root / p ).is_dir():
+            subprocess.run( [ *rsync(), "-a", "--ignore-existing", "--exclude=.errand-work", *_rsh( options, host ),
+                              f"--rsync-path=mkdir -p {shlex.quote( f'{remote_root}/{p}' )} && rsync",
+                              here( f"{local_root}/{p}/" ), f"{host}:{remote_root}/{p}/" ], check = True )
 
 
 def _say_kept_runs( kept, host, echo ):
@@ -400,12 +412,22 @@ def back_zones( env_name = None ) -> list:
                    if kind == "back" and p.startswith( "/" ) and not any( c in p for c in "*?[" ) )
 
 
-def _fetch_sync( paths, host: str, remote_root, local_root: Path, options, finished_only = False ):
+def cache_zones( env_name = None ) -> list:
+    """The project's cache zones ( ADR 0012 ) that name one path: those a command brings back, adding
+    only what is missing here. One named anywhere is only pushed."""
+    from .. import config
+    return sorted( { DOWNLOADS, *( p.strip( "/" ) for p, kind in config.zones( env_name ).items()
+                                   if kind == "cache" and p.startswith( "/" ) and not any( c in p for c in "*?[" ) ) } )
+
+
+def _fetch_sync( paths, host: str, remote_root, local_root: Path, options, finished_only = False, keep = False ):
     from ..agents import syncop, upstream
     from .base import WINDOWS
+    from ..sync import Selection
     conn = agents.open( upstream.of_host( host, options ) )
     return syncop.pull( conn, remote_root, local_root, [ Path( p ).as_posix() for p in paths ],
-                        where = host, links = not WINDOWS, finished_only = finished_only )
+                        sel = Selection( list( NOT_COPIED ) ) if keep else None,
+                        where = host, links = not WINDOWS, finished_only = finished_only, keep = keep )
 
 
 # What a run tree holds over there, for rsync to leave the unfinished runs: its directories, the
@@ -468,12 +490,13 @@ def put( local_dir: Path, host: str, remote_dir, options = ( ), transfer_by = No
 
 
 def fetch( paths, host: str, remote_root: Path, local_root: Path, options = ( ), transfer_by = None,
-           finished_only = False ):
+           finished_only = False, keep = False ):
     """Best effort: a path the remote run never created is nothing to bring back. Nothing here is
     deleted. `finished_only`: the paths are run trees, and a run comes back only once it has written
-    its `result.yaml` ( `results.unfinished_runs` ): never half of one."""
+    its `result.yaml` ( `results.unfinished_runs` ): never half of one. `keep`: the paths are caches
+    ( ADR 0012 ), and a file already here is not replaced."""
     if transfer( transfer_by ) == "sync":
-        return _fetch_sync( paths, host, remote_root, local_root, options, finished_only = finished_only )
+        return _fetch_sync( paths, host, remote_root, local_root, options, finished_only = finished_only, keep = keep )
     for p in paths:
         target = local_root / p
         p = Path( p ).as_posix()        # a path over there: `a/b`, though this is a Windows
@@ -487,4 +510,4 @@ def fetch( paths, host: str, remote_root: Path, local_root: Path, options = ( ),
             excludes = [ f"--exclude={x}" for x in unfinished_over_there( host, options, f"{remote_root}/{p}" ) ]
         # No `--delete`, ever: what is here and no longer over there stays.
         subprocess.run( [ *rsync(), "-a", *( [ "--no-links" ] if WINDOWS else [ ] ), *_rsh( options, host ),
-                          *excludes, f"{host}:{remote_root}/{p}/", here( f"{target}/" ) ] )
+                          *( [ "--ignore-existing", "--exclude=.errand-work" ] if keep else [ ] ), *excludes, f"{host}:{remote_root}/{p}/", here( f"{target}/" ) ] )

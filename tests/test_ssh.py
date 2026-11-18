@@ -114,6 +114,31 @@ if test( "a round trip brings the results back", tags = [ "ssh", "slow" ] ):
     subprocess.run( [ "ssh", *options, host, f"rm -rf {remote_root}" ] )
 
 
+if test( "what the command line asks reaches the claim over there ( ADR 0014 )", tags = [ "ssh", "slow" ] ):
+    host, options, root_of = ssh_target()
+    remote_root = root_of()
+    CLAIMED = """
+import os
+from errand import test
+
+if p := test( "claimed" ):
+    p.results[ "claim" ] = open( os.environ[ "ERRAND_CLAIM_FILE" ] ).read()
+"""
+    with tempfile.TemporaryDirectory() as tmp:
+        project = write_project(
+            Path( tmp ) / "proj",
+            PROJECT.format( host = host, root = remote_root, options = options ),
+            { "test_claimed.py": CLAIMED }, vendor = True,
+        )
+        code, output = run_errand( project, "run", "--env", "over-there", "--cpus", "1", "--ram", "1G",
+                                   "--gpu-ram", "10%", "test_claimed.py::*" )
+        leaf = next( ( project / "errand-outputs" / "runs" ).rglob( "result.yaml" ), None )
+        claim = yamlish.read( leaf )[ "results" ][ "claim" ] if leaf else ""
+        # no card over there: memory on a card asks for one, and runs alone with what there is
+        assert code == 0 and "cpus: 1" in claim and "ram: 1024" in claim and "gpu_ram: 10%" in claim, output + claim
+    subprocess.run( [ "ssh", *options, host, f"rm -rf {remote_root}" ] )
+
+
 if test( "only what this invocation asked for comes back", tags = [ "ssh", "slow" ] ):
     host, options, root_of = ssh_target()
     remote_root = root_of()

@@ -53,10 +53,17 @@ class Env:
     build line write `{python}`, `{cmake}`; a target whose first word is a tool named here is run
     as named.
 
+    `needs` is what every run in it takes of the machine, known before anything starts ( ADR 0014 ):
+    `needs = { "gpus": 1, "gpu_ram": "75%", "ram": "16G" }` for Jax on a GPU, which takes 75 % of
+    its card at its first array. The command line ( `--gpus`, `--gpu-ram`, `-x` ) is over it, and
+    `errand.require` adds to both.
+
     The name is the key it is stored under; `Env` does not take one.
     """
 
-    def __init__( self, stack = ( ), prepare = None, tools = None, **tags ):
+    NEEDS = ( "cpus", "ram", "gpus", "gpu_ram", "exclusive" )
+
+    def __init__( self, stack = ( ), prepare = None, tools = None, needs = None, **tags ):
         for k, v in tags.items():
             # A comma on the command line is several values: a tag value holding
             # one could never be asked for.
@@ -68,6 +75,12 @@ class Env:
         self.prepare = None if prepare is None else list( prepare )
         self.tags    = dict( tags )
         self.tools   = dict( tools or { } )
+        self.needs   = dict( needs or { } )
+        unknown = [ k for k in self.needs if k not in self.NEEDS ]
+        if unknown:
+            raise ValueError( f"needs[ {unknown[ 0 ]!r} ]: one of {', '.join( self.NEEDS )}" )
+        from . import queue
+        queue.normalize( self.needs )           # a size or a share that does not read fails now, not on a run
         for name, argv in self.tools.items():
             if not isinstance( argv, ( str, list, tuple ) ) or not argv:
                 raise ValueError( f"tools[ {name!r} ]: a command, as a string or a list of words" )
@@ -111,7 +124,8 @@ class Env:
         by place. Just this one when both phases are on one machine."""
         if not self.prepares_elsewhere():
             return [ self ]
-        return [ Env.make( self.name, layers, self.tags, tools = self.tools ) for layers in ( self.stack, self.prepare ) ]
+        return [ Env.make( self.name, layers, self.tags, tools = self.tools, needs = self.needs )
+                 for layers in ( self.stack, self.prepare ) ]
 
     def layers( self ):
         """( index, layer ) for every layer of either phase, once each: what `setup` builds and keeps
@@ -133,8 +147,8 @@ class Env:
         return same and not any( L.is_scheduler( l ) and not getattr( l, "watch", None ) for l in run )
 
     @classmethod
-    def make( cls, name: str, stack = ( ), tags = None, prepare = None, tools = None ):
-        e = cls( stack, prepare, tools, **( tags or { } ) )
+    def make( cls, name: str, stack = ( ), tags = None, prepare = None, tools = None, needs = None ):
+        e = cls( stack, prepare, tools, needs, **( tags or { } ) )
         e.name = name
         return e
 
@@ -225,6 +239,8 @@ class Settings:
     # as rsync reads them ( `results`, a name anywhere; `/results`, at the root ), each a kind:
     #     back    written over there, brought back here
     #     build   built over there ( what a layer builds, `kept()`, is one already )
+    #     cache   added to on both sides, never replaced nor deleted ( ADR 0012 ): downloaded data,
+    #             memoized results. `errand.cache_dir( "/data-cache" )` gives a run its path.
     zones            : dict = field( default_factory = dict )
 
 
@@ -402,7 +418,7 @@ def configure( **kw ):
 
 
 def _check_zones( zones, who = "zones" ):
-    kinds = ( "back", "build" )               # `errand`, errand's own outputs, is not declared
+    kinds = ( "back", "build", "cache" )      # `errand`, errand's own outputs, is not declared
     if not isinstance( zones, dict ):
         raise TypeError( f"{who}: a dict, path -> kind ( {' or '.join( kinds )} ), "
                          f"not {type( zones ).__name__}" )

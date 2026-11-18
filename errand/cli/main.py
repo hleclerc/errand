@@ -32,6 +32,10 @@ def _main( argv = None ):
     from .. import __version__
 
     argv = list( sys.argv[ 1 : ] if argv is None else argv )
+    if argv[ : 1 ] == [ "require" ]:
+        # Inside a run, on its way to its work: no project to load, nothing to wait for but the queue.
+        from .require import main as require
+        return require( argv[ 1 : ] )
 
     # `--root` and `--out` are needed before the project's tags are known, so
     # this first reading takes errand's own part of the command leniently.
@@ -113,7 +117,7 @@ def _main( argv = None ):
         if unknown:
             print( bad( f"errand {verb}: unknown option {unknown[ 0 ]}" ) )
             return 2
-        wanted = { "forget": 1, "vm": 1, "setup": None, "attach": None, "agents": None }.get( verb, 0 )
+        wanted = { "forget": 1, "vm": 1, "setup": None, "attach": None, "agents": None, "download": 1 }.get( verb, 0 )
         if wanted is not None and len( words ) != wanted:
             print( bad( f"errand {verb}: " + ( f"takes no argument ( got {' '.join( words )} )"
                                                if not wanted else "expects one argument" ) ) )
@@ -148,6 +152,15 @@ def _main( argv = None ):
 
     if verb == "wait":
         return queue.wait_idle()
+
+    if verb == "download":
+        from .. import downloads
+        try:
+            print( downloads.download( words[ 0 ], known.sha256, root = root ) )
+        except downloads.DownloadError as err:
+            print( bad( f"errand download: {err}" ) )
+            return 1
+        return 0
 
     if verb == "forget":
         if words[ 0 ] == "finished":

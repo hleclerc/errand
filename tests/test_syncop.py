@@ -258,3 +258,58 @@ if test( "rsync is told the same: a listing over there, the unfinished runs excl
         listing = subprocess.run( [ "sh", "-c", G._RUN_LISTING, "_", str( d / "nothing" ), R.RESULT ],
                                   capture_output = True, text = True ).stdout
         assert G.unfinished_excludes( listing ) == [ ]
+
+
+if test( "a cache through the agent ( ADR 0012 ): pushed when missing there, kept there, never replaced" ):
+    with scratch() as d:
+        sel = S.Selection( [ "__pycache__" ], zones = [ S.Zone( "/data", "cache" ) ] )
+        src = tree( d / "src", { "a.py": "a", "data/s1.h5": "sino 1" } )
+        dst = d / "copy"
+        conn = agent( d / "ag" )
+        r, said = push( conn, src, dst, sel )
+        assert sorted( r.sent ) == [ "a.py", "data/s1.h5" ] and not said, ( r, said )
+        tree( dst, { "data/s2.h5": "downloaded there", "data/s1.h5": "sino 1, other bits" } )
+        tree( src, { "data/s3.h5": "new here" } )
+        ( src / "data/s1.h5" ).write_text( "sino 1" )            # the same file, touched here
+        r, said = push( conn, src, dst, sel, check = True )
+        assert r.sent == [ "data/s3.h5" ] and not r.findings and not r.deleted and not r.spared, ( r, said )
+        assert r.conflicts == [ ( "data/s1.h5", "/data ( cache zone )" ) ] and "data/s1.h5" in said[ 0 ], said
+        assert ( dst / "data/s1.h5" ).read_text() == "sino 1, other bits" and ( dst / "data/s2.h5" ).exists()
+        # written there after the agent walked it: the guard at the target keeps it
+        tree( src, { "data/s4.h5": "here" } )
+        tree( dst, { "data/s4.h5": "there" } )
+        r, said = push( conn, src, dst, sel )
+        assert ( "data/s4.h5", "/data ( cache zone )" ) in r.conflicts and ( dst / "data/s4.h5" ).read_text() == "there"
+
+
+if test( "a cache pulled back: only what is missing here comes, a different file here is a conflict" ):
+    from errand.agents import syncop
+    with scratch() as d:
+        there = tree( d / "copy", { "data/s1.h5": "same", "data/s2.h5": "computed there", "data/k/x": "deep",
+                                    "data/clash.h5": "theirs" } )
+        here = tree( d / "here", { "data/s1.h5": "same", "data/clash.h5": "mine", "data/only-here": "h" } )
+        os.utime( here / "data/s1.h5", ns = ( 1, 1 ) )
+        conn = agent( d / "ag" )
+        said = [ ]
+        r = syncop.pull( conn, there, here, [ "data" ], say = said.append, keep = True )
+        assert sorted( r.sent ) == [ "data/k/x", "data/s2.h5" ] and not r.touched, r
+        assert ( here / "data/clash.h5" ).read_text() == "mine" and ( here / "data/only-here" ).exists()
+        assert os.stat( here / "data/s1.h5" ).st_mtime_ns == 1
+        assert r.conflicts == [ ( "data/clash.h5", "data ( cache zone )" ) ] and "data/clash.h5" in said[ 0 ], said
+
+
+if test( "a cache file a run wrote there, and that came back here, is not sent again: its hash is asked" ):
+    with scratch() as d:
+        sel = S.Selection( [ "__pycache__" ], zones = [ S.Zone( "/data", "cache" ) ] )
+        src = tree( d / "src", { "a.py": "a" } )
+        dst = d / "copy"
+        conn = agent( d / "ag" )
+        push( conn, src, dst, sel )
+        tree( dst, { "data/big.h5": "downloaded there" * 1000 } )      # the run's, unknown to the manifest
+        tree( src, { "data/big.h5": "downloaded there" * 1000 } )      # ... brought back by the pull
+        r, said = push( conn, src, dst, sel )
+        assert not r.sent and not r.conflicts and not said, ( r, said )
+        known = S.load( dst / S.COPY_STATE )
+        assert "data/big.h5" in known and known[ "data/big.h5" ].digest, "recorded: not hashed at every push"
+        r, said = push( conn, src, dst, sel )
+        assert not r.sent and not said, ( r, said )

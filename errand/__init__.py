@@ -13,11 +13,15 @@ __version__ = "2026.11.16.1"
 from .entries import (          # noqa: F401  -- the public surface of a file of work
     Args,
     Param,
+    Rerun,
     bench,
+    cache_dir,
+    download,
     entry,
     experiment,
     has_tag,
     out_dir,
+    require,
     tag,
     test,
     track,
@@ -32,8 +36,8 @@ default_env: str | None = None
 default_run: list | None = None
 
 __all__ = [
-    "Args", "Param", "Skipped", "bench", "entry", "experiment", "has_tag", "have",
-    "need", "out_dir", "skip", "step", "tag", "test", "track", "view",
+    "Args", "Param", "Skipped", "bench", "cache_dir", "download", "entry", "experiment", "has_tag", "have",
+    "need", "out_dir", "require", "Rerun", "skip", "step", "tag", "test", "track", "view",
     "configure", "default_env", "default_run", "Env", "envs", "providers", "runners", "main", "value",
     "Vars", "Venv", "Micromamba", "Conda", "Uv", "Nix", "Guix", "Module",
     "Apptainer", "Docker", "Podman", "Ssh", "Slurm", "Mpi", "Preload", "Windows", "WindowsBox", "Missing",

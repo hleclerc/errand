@@ -99,10 +99,12 @@ class Patterns:
 
 # What a zone is for ( ADR 0006 ): the copy over there is errand's, except in its zones, where the
 # other side writes. A push never sends into a zone, never deletes in one, and a change there is
-# no finding.
+# no finding. A cache ( ADR 0012 ) is the one zone a push sends into: what the other side lacks,
+# never replacing nor deleting anything.
 ZONES = {
     "build" : "built over there",            # a layer's image or venv, a build directory
     "back"  : "written over there, brought back here",
+    "cache" : "added to on both sides, never replaced nor deleted",
     "errand": "errand's own records",       # errand-outputs/: each side keeps its own
 }
 
@@ -119,7 +121,9 @@ class Zone( NamedTuple ):
 class Selection:
     """What a sync looks at, on both sides alike. What `excludes` names is not part of the copy:
     caches, a repository. What `zones` name is part of it, but the other side's ( see `ZONES` ).
-    Both are neither sent nor deleted, and never found as a change; a zone is named in what is said."""
+    Both are neither sent nor deleted, and never found as a change; a zone is named in what is said.
+    A `cache` zone is the exception: it is walked and sent, but only what the other side lacks
+    ( `cached`, and `plan` )."""
     excludes    : list = field( default_factory = list )
     follow_links: bool = False
     zones       : list = field( default_factory = list )     # [ Zone ]
@@ -133,6 +137,7 @@ class Selection:
         for z in self.zones:
             self._zones.setdefault( z.kind, [ ] ).append( z.pattern )
         self._zones = [ ( kind, Patterns( ps ) ) for kind, ps in self._zones.items() ]
+        self._cache = next( ( ps for kind, ps in self._zones if kind == "cache" ), None )
 
     def zone( self, key: str, name: str | None = None ) -> Zone | None:
         name = key.rsplit( "/", 1 )[ -1 ] if name is None else name
@@ -143,7 +148,21 @@ class Selection:
         return None
 
     def skips( self, key: str, name: str ) -> bool:
-        return self._excludes.match( key, name ) is not None or self.zone( key, name ) is not None
+        if self._excludes.match( key, name ) is not None:
+            return True
+        z = self.zone( key, name )
+        return z is not None and z.kind != "cache"
+
+    def cached( self, key: str ) -> Zone | None:
+        """The cache zone `key` is in ( itself or one of its parents ), None if none."""
+        if self._cache is None:
+            return None
+        parts = key.split( "/" )
+        for i in range( 1, len( parts ) + 1 ):
+            p = self._cache.match( "/".join( parts[ : i ] ), parts[ i - 1 ] )
+            if p is not None:
+                return Zone( p, "cache" )
+        return None
 
     def zone_under( self, key: str ) -> Zone | None:
         """The zone `key` or one of its parents is in."""
@@ -243,8 +262,9 @@ class Finding( NamedTuple ):
     mtime_ns: int = 0            # when, for a file still there
 
 
-def compare( trusted: Manifest, found: Manifest ) -> list:
-    """What `found` ( a walk of the disk ) says changed since `trusted` was written."""
+def compare( trusted: Manifest, found: Manifest, sel: Selection | None = None ) -> list:
+    """What `found` ( a walk of the disk ) says changed since `trusted` was written. What a cache zone of
+    `sel` holds is no change: both sides add to it."""
     out = [ ]
     for key, e in found.items():
         t = trusted.get( key )
@@ -253,6 +273,8 @@ def compare( trusted: Manifest, found: Manifest ) -> list:
         elif not t.same( e ) and not ( t.kind == "f" and t.digest and t.digest == e.digest and t.exe == e.exe ):
             out.append( Finding( key, "changed", e.mtime_ns ) )
     out += [ Finding( key, "removed" ) for key in trusted if key not in found ]
+    if sel is not None and sel._cache is not None:
+        out = [ f for f in out if sel.cached( f.key ) is None ]
     return sorted( out )
 
 
@@ -265,7 +287,7 @@ def check( root, sel: Selection, trusted ) -> list:
         return [ ]
     disk = scan( root, sel, known, hashing = False )
     pending = { f.key: ( f, e ) for f, e in known.found }
-    for f in compare( known, disk ):
+    for f in compare( known, disk, sel ):
         if f.key not in pending:               # the first time it was seen says when
             pending[ f.key ] = ( f, disk.get( f.key ) )
     known.found = [ pending[ k ] for k in sorted( pending ) ]
@@ -281,6 +303,7 @@ class Plan:
     send  : list = field( default_factory = list )   # files whose contents cross
     touch : list = field( default_factory = list )   # files with the same contents: only mtime and mode set
     kept_runs: list = field( default_factory = list ) # records of runs only the destination has: left there
+    conflicts: list = field( default_factory = list ) # ( key, zone ): in a cache, other contents on each side: left
 
 
 def depth_first( keys ) -> list:
@@ -313,15 +336,38 @@ def run_records( m ) -> set:
     return { k for k in m if k in above or in_run( k ) }
 
 
-def plan( src: Manifest, dst: Manifest, hash_dst = None ) -> Plan:
+def plan( src: Manifest, dst: Manifest, hash_dst = None, sel: Selection | None = None ) -> Plan:
     """What brings `dst` in line with `src`. A file of the same size whose mtime differs is hashed on
     the destination ( `hash_dst( key )` ) before its contents are sent: a `touch` costs no transfer.
 
     The records of runs the destination holds and the source does not ( `run_records` ) are never
-    deleted: they are the results of runs made over there, not yet brought back -- maybe never to be."""
+    deleted: they are the results of runs made over there, not yet brought back -- maybe never to be.
+
+    In a cache zone of `sel` ( ADR 0012 ), only what `dst` lacks is made: nothing there is replaced,
+    touched or deleted, and what is there with other contents is a conflict."""
     p = Plan()
+    cache = sel is not None and sel._cache is not None
     for key, s in src.items():
         d = dst.get( key )
+        z = sel.cached( key ) if cache else None
+        if z is not None:
+            if d is None and s.kind == "f" and hash_dst is not None:
+                # Not in what the destination says it holds, but maybe there all the same: a run wrote it, and it
+                # came back here. Its hash, rather than its bytes again.
+                theirs = hash_dst( key )
+                if theirs:
+                    if theirs != s.digest:
+                        p.conflicts.append( ( key, str( z ) ) )
+                    continue
+            if d is None:
+                ( p.dirs if s.kind == "d" else p.links if s.kind == "l" else p.send ).append( key )
+            elif d.kind != s.kind or ( s.kind == "l" and d.target != s.target ):
+                p.conflicts.append( ( key, str( z ) ) )
+            elif s.kind == "f" and not s.same( d ):
+                theirs = d.digest or ( hash_dst( key ) if hash_dst is not None and d.size == s.size else "" )
+                if d.size != s.size or not s.digest or theirs != s.digest:
+                    p.conflicts.append( ( key, str( z ) ) )
+            continue
         if d is not None and ( d.kind != s.kind or ( s.kind == "l" and d.target != s.target ) ):
             p.delete.append( key )
             d = None
@@ -336,7 +382,7 @@ def plan( src: Manifest, dst: Manifest, hash_dst = None ) -> Plan:
         elif not s.same( d ):
             theirs = d.digest or ( hash_dst( key ) if hash_dst is not None and d.size == s.size else "" )
             ( p.touch if s.digest and theirs == s.digest else p.send ).append( key )
-    theirs = [ key for key in dst if key not in src ]
+    theirs = [ key for key in dst if key not in src and not ( cache and sel.cached( key ) is not None ) ]
     if theirs:
         records = run_records( dst )
         p.kept_runs = sorted( k for k in theirs if k in records )
@@ -484,6 +530,20 @@ class Writer:
         except OSError:
             pass
 
+    def keep_theirs( self, handle, entry: Entry ) -> str | None:
+        """For a file of a cache zone, at its end: one already at its target is not replaced ( ADR 0012 ).
+        -> None ( nothing there: commit it ), "same" ( the same contents ), "conflict"; the part is dropped
+        unless None."""
+        p = handle[ 2 ]
+        if not os.path.lexists( p ):
+            return None
+        self.abort( handle )
+        try:
+            same = not p.is_symlink() and p.is_file() and hash_file( p ) == entry.digest
+        except OSError:
+            same = False
+        return "same" if same else "conflict"
+
     def touch( self, key: str, entry: Entry ):
         p = self.path( key )
         os.chmod( p, self.modes[ entry.exe ] )
@@ -516,6 +576,7 @@ class Report:
     spared_in: str = ""                                  # where, relative to the destination's root
     unstable: list = field( default_factory = list )     # changed while being read, twice
     kept_runs: list = field( default_factory = list )    # records of runs only the destination has: left there
+    conflicts: list = field( default_factory = list )    # ( key, zone ): in a cache, other contents on each side
 
     def __bool__( self ):
         return bool( self.sent or self.touched or self.deleted )
@@ -541,7 +602,16 @@ def say_findings( findings, where: str, say, sel: Selection | None = None ):
         zones = ", ".join( f"{z.pattern} ( {z.kind} )" for z in ( sel.zones if sel else [ ] ) if z.kind != "errand" )
         say( f"  outside its zones{' ( ' + zones + ' )' if zones else ''}, {where} holds only what errand "
              f"sends. A path a run writes, to keep: declare a zone, "
-             f"`errand.configure( zones = {{ \"path\": \"back\" }} )`" )
+             f"`errand.configure( zones = {{ \"path\": \"back\" }} )` ( or \"cache\", kept on both sides )" )
+
+
+def say_conflicts( conflicts, where: str, say ):
+    """The files of a cache that hold other contents here and on `where`: each side keeps its own ( ADR 0012 )."""
+    for key, zone in conflicts[ : 20 ]:
+        say( f"  {key}: not the same here and on {where}, in {zone} -- each side keeps its own. A cache "
+             f"never replaces a file: give it a name that changes with its contents, or remove the wrong one" )
+    if len( conflicts ) > 20:
+        say( f"  ...and {len( conflicts ) - 20} more" )
 
 
 def say_spared( spared, spared_in: str, where: str, say, said = ( ) ):
@@ -585,7 +655,7 @@ def sync( src_root, dst_root, sel: Selection, *, src_cache = None, trusted = Non
         if known is not None:
             first = { f.key: f for f, _ in known.found }         # a check saw it first: its time is the one
             records = run_records( dst )
-            report.findings = [ first.get( f.key, f ) for f in compare( known, dst )
+            report.findings = [ first.get( f.key, f ) for f in compare( known, dst, sel )
                                 if not ( f.what == "added" and f.key in records ) ]
     else:
         dst = Manifest( known )                # the disk, as the agent's checks left it: the trusted
@@ -611,8 +681,9 @@ def sync( src_root, dst_root, sel: Selection, *, src_cache = None, trusted = Non
         except OSError:
             return ""
 
-    p = plan( src, dst, theirs )
+    p = plan( src, dst, theirs, sel )
     report.kept_runs = p.kept_runs
+    report.conflicts = list( p.conflicts )
     for key in p.delete:
         if w.delete( key ):
             report.deleted.append( key )
@@ -631,6 +702,18 @@ def sync( src_root, dst_root, sel: Selection, *, src_cache = None, trusted = Non
     written.real = { k: v for k, v in dst.real.items() if k in src }
     for key in [ k for k in report.kept if k not in src ]:   # still there: not something to find next time
         written[ key ] = dst[ key ]
+    for key, e in dst.items():                     # a cache's: the destination's own, and kept
+        if key not in written and sel.cached( key ) is not None:
+            written[ key ] = e
+            if key in dst.real:
+                written.real[ key ] = dst.real[ key ]
+    for key, _ in p.conflicts:
+        if key in dst:
+            written[ key ] = dst[ key ]
+    for key, s in src.items():                     # a cache's, found there by its hash: known from now on
+        if key not in dst and key not in p.send and s.kind == "f" and sel.cached( key ) is not None \
+                and os.path.lexists( w.path( key ) ):
+            written[ key ] = scan_one( w.path( key ) )._replace( digest = theirs( key ) )
     for key in p.send:
         h = w.begin( key )
         try:
@@ -638,6 +721,14 @@ def sync( src_root, dst_root, sel: Selection, *, src_cache = None, trusted = Non
         except BaseException:
             w.abort( h )
             raise
+        z = sel.cached( key )
+        if z is not None:
+            theirs_now = w.keep_theirs( h, entry )
+            if theirs_now is not None:                 # written there since the destination was walked
+                written[ key ] = scan_one( w.path( key ) )
+                if theirs_now == "conflict":
+                    report.conflicts.append( ( key, str( z ) ) )
+                continue
         w.commit( h, entry )
         written[ key ] = entry
         report.sent.append( key )
@@ -648,9 +739,20 @@ def sync( src_root, dst_root, sel: Selection, *, src_cache = None, trusted = Non
     for key in p.touch:
         w.touch( key, src[ key ] )
         report.touched.append( key )
+    say_conflicts( report.conflicts, where, say )
     if trusted:
         save( trusted, written )
     return report
+
+
+def scan_one( path ) -> Entry:
+    """The Entry of one file as it is on disk, its hash left out."""
+    st = os.lstat( path )
+    if stat.S_ISLNK( st.st_mode ):
+        return Entry( "l", target = os.readlink( path ) )
+    if stat.S_ISDIR( st.st_mode ):
+        return Entry( "d" )
+    return Entry( "f", st.st_size, st.st_mtime_ns, bool( st.st_mode & stat.S_IXUSR ) )
 
 
 # -- on the wire ----------------------------------------------------------------

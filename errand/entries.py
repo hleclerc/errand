@@ -209,6 +209,82 @@ def out_dir( ) -> Path:
     return Path( os.environ.get( "ERRAND_OUT_DIR", "out" ) )
 
 
+def cache_dir( zone: str ) -> Path:
+    """Where a cache zone ( ADR 0012 ) is for this run: `zone`, a path from the project root
+    ( `"/data-cache"` ), joined to the root -- the nearest directory above the current one that holds a
+    project file ( `errand-*.py` ). Created if missing. The same directory outside errand, run by hand.
+    A library takes it as an argument: errand sets no variable for it."""
+    rel = zone.strip( "/" )
+    if not rel or ".." in rel.split( "/" ) or any( c in rel for c in "*?[" ):
+        raise ValueError( f"cache_dir( {zone!r} ): a path from the project root, as the zone names it" )
+    here = Path.cwd().resolve()
+    for d in ( here, *here.parents ):
+        if any( p.is_file() for p in d.glob( "errand-*.py" ) ):
+            out = d / rel
+            out.mkdir( parents = True, exist_ok = True )
+            return out
+    raise FileNotFoundError( f"cache_dir( {zone!r} ): no project file ( errand-*.py ) in {here} or above" )
+
+
+def download( url: str, sha256: str | None = None, name: str | None = None, **kw ) -> Path:
+    """The path of the file at `url`, downloaded into the project's cache ( `errand-cache/downloads/` )
+    if it is not there yet ( ADR 0013 ). `sha256` is checked when given, never required. With no
+    route to the URL, a run that errand follows asks up the chain ( the host over there, then here )."""
+    from .downloads import download as _download      # urllib: only when a download is asked for
+    return _download( url, sha256, name, **kw )
+
+
+class Rerun( Exception ):
+    """Raised by `require` when two runs that grow their claims wait for each other: errand stops the
+    younger, and runs it again, once, with what it requires up front ( ADR 0014 )."""
+
+
+_DEVICE_VARS = ( "CUDA_VISIBLE_DEVICES", "HIP_VISIBLE_DEVICES", "ROCR_VISIBLE_DEVICES" )
+_said_allocation = False
+
+
+def require( gpus: int | None = None, gpu_ram: str | int | None = None, ram: str | int | None = None,
+             cpus: int | None = None, exclusive: bool = False ) -> list:
+    """Ask the machine for more than the run was started with, and wait until it is given ( ADR 0014 ).
+    Call it early, before what it protects is allocated: for Jax, before `import jax`.
+
+        errand.require( gpus = 1, gpu_ram = "75%" )
+
+    `gpu_ram` is what the run takes on each of its cards: a size ( `"40G"` ) or a share ( `"75%"` );
+    `gpus` without it takes cards whole. It only adds to the run's claim. Once granted, it sets
+    `CUDA_VISIBLE_DEVICES` ( and the HIP / ROCR ones ) in this process, and returns the cards.
+    errand remembers it, and claims it up front the next time.
+
+    Outside errand, with `--no-queue`, or in an allocation of Slurm, PBS… it does nothing and returns
+    `[ ]` at once."""
+    needs = { k: v for k, v in ( ( "gpus", gpus ), ( "gpu_ram", gpu_ram ), ( "ram", ram ), ( "cpus", cpus ) )
+              if v is not None }
+    path = os.environ.get( "ERRAND_CLAIM_FILE" )
+    if not path:
+        _check_allocation( needs )
+        return [ ]
+    from . import queue                     # the standard library, and only when errand runs this
+    got = queue.grow( path, needs, exclusive = exclusive,
+                      echo = lambda m: print( m.strip(), file = sys.stderr, flush = True ) )
+    if got:
+        listed = ",".join( str( d ) for d in got )
+        os.environ.update( { k: listed for k in _DEVICE_VARS } )
+        os.environ[ queue.CLAIM ] = listed
+    return got
+
+
+def _check_allocation( needs: dict ):
+    """In somebody else's allocation, said once: what it has is less than what is asked."""
+    global _said_allocation
+    if _said_allocation or not any( os.environ.get( v ) for v in ( "SLURM_JOB_ID", "PBS_JOBID", "OAR_JOB_ID",
+                                                                   "LSB_JOBID", "FLUX_JOB_ID" ) ):
+        return
+    _said_allocation = True
+    visible = os.environ.get( "CUDA_VISIBLE_DEVICES" )
+    if needs.get( "gpus" ) and visible is not None and len( [ v for v in visible.split( "," ) if v.strip() ] ) < int( needs[ "gpus" ] ):
+        print( f"errand.require: {needs[ 'gpus' ]} gpus asked, the allocation has {visible!r}", file = sys.stderr )
+
+
 def has_tag( expr: str ) -> bool:
     """Does the selected environment satisfy `expr`?
 

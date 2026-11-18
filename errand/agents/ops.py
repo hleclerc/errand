@@ -28,7 +28,7 @@ MARK = "\x1eerrand-op "
 
 # What a session is told of the command line: everything that decides what runs and how.
 KNOWN = ( "pattern", "entry_tags", "from_default", "runner", "target_args", "jobs", "no_queue", "cpus", "ram",
-          "gpus", "ranks", "exclusive", "label", "log", "quiet", "keep_out", "out", "mem", "from_plan", "phase",
+          "gpus", "gpu_ram", "ranks", "exclusive", "label", "log", "quiet", "keep_out", "out", "mem", "from_plan", "phase",
           "grid" )
 
 
@@ -44,7 +44,7 @@ def _entry( e, root ) -> dict:
 
 
 def session( req: dict ) -> int:
-    from .. import __version__, config, queue
+    from .. import __version__, config, needs, queue
     from ..cli.here import Ask, Report, run_case
     from ..cli.inside import combo_banner, prepare_here
     from ..cli.project import output_tree
@@ -105,20 +105,16 @@ def session( req: dict ) -> int:
             # Several sessions at once: each case is said as one block, or nobody could read them.
             sys.stdout = buf
         try:
-            asked = { **e.resources, **ask.resources }
             # In an allocation errand holds, what says nothing of its needs takes all of it ( ADR 0009 ):
             # what runs there is exclusive by default, and shares only what it declares.
-            whole = bool( queue.in_allocation() ) and not asked
-            with queue.claim( asked,
-                              exclusive = ask.exclusive or whole,
-                              label = ask.label or f"{e.file.name}::{e.name}", enabled = not known.no_queue,
-                              echo = lambda m: print( dim( m ), flush = True ) ) as granted:
-                handed = { **granted.env(), **granted.handed_down() } if granted else { }
-                devices = granted.devices if granted and granted.devices and granted.path else None
-                status, error, hint = run_case( e, p.modules, root = root, out_root = out_root,
-                                                overrides = values, env_name = env.name, tags = tags,
-                                                version = __version__, selectors = p.selectors, ask = ask,
-                                                handed = handed, devices = devices, marks = True )
+            status, error, hint = needs.run_claimed(
+                e, env_name = env.name, ask = ask, root = root, queued = not known.no_queue,
+                echo = lambda m: print( dim( m ), flush = True ),
+                whole_if_unasked = bool( queue.in_allocation() ),
+                run = lambda handed, devices: run_case(
+                    e, p.modules, root = root, out_root = out_root, overrides = values, env_name = env.name,
+                    tags = tags, version = __version__, selectors = p.selectors, ask = ask, handed = handed,
+                    devices = devices, marks = True ) )
         finally:
             sys.stdout = kept
         say( { "op": "ran", "case": [ i, j ], "entry": _entry( e, root ), "status": status,

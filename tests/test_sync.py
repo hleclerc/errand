@@ -391,3 +391,91 @@ if test( "an rsync push is told the same: the run directories over there, protec
     rules = G.protect_runs( [ "runs/a/r1/result.yaml", "deep/x/r2/stderr.txt" ] )
     assert "/runs/a/r1/***" in rules and "/deep/x/r2/***" in rules and "/runs/a/summary.yaml" in rules, rules
     assert "/runs/a/latest" in rules and "/summary.yaml" in rules
+
+
+# -- cache zones ( ADR 0012 ): both sides add, nobody replaces ------------------------
+
+def cached( ):
+    return S.Selection( [ "__pycache__" ], zones = [ S.Zone( "/data", "cache" ), S.Zone( "memo", "cache" ),
+                                                     S.Zone( "/results", "back" ) ] )
+
+
+if test( "a cache is pushed: what the copy lacks crosses, what is only there stays and is no finding" ):
+    sel = cached()
+    src, dst, state = pair( { "a.py": "a", "data/s1.h5": "sino 1", "pkg/memo/k1": "m1" } )
+    r, said = run( src, dst, state, sel )
+    assert sorted( r.sent ) == [ "a.py", "data/s1.h5", "pkg/memo/k1" ] and not said, ( r, said )
+    tree( { "data/s2.h5": "downloaded there", "pkg/memo/k2": "computed there", "data/sub/x": "deep" }, dst )
+    r, said = run( src, dst, state, sel )
+    assert not r and not r.findings and not r.conflicts and not said, ( r, said )
+    assert ( dst / "data/s2.h5" ).read_text() == "downloaded there" and ( dst / "pkg/memo/k2" ).exists()
+    assert ( dst / "data/sub/x" ).exists()
+    # removed here: never removed there
+    ( src / "data/s1.h5" ).unlink()
+    r, said = run( src, dst, state, sel )
+    assert not r.deleted and ( dst / "data/s1.h5" ).read_text() == "sino 1", r
+    # and the agent's check finds nothing in a cache either
+    assert S.check( dst, sel, state / "dst.json" ) == [ ]
+
+
+if test( "a file of a cache with other contents on each side is a conflict: said, neither replaced" ):
+    sel = cached()
+    src, dst, state = pair( { "data/s.h5": "here" } )
+    tree( { "data/s.h5": "there, not the same", "data/t.h5": "same" }, dst )
+    tree( { "data/t.h5": "same" }, src )
+    os.utime( src / "data/t.h5", ns = ( 1, 1 ) )
+    r, said = run( src, dst, state, sel )
+    assert r.conflicts == [ ( "data/s.h5", "/data ( cache zone )" ) ] and not r.sent and not r.touched, ( r, said )
+    assert ( dst / "data/s.h5" ).read_text() == "there, not the same"
+    assert os.stat( dst / "data/t.h5" ).st_mtime_ns != 1, "the same contents: not even touched"
+    assert len( said ) == 1 and "data/s.h5: not the same here and on the copy" in said[ 0 ], said
+    # said again at the next sync, until one side is renamed or removed
+    r, said = run( src, dst, state, sel )
+    assert r.conflicts and said, said
+
+
+if test( "a cache file written over there after the walk is not replaced: the guard looks at the target" ):
+    sel = cached()
+    src, dst, state = pair( { "a.py": "a" } )
+    run( src, dst, state, sel )
+    tree( { "data/new.h5": "here" }, src )
+    tree( { "data/new.h5": "a run wrote it there meanwhile" }, dst )
+    r, said = run( src, dst, state, sel, check = False )        # the trusted manifest does not know it
+    assert r.conflicts == [ ( "data/new.h5", "/data ( cache zone )" ) ] and "data/new.h5" not in r.sent, ( r, said )
+    assert ( dst / "data/new.h5" ).read_text() == "a run wrote it there meanwhile"
+    assert not r.spared, "nothing moved aside: it is the cache's"
+
+
+if test( "a cache zone is declared like the others; one path is brought back after each command" ):
+    import errand
+    from errand import config as C
+    from errand.layers import gateways
+    try:
+        errand.configure( zones = { "/data-cache": "cache", "memo": "cache", "/c/*": "cache", "/results": "back" } )
+        assert gateways.cache_zones() == [ "data-cache", "errand-cache" ] and gateways.back_zones() == [ "results" ]
+        sel = gateways.selection( Path( tempfile.mkdtemp() ) )
+        assert sel.zone( "data-cache" ) == S.Zone( "/data-cache", "cache" ) and not sel.skips( "data-cache", "data-cache" )
+        assert sel.cached( "data-cache/a/b.h5" ) == S.Zone( "/data-cache", "cache" ) and sel.cached( "a.py" ) is None
+        assert sel.cached( "x/memo/k" ).kind == "cache" and sel.skips( "x/.venv", ".venv" )
+    finally:
+        C.reset()
+
+
+if test( "errand.cache_dir: the zone's path from the project root, made if missing" ):
+    import errand
+    root = Path( tempfile.mkdtemp() ).resolve()
+    ( root / "errand-project.py" ).write_text( "" )
+    ( root / "sub/deeper" ).mkdir( parents = True )
+    old = os.getcwd()
+    try:
+        os.chdir( root / "sub/deeper" )
+        assert errand.cache_dir( "/data-cache" ) == root / "data-cache" and ( root / "data-cache" ).is_dir()
+        assert errand.cache_dir( "cache/esrf" ) == root / "cache/esrf"
+        for bad in ( "/", "../x", "/c/*" ):
+            try:
+                errand.cache_dir( bad )
+                assert False, bad
+            except ValueError:
+                pass
+    finally:
+        os.chdir( old )

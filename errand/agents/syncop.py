@@ -181,7 +181,7 @@ class Session( _Channel ):
             w = S.Writer( root, dst, trusted = known if known is not None else S.Manifest(), spare_in = S.spare_dir() )
             written = S.Manifest( dst )
             written.real = dict( dst.real )
-            handle = None
+            handle, raced = None, [ ]
             while True:
                 got = self.get()
                 if got[ : 1 ] == b"C":
@@ -195,6 +195,10 @@ class Session( _Channel ):
                             out[ key ] = S.hash_file( w.path( key ) )
                         except OSError:
                             out[ key ] = ""
+                            continue
+                        if key not in written and sel.cached( key ) is not None:
+                            # a cache's file the manifest did not know ( a run wrote it ): known from now on
+                            written[ key ] = S.scan_one( w.path( key ) )._replace( digest = out[ key ] )
                     self.say( { "digests": out } )
                 elif "apply" in msg:
                     a = msg[ "apply" ]
@@ -220,9 +224,16 @@ class Session( _Channel ):
                 elif "restart" in msg:
                     w.restart( handle )
                 elif "end" in msg:
-                    entry = S.Entry( *msg[ "end" ] )
-                    w.commit( handle, entry, msg[ "key" ] )
-                    written[ msg[ "key" ] ] = entry
+                    entry, key = S.Entry( *msg[ "end" ] ), msg[ "key" ]
+                    z = sel.cached( key )
+                    theirs = w.keep_theirs( handle, entry ) if z is not None else None
+                    if theirs is None:
+                        w.commit( handle, entry, key )
+                        written[ key ] = entry
+                    else:                              # a run wrote it since the copy was walked ( ADR 0012 )
+                        written[ key ] = S.scan_one( w.path( key ) )
+                        if theirs == "conflict":
+                            raced.append( [ key, str( z ) ] )
                     handle = None
                 elif "touch" in msg:
                     for key, e in msg[ "touch" ]:
@@ -239,7 +250,7 @@ class Session( _Channel ):
             with _held_lock:
                 _held[ str( root ) ] = sel
             self.say( { "saved": True, "spared": [ list( s ) for s in w.spared ],
-                        "spared_in": w.spare_in if w.spared else "" } )
+                        "spared_in": w.spare_in if w.spared else "", "conflicts": raced } )
 
 
 class Pull( _Channel ):
@@ -276,6 +287,66 @@ class Pull( _Channel ):
                     self.say( { "end": list( entry ), "key": key, "stable": stable } )
                 self.say( { "done": True } )
                 return
+
+
+class Receive( _Channel ):
+    """Files sent into a directory, one by one, outside any copy's manifest: what errand downloaded here for a
+    run over there ( ADR 0013 ). A file already at its place is left ( a cache's rule, ADR 0012 ). Then,
+    optionally, the answer the run waits for."""
+
+    def _sync( self ):
+        root = _root( self.req[ "root" ] )
+        root.mkdir( parents = True, exist_ok = True )
+        w = S.Writer( root )
+        handle, left = None, [ ]
+        while True:
+            got = self.get()
+            if got[ : 1 ] == b"C":
+                w.write( handle, S.unpack( got[ 1 : ] ) )
+                continue
+            msg = json.loads( got[ 1 : ] )
+            if "file" in msg:
+                handle = w.begin( msg[ "file" ] )
+            elif "restart" in msg:
+                w.restart( handle )
+            elif "end" in msg:
+                entry = S.Entry( *msg[ "end" ] )
+                if w.keep_theirs( handle, entry ) is None:
+                    w.commit( handle, entry )
+                else:
+                    left.append( msg[ "key" ] )
+                handle = None
+            elif "answer" in msg:
+                from ..downloads import write_answer
+                write_answer( msg[ "answer" ][ "path" ], msg[ "answer" ][ "body" ] )
+            elif "done" in msg:
+                break
+        if handle is not None:
+            w.abort( handle )
+        self.say( { "saved": True, "left": left } )
+
+
+def send_files( conn, local_root, remote_root, keys, *, answer = None ) -> list:
+    """`keys` ( relative to `local_root` ) into `remote_root` over there, then `answer` ( { path, body } )
+    written there. -> the keys that were already there, and left."""
+    local_root = Path( local_root )
+    call = conn.open( { "op": "receive", "root": str( remote_root ) } )
+    try:
+        theirs = call.reply( timeout = 120.0 )
+        accepted = [ c for c in theirs.get( "codecs", [ "-" ] ) if c in S.codecs() ]
+        c = _Call( call )
+        src = S.Manifest()
+        for key in keys:
+            c.send( { "file": key } )
+            entry, _ = S.read_into( local_root, src, key, lambda b: c.send( b"C" + S.pack( b, accepted ) ),
+                                    lambda: c.send( { "restart": True } ) )
+            c.send( { "end": list( entry ), "key": key } )
+        if answer is not None:
+            c.send( { "answer": answer } )
+        c.send( { "done": True } )
+        return c.get( timeout = 3600.0 ).get( "left", [ ] )
+    finally:
+        call.close()
 
 
 SPARED_DAYS = 30                       # what a push moved aside stays that long
@@ -325,7 +396,7 @@ def _seen( root: Path, sel: S.Selection, known, check: bool ):
         if known is None:
             return dst, [ ]
         first = { f.key: f for f, _ in known.found }        # a check saw it first: its time is the one
-        return dst, [ first.get( f.key, f ) for f in S.compare( known, dst ) ]
+        return dst, [ first.get( f.key, f ) for f in S.compare( known, dst, sel ) ]
     dst = S.Manifest( known )
     dst.real = dict( known.real )
     for f, e in known.found:
@@ -333,7 +404,7 @@ def _seen( root: Path, sel: S.Selection, known, check: bool ):
             dst.pop( f.key, None )
         else:
             dst[ f.key ] = e._replace( digest = "" ) if e.kind == "f" else e
-    return dst, [ f for f, _ in known.found ]
+    return dst, [ f for f, _ in known.found if sel.cached( f.key ) is None ]
 
 
 def closing( ):
@@ -351,8 +422,9 @@ def closing( ):
 
 
 def serve( agent, writer, channels, channel, req ):
-    """`op: sync` or `op: pull` on an agent: the session takes the channel."""
-    channels[ channel ] = ( Pull if req.get( "op" ) == "pull" else Session )( writer, channel, req )
+    """`op: sync`, `op: pull` or `op: receive` on an agent: the session takes the channel."""
+    kind = { "pull": Pull, "receive": Receive }.get( req.get( "op" ), Session )
+    channels[ channel ] = kind( writer, channel, req )
 
 
 # -- here -----------------------------------------------------------------------
@@ -420,12 +492,15 @@ def push( conn, local_root, remote_root, sel: S.Selection, *, src_cache = None, 
                                    + "; ".join( " / ".join( x ) for x in clash ) )
         ask = [ k for k, s in src.items() if s.kind == "f" and k in dst and dst[ k ].kind == "f"
                 and not s.same( dst[ k ] ) and not dst[ k ].digest and dst[ k ].size == s.size ]
+        # A cache's file the copy's manifest does not know may be there all the same ( ADR 0012 ): its hash first.
+        ask += [ k for k, s in src.items() if s.kind == "f" and k not in dst and sel.cached( k ) is not None ]
         digests = { }
         if ask:
             c.send( { "hash": ask } )
             digests = c.get()[ "digests" ]
-        p = S.plan( src, dst, lambda k: digests.get( k, "" ) )
+        p = S.plan( src, dst, lambda k: digests.get( k, "" ), sel )
         report.kept_runs = p.kept_runs
+        report.conflicts = list( p.conflicts )
         c.send( { "apply": { "delete": p.delete, "dirs": p.dirs,
                              "links": [ [ k, src[ k ].target ] for k in p.links ] } } )
         applied = c.get()
@@ -451,7 +526,9 @@ def push( conn, local_root, remote_root, sel: S.Selection, *, src_cache = None, 
         saved = c.get()
         report.spared = [ tuple( s ) for s in saved.get( "spared", [ ] ) ]
         report.spared_in = saved.get( "spared_in", "" )
+        report.conflicts += [ tuple( c ) for c in saved.get( "conflicts", [ ] ) ]
         S.say_spared( report.spared, report.spared_in, where, say, [ f.key for f in report.findings ] )
+        S.say_conflicts( report.conflicts, where, say )
     finally:
         call.close()
     return report
@@ -472,12 +549,13 @@ def finished( src: S.Manifest ) -> S.Manifest:
 
 
 def pull( conn, remote_root, local_root, paths, *, sel: S.Selection | None = None, where = "the copy",
-          say = print, links = True, finished_only = False ) -> S.Report:
+          say = print, links = True, finished_only = False, keep = False ) -> S.Report:
     """What is under `paths` in `remote_root` over there, into `local_root` here. Nothing here is
     deleted: a file or a directory here that is something else over there stays as it is. Without
     `links` ( a Windows without its developer mode ), a link is left over there. `finished_only`:
     the paths are run trees, and a run comes back once its `result.yaml` is written
-    ( `results.unfinished_runs` )."""
+    ( `results.unfinished_runs` ). `keep`: the paths are caches ( ADR 0012 ): only what is missing here
+    comes, and a file here with other contents is a conflict, left as it is."""
     local_root = Path( local_root )
     sel = sel or S.Selection()
     report = S.Report()
@@ -502,6 +580,20 @@ def pull( conn, remote_root, local_root, paths, *, sel: S.Selection | None = Non
         w = S.Writer( local_root, here )
         p = S.plan( S.Manifest( ( k, e._replace( digest = theirs.get( k, "" ) ) ) for k, e in src.items() ),
                     here, lambda k: S.hash_file( w.path( k ) ) if k in theirs else "" )
+        if keep:
+            zone = lambda k: next( ( f"{q} ( cache zone )" for q in paths
+                                     if k == q.strip( "/" ) or k.startswith( q.strip( "/" ) + "/" ) ), "a cache zone" )
+            report.conflicts = [ ( k, zone( k ) ) for k in sorted( set( p.delete ) | set( p.send ) )
+                                 if k in src and k in here ]
+            clash = { k for k, _ in report.conflicts }
+            p.send = [ k for k in p.send if k not in clash ]
+            p.links = [ k for k in p.links if k not in clash ]
+            p.touch, p.delete = [ ], [ ]
+            gone = { k for k in src if any( k.startswith( c + "/" ) for c in clash ) }
+            p.send = [ k for k in p.send if k not in gone ]
+            p.dirs = [ k for k in p.dirs if k not in gone ]
+            p.links = [ k for k in p.links if k not in gone ]
+            S.say_conflicts( report.conflicts, where, say )
         for key in p.delete:                       # only what changed kind: nothing here is removed
             if key not in src:
                 continue

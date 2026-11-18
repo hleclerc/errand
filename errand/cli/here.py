@@ -8,8 +8,9 @@ import subprocess
 import sys
 import time
 import traceback
+from pathlib import Path
 
-from .. import config, discovery, entries as E, local, mpi, queue, results as R, runner as P, steps, streams
+from .. import config, discovery, entries as E, local, mpi, needs, queue, results as R, runner as P, steps, streams
 from .style import bad, capture, dim, GREEN, head, RED, RESET, YELLOW
 from .project import _src_paths, _with_env, build_dir_for, tools_for, TAGS
 from .parsing import shown_params, target_argv
@@ -40,7 +41,8 @@ def aggregate_needs( entries, asked = None ):
         asked_here = { **e.resources, **( asked or { } ) }
         ranks = float( asked_here.pop( "ranks", None ) or 1 )
         for key, value in [ *queue.normalize( asked_here ).items(), *( [ ( "ranks", ranks ) ] if ranks > 1 else [ ] ) ]:
-            out[ key ] = max( out.get( key, 0.0 ), value )
+            # a card's memory is the queue's to count once there ( ADR 0014 ): carried, never added up
+            out[ key ] = value if key == "gpu_ram" else max( out.get( key, 0.0 ), value )
     return out
 
 
@@ -59,7 +61,7 @@ class Ask:
 
     def __init__( self, known = None ):
         get = lambda k: getattr( known, k, None ) if known is not None else None
-        self.resources = { k: get( k ) for k in ( "cpus", "ram", "gpus", "ranks" ) if get( k ) }
+        self.resources = { k: get( k ) for k in ( "cpus", "ram", "gpus", "gpu_ram", "ranks" ) if get( k ) }
         self.exclusive = bool( get( "exclusive" ) )
         self.label     = get( "label" )
         self.log       = get( "log" )
@@ -77,7 +79,7 @@ class Ask:
             if getattr( known, dest, False ):
                 out.append( flag )
         for dest, flag in ( ( "out", "--out" ), ( "cpus", "--cpus" ), ( "ram", "--ram" ),
-                            ( "gpus", "--gpus" ), ( "ranks", "--ranks" ), ( "mem", "--mem" ), ( "label", "--label" ) ):
+                            ( "gpus", "--gpus" ), ( "gpu_ram", "--gpu-ram" ), ( "ranks", "--ranks" ), ( "mem", "--mem" ), ( "label", "--label" ) ):
             if getattr( known, dest, None ):
                 out += [ flag, str( getattr( known, dest ) ) ]
         return out
@@ -125,24 +127,46 @@ def run_entries( entries, modules, *, root, out_root, overrides, env_name, tags,
     for e in entries:
         # The claim is taken OUTSIDE the timing: waiting for the machine is not
         # part of how long the work takes, and recording it as if it were would
-        # make a benchmark's numbers depend on who else was busy.
-        with queue.claim( { **e.resources, **ask.resources },
-                          exclusive = ask.exclusive,
-                          label = ask.label or f"{e.file.name}::{e.name}", enabled = queued,
-                          echo = lambda m: print( dim( m ), flush = True ) ) as granted:
-            # Being told WHICH card is the whole point of asking for one: two
-            # entries that both picked the first would share it and neither
-            # would measure anything.
-            # Everything this entry starts inherits the claim: an errand it
-            # runs must not queue for a machine its own parent is holding.
-            handed = { **granted.env(), **granted.handed_down() } if granted else { }
-            devices = granted.devices if granted and granted.devices and granted.path else None
-            status, error, hint = run_case( e, modules, root = root, out_root = out_root,
-                                            overrides = overrides, env_name = env_name, tags = tags,
-                                            version = version, selectors = selectors, ask = ask,
-                                            handed = handed, devices = devices )
+        # make a benchmark's numbers depend on who else was busy. What it asks:
+        # the environment's needs, the command line, what it required last time
+        # ( ADR 0014 ).
+        status, error, hint = needs.run_claimed(
+            e, env_name = env_name, ask = ask, root = root, queued = queued,
+            echo = lambda m: print( dim( m ), flush = True ),
+            run = lambda handed, devices, e = e: run_case(
+                e, modules, root = root, out_root = out_root, overrides = overrides, env_name = env_name,
+                tags = tags, version = version, selectors = selectors, ask = ask, handed = handed,
+                devices = devices ) )
         tally( report, e, status, error, hint )
     return report
+
+
+def _kept( names ):
+    """Put back these variables as they were, whatever the block did to them."""
+    import contextlib
+
+    @contextlib.contextmanager
+    def kept():
+        before = { k: os.environ.get( k ) for k in names }
+        try:
+            yield
+        finally:
+            for k, old in before.items():
+                if old is None:
+                    os.environ.pop( k, None )
+                else:
+                    os.environ[ k ] = old
+    return kept()
+
+
+def _required( handed ) -> dict | None:
+    """What the run's `errand.require` asked, as its claim says ( ADR 0014 ), for its record."""
+    path = handed.get( queue.CLAIM_FILE )
+    if not path:
+        return None
+    from .. import yamlish
+    row = yamlish.read( Path( path ) ) if Path( path ).exists() else None
+    return ( row or { } ).get( "required" ) or None
 
 
 def _followed( journal, marks ):
@@ -150,7 +174,7 @@ def _followed( journal, marks ):
     import contextlib
     from . import footer
     if marks:
-        return footer.Followed( journal, footer.mark )
+        return footer.Followed( journal, footer.mark, want = footer.want )
     if footer.Footer.usable():
         return footer.Followed( journal, footer.Footer().show )
     return contextlib.nullcontext()
@@ -184,7 +208,13 @@ def run_case( e, modules, *, root, out_root, overrides, env_name, tags, version,
     seen.note( leaf, root, f"{e.file.name}::{e.name}" + "".join( f" {k}={v}" for k, v in shown.items() ), env_name )
     # Where the case says its steps ( ADR 0010 ), and the shell functions that say them.
     journal = leaf / steps.FILE
-    handed = { **handed, steps.ENV: str( journal ), steps.SH_ENV: steps.SHELL_STEPS }
+    handed = { **handed, steps.ENV: str( journal ), steps.SH_ENV: steps.SHELL_STEPS,
+               # what the shell's `download` calls ( ADR 0013 ): this errand, with this Python
+               "ERRAND_PYTHON": sys.executable, "ERRAND_SRC": str( Path( __file__ ).resolve().parents[ 2 ] ) }
+    if marks:
+        # Followed by the side that drives it: a download with no route asks it ( ADR 0013 ).
+        from ..downloads import RELAY
+        handed[ RELAY ] = "1"
 
     site =f"{e.file.name}:{e.line}" if e.line else e.file.name
     if shown:
@@ -197,7 +227,9 @@ def run_case( e, modules, *, root, out_root, overrides, env_name, tags, version,
     provenance = R.git_commit( root )
     crashed = R.crash_record( entry = e, root = root, env_name = env_name, where = where, tags = tags,
                               params = shown, version = version, provenance = provenance )
-    with _with_env( handed ), _followed( journal, marks ), streams.raw( leaf, crashed ):
+    # `errand.require` sets the cards in this process when the run is in it: put back as they were.
+    with _with_env( handed ), _kept( E._DEVICE_VARS + ( queue.CLAIM, ) ), _followed( journal, marks ), \
+            streams.raw( leaf, crashed ):
         if devices:
             print( dim( f"  gpu {','.join( str( d ) for d in devices )}" ), flush = True )
         started = time.perf_counter()
@@ -261,6 +293,8 @@ def run_case( e, modules, *, root, out_root, overrides, env_name, tags, version,
             except KeyboardInterrupt:
                 # Ctrl-C stops the run: it is not this entry failing, and nothing runs after it.
                 raise
+            except E.Rerun as r:
+                status, error = "FAIL", f"stopped by errand.require: {r}"     # and run again ( ADR 0014 )
             except BaseException as exc:         # SystemExit included
                 status, error = "FAIL", f"{type( exc ).__name__}: {exc}"
                 if isinstance( exc, SystemExit ) and isinstance( exc.code, int ) and exc.code:
@@ -285,6 +319,7 @@ def run_case( e, modules, *, root, out_root, overrides, env_name, tags, version,
         status = status, error = error, duration_s = duration, ram = R.ram_mb(),
         params = shown, results = dict( E.results ), output_text = buf.getvalue(),
         version = version, provenance = provenance,
+        required = _required( handed ),
     )
     R.refresh( entry_root )
     return status, error, hint

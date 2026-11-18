@@ -34,7 +34,7 @@ FILE   = "steps.jsonl"
 RATE   = 0.1               # seconds between two writes, at least
 EDGE   = 1 << 16           # bytes read at each end of a journal for a summary
 POINTS = 60                # points of a curve kept in a summary
-KEYS   = ( "t", "text", "done", "view", "title" )       # what is not a curve
+KEYS   = ( "t", "text", "done", "view", "title", "want" )   # what is not a curve ( `want`: `downloads` )
 
 # The same calls in POSIX sh. The first argument is the text unless it reads `name=value`.
 SHELL_STEPS = r'''
@@ -54,6 +54,18 @@ step() {
 view() {
     [ -n "$ERRAND_STEPS" ] || return 0
     printf '{"t": %s, "view": "%s"}\n' "$( date +%s )" "$1" >> "$ERRAND_STEPS" 2>/dev/null
+    return 0
+}
+download() {
+    PYTHONPATH="$ERRAND_SRC${PYTHONPATH:+:$PYTHONPATH}" "$ERRAND_PYTHON" -m errand download "$@"
+}
+require() {
+    [ -n "$ERRAND_CLAIM_FILE" ] || return 0
+    errand_set=$( PYTHONPATH="$ERRAND_SRC${PYTHONPATH:+:$PYTHONPATH}" "$ERRAND_PYTHON" -m errand require "$@" )
+    errand_rc=$?
+    [ "$errand_rc" -eq 75 ] && exit 75
+    [ "$errand_rc" -eq 0 ] || return "$errand_rc"
+    for errand_kv in $errand_set; do export "$errand_kv"; done
     return 0
 }
 '''

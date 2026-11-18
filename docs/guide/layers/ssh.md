@@ -142,6 +142,30 @@ A zone is left alone by the push. A `back` zone written as a path from the proje
 tree ) it is only left alone, as a `build` zone is. A runner whose tool writes somewhere of its own
 says so the same way: [What a tool writes elsewhere](/guide/runners/#what-a-tool-writes-elsewhere).
 
+### A cache zone
+
+Downloaded data and results too costly to compute again belong to neither side. A **cache** zone
+is added to on both sides, and nothing in it is ever replaced or deleted:
+
+```python
+errand.configure( zones = { "/data-cache": "cache" } )
+```
+
+- the push sends what the copy lacks: a node with no internet finds the data downloaded here;
+- what a run downloads or writes there stays, and is no change outside the zones;
+- after each command, what the copy has and this side lacks comes back ( a path from the root only,
+  as for `back` ), so the next machine gets it too;
+- a file with other contents on each side is a **conflict**: said at each sync, left as it is on
+  both. Name files after what they hold ( a hash, a version, the parameters ) and there is none;
+- a deletion is never carried: a file removed on one side comes back from the other. Remove it on
+  both. errand never prunes a cache.
+
+A run finds it with `errand.cache_dir( "/data-cache" )`, which it passes to whatever downloads or
+memoizes. For a file at a URL, `errand.download( url )` does it all, in `errand-cache`, a cache zone
+every project has: the file under its hash, and, on a node with no internet, asked of the host over
+there, then of this side, which sends it. With `transfer = "rsync"`, the same rules hold, by `--ignore-existing`, but conflicts are
+not said. The why: ADR 0012.
+
 `errand-outputs` is excluded both ways on purpose: each side's records, plans and builds are its
 own. The only runs you get back are the ones you just asked for.
 

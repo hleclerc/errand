@@ -38,6 +38,13 @@ target is the target's: `errand --env gpu run t.py` and `errand run --env gpu t.
 | `setup [NAME,…]` | build or update environments now, and do nothing else |
 | `init` | write a starting `errand-envs.py`, with suggestions in comments |
 
+**Data**
+
+| verb | |
+|---|---|
+| `download URL [--sha256 H]` | a file into the project's cache, as [`errand.download`](/reference/python-api#download) does; prints its path. The next push carries it |
+| `require [--gpus N] [--gpu-ram S] [--ram S] [--cpus N] [-x]` | inside a run: grows its claim, as [`errand.require`](/reference/python-api#require) does, waits, then prints what to set ( `CUDA_VISIBLE_DEVICES=1` ). Nothing outside errand; exit 75 when stopped to run again |
+
 **Suites**
 
 | verb | |
@@ -96,6 +103,7 @@ target, `run` runs `errand.default_run`, the targets the project declares in `er
 | `--cpus N` | cores it needs |
 | `--ram 8G` | memory it needs |
 | `--gpus N` | cards it needs |
+| `--gpu-ram 40G`, `--gpu-ram 75%` | what it takes on each of its cards: a size or a share; without it, cards are taken whole — [The memory of a card](/guide/machine#the-memory-of-a-card) |
 | `--ranks N` | N MPI processes, each running the target; `--cpus` / `--gpus` / `--ram` are then per rank — [Several processes](/guide/mpi) |
 | `--time T` | how long it may take, for a batch system ( slurm's way: `30`, `2:00:00`, `1-12` ) |
 | `-m`, `--mem 24G` | memory *ceiling* of the command ( `systemd-run`, where there is one ) |
