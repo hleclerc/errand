@@ -113,13 +113,16 @@ def want( what: dict ):
     out.flush()
 
 
-def view( path: str ):
+def view( path: str, dir: bool = False, last = None, open = None ):
     """A file the case shows ( `errand.view` ), by its path from the copy's root: the side that drives
-    this session brings it back at once and says where it opens there ( `views.Views` )."""
+    this session brings it back at once and says where it opens there ( `views.Views` ). `dir`: a directory, what
+    changed in it brought; `last`: its files read first and put in place last ( `steps.view` )."""
     from ..agents.ops import MARK
     out = sys.__stdout__
     out.flush()
-    out.write( MARK + json.dumps( { "op": "view", "path": path } ) + "\n" )
+    mark = { "op": "view", "path": path, **( { "dir": True } if dir else { } ), **( { "last": list( last ) } if last else { } ),
+             **( { "open": list( open ) } if open else { } ) }
+    out.write( MARK + json.dumps( mark ) + "\n" )
     out.flush()
 
 
@@ -178,11 +181,23 @@ class Followed:
                 if isinstance( e.get( "want" ), dict ) and self.want is not None:
                     self.want( e[ "want" ] )
                 if isinstance( e.get( "view" ), str ) and self.view is not None:
-                    self.view( self.view_path( e[ "view" ] ) )
+                    self.view( self.view_path( e[ "view" ] ), **self.view_kind( e ) )
         text = steps.line( steps.summary( self.journal ) )
         if text and text != self.said:
             self.said = text
             self.say( text )
+
+    def view_kind( self, e: dict ) -> dict:
+        """what the side that drives needs to bring a view: whether it is a directory ( seen here ), its `last`"""
+        p = Path( e[ "view" ] )
+        if not p.is_absolute():
+            p = Path( self.journal ).parent / p
+        out = { "dir": True } if p.is_dir() else { }
+        if isinstance( e.get( "last" ), list ) and out:
+            out[ "last" ] = [ str( x ) for x in e[ "last" ] ]
+        if isinstance( e.get( "open" ), list ):
+            out[ "open" ] = [ o for o in e[ "open" ] if isinstance( o, dict ) ]
+        return out
 
     def view_path( self, view: str ) -> str:
         """A view as the side that drives the session reads it: from the copy's root when it is under it."""

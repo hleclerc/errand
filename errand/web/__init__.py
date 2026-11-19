@@ -66,7 +66,15 @@ def start( root: Path ):
         return None
     try:
         from .server import Web
-        return Web.start( bootstrap.local_cache() )
+        web = Web.start( bootstrap.local_cache(), agent = str( Path( root ).resolve() ) )   # ( who serves: in web.json )
+        if web is not None:
+            try:
+                from . import static
+                web.static = static.start()              # the views opened as they are, beside the page ( ADR 0017 )
+            except Exception:
+                import traceback
+                traceback.print_exc()
+        return web
     except Exception:
         import traceback
         traceback.print_exc()
@@ -119,16 +127,44 @@ def spend( code: str ) -> bool:
     return fresh
 
 
-def main( words = ( ), echo = print, browse = True ) -> int:
-    """`errand web`: the host agent here started if need be, then its page opened, with a code used once.
-    `errand web token`: the token, to paste in a page that asks for it ( through a tunnel, another browser )."""
-    if list( words ) == [ "dev" ]:
-        return dev( echo = echo, browse = browse )
-    if list( words ) not in ( [ ], [ "token" ] ):
-        echo( "errand web: `errand web` opens the page, `errand web token` prints its token, "
-              "`errand web dev` serves it from these sources" )
-        return 2
+def _older( got: dict | None ) -> bool:
+    """whether the page is served by a host agent of other sources than these ( an errand changed since it started )"""
+    return got is not None and got.get( "sources" ) != bootstrap.sources_key()
+
+
+def _retire( got: dict ) -> bool:
+    """The host agent of older sources that serves the page asked to go ( `stop`, never forced: one that runs work stays,
+    and its page with it ); -> whether the page was given up. Its directory from `web.json`, else the host agents here of
+    other sources ( a `web.json` written before it said it )."""
+    from ..agents import upstream as U
+    agents = bootstrap.local_cache() / U.AGENTS
+    dirs = [ Path( got[ "agent" ] ) ] if got.get( "agent" ) else [
+        d for d in sorted( agents.glob( "host-*" ) ) if d.resolve() != host_agent_dir().resolve() ]
+    for d in dirs:
+        try:
+            conn = U.direct( { "kind": "local", "dir": str( d ), "keep_alive": U.KEEP_ALIVE } )
+            try:
+                call = conn.open( { "op": "stop" } )
+                call.reply( 10 )
+                call.close()
+            finally:
+                conn.close()
+        except Exception:
+            continue
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        if said() is None:
+            return True
+        time.sleep( 0.2 )
+    return False
+
+
+def ensure( ) -> dict | None:
+    """Where the page of this machine is ( `said` ), the host agent started if need be: None when it serves none. A
+    page served by a host agent of older sources is handed over to the one of these, when the old one runs nothing."""
     got = said()
+    if _older( got ) and _retire( got ):
+        got = None
     if got is None:
         from ..agents import upstream as U
         conn = U.direct( { "kind": "local", "dir": str( host_agent_dir() ), "keep_alive": U.KEEP_ALIVE } )
@@ -142,6 +178,56 @@ def main( words = ( ), echo = print, browse = True ) -> int:
         while got is None and time.monotonic() < deadline:
             time.sleep( 0.2 )
             got = said()
+    return got
+
+
+def run_link( leaf, start = False ) -> str | None:
+    """The address of a run's page ( `/r/<id>`, ADR 0017 §5 ), the run named by its directory over there: on this
+    machine's page, which reads the other machines through the agents. No secret in it: the page's cookie lasts.
+    None when no agent serves the page here ( `start`: started if need be )."""
+    from ..agents.seen import ident
+    try:
+        got = ensure() if start else said()
+    except Exception:
+        got = None
+    if _older( got ) and not start:
+        _wake()                                   # a page of older sources: handed over aside ( `ensure` )
+    if got is None and not start:
+        # Nobody serves the page now: it is said all the same, at the port of its user ( the one the page takes ), and
+        # the host agent is woken aside, so that the page is there when the link is followed. Never a wait for the run.
+        _wake()
+        return f"http://127.0.0.1:{port_of_user()}/r/{ident( leaf )}"
+    return f"{got[ 'url' ]}r/{ident( leaf )}" if got else None
+
+
+_woken = [ False ]
+
+
+def _wake( ):
+    """the host agent asked once, from a thread: it starts the page if it is not served"""
+    if _woken[ 0 ]:
+        return
+    _woken[ 0 ] = True
+    import threading
+
+    def go():
+        try:
+            ensure()
+        except Exception:
+            pass
+    threading.Thread( target = go, daemon = True ).start()
+
+
+def main( words = ( ), echo = print, browse = True ) -> int:
+    """`errand web`: the host agent here started if need be, then its page opened, with a code used once.
+    `errand web token`: the token, to paste in a page that asks for it ( through a tunnel, another browser )."""
+    if list( words ) == [ "dev" ]:
+        return dev( echo = echo, browse = browse )
+    if list( words ) not in ( [ ], [ "token" ] ):
+        echo( "errand web: `errand web` opens the page, `errand web token` prints its token, "
+              "`errand web dev` serves it from these sources" )
+        return 2
+    got = ensure()
     if got is None:
         echo( f"errand web: the agent in {host_agent_dir()} serves no page ( started by an older errand? "
               "`errand agents stop`, then again; its log says more )" )

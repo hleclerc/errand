@@ -163,7 +163,8 @@ if test( "the server: a code used once or the token typed, then a cookie; the ro
             facts = { r[ "k" ]: r[ "v" ] for r in d[ "rows" ] if "k" in r }
             assert facts.get( "env" ) == "lin", facts
             outs = [ ( r[ "label" ], r.get( "path" ) ) for r in d[ "rows" ] if r[ "kind" ] == "output" ]
-            assert outs[ 0 ] == ( "console", None ) and any( n == "plot.png" for n, _ in outs ), outs
+            names = [ n for n, _ in outs ]
+            assert names.index( "plot.png" ) < names.index( "console" ), outs      # ( what is made to be looked at first )
             lines = [ r[ "label" ] for r in d[ "rows" ] if r[ "kind" ] == "out" ]
             assert lines[ -1 ].endswith( "step 99" ) and d[ "can" ].get( "kill" ) and d[ "console" ], d
             png = next( pth for n, pth in outs if n == "plot.png" )

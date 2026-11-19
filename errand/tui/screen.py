@@ -5,6 +5,7 @@ the right -- what it is, the files of its run, the end of its output, read again
 """
 from __future__ import annotations
 
+import re
 from typing import NamedTuple
 
 import shlex
@@ -285,7 +286,7 @@ class Screen:
         if row is None or row.kind != "output":
             self.message = "e: tab to the detail, on an output"
             return
-        machine, path = row.data
+        machine, path = row.data[ : 2 ]
         if path is None:
             path = self._console_path()
             if not path:
@@ -491,29 +492,130 @@ def detail_rows( row, m, got, preview = None ) -> list:
     step = what.get( "step" ) if row.kind == "proc" else got.get( "step" )
     if row.kind == "run":
         out += [ Row( f"{k:<9} {v}", data = ( k, v ) ) for k, v in R.step_facts( step, m.now() ) ]
-    views = ( step or { } ).get( "views" ) or [ ]
-    if views and what.get( "leaf" ):
-        # What the run designated to be looked at as it evolves ( ADR 0010 ), before the files.
-        out.append( Row( "", kind = "note" ) )
-        out.append( Row( "views", kind = "head" ) )
-        for v in views:
-            path = v[ "view" ] if v[ "view" ].startswith( "/" ) else f"{what[ 'leaf' ]}/{v[ 'view' ]}"
-            shown = v.get( "title" ) or v[ "view" ].rsplit( "/", 1 )[ -1 ]          # its name, not where it is
-            out.append( Row( shown, v[ "view" ].rsplit( "/", 1 )[ -1 ] if v.get( "title" ) else "", kind = "output",
-                             data = ( m.name, path ) ) )
-    # The outputs: what it printed, as `errand run` draws it, then its files. The one under the
-    # cursor ( tab to get there ) is shown below; enter opens it, e edits it.
+    # The outputs, in one list ( ADR 0017 §5 ): first what is made to be looked at -- the views the run designated
+    # ( ADR 0010 ), its pages, images, documents, its bundles ( `foam.sviz/`: one line, with its state ) -- in the order
+    # they appeared; then what it printed, as `errand run` draws it; then its other files. The one under the cursor
+    # ( tab to get there ) is shown below; enter opens it, e edits it.
     out.append( Row( "", kind = "note" ) )
     out.append( Row( "outputs", "", kind = "head" ) )
+    rich, plain = outputs( m, what, step, got.get( "files" ) or [ ] )
+    out += rich
     out.append( Row( "console", got.get( "source" ) or "", kind = "output", data = ( m.name, None ) ) )
-    for f in got.get( "files" ) or [ ]:
-        if f[ "name" ] == "output.txt":
-            continue                                    # the console is it
-        out.append( Row( f[ "name" ], f"{_size( f[ 'size' ] )}  {R.ago( m.now() - f[ 'mtime' ] )}", kind = "output",
-                         data = ( m.name, f[ "path" ] ) ) )
+    out += plain
     out.append( Row( "", kind = "note" ) )
     out += console( row, got ) if preview is None else preview
     return out
+
+
+RICH = ( ".html", ".htm", ".svg", ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".mp4", ".webm" )
+
+
+def _rich( name: str ) -> bool:
+    """an output made to be looked at ( a page, an image, a document, a video ): before the others. Each view draws
+    its own icons, from the name ( `web/page.py`: `iconOf` )"""
+    return name.lower().endswith( RICH )
+
+
+def outputs( m, what: dict, step, files: list ) -> tuple:
+    """`( rich, plain )`: the rows of a run's outputs. `rich`: its views, pages, images, documents and bundles, in the
+    order they appeared; a bundle -- a directory of the leaf with an extension -- is one row, with
+    its state when its `manifest.json` says one ( `bundle_state` ). `plain`: its other files, newest first."""
+    leaf = what.get( "leaf" )
+    now = m.now()
+    rich, plain, seen = [ ], [ ], set()
+    bundles = { }                                     # name -> ( mtime of its newest file, its files )
+    for f in files:
+        top, sep, _ = f[ "name" ].partition( "/" )
+        if sep and "." in top.strip( "." ):
+            b = bundles.setdefault( top, [ 0.0, [ ] ] )
+            b[ 0 ] = max( b[ 0 ], f[ "mtime" ] )
+            b[ 1 ].append( f )
+    by_path = { f[ "path" ]: f for f in files }
+    first = { }                                        # what appeared when: a view when the journal said it
+    for v in ( step or { } ).get( "views" ) or [ ]:
+        if not leaf:
+            break
+        path = _in_leaf( v[ "view" ], leaf )
+        name = v[ "view" ].rsplit( "/", 1 )[ -1 ]
+        if path in seen:
+            continue
+        seen.add( path )
+        shown = v.get( "title" ) or name                                    # its name, not where it is
+        f = by_path.get( path )
+        top = path[ len( leaf ) + 1 : ].partition( "/" )[ 0 ] if path.startswith( f"{leaf}/" ) else None
+        if top in bundles and path == f"{leaf}/{top}":
+            detail = bundle_state( m, path, bundles[ top ][ 1 ], bundles[ top ][ 0 ], now )
+        else:
+            detail = name if v.get( "title" ) else f"{_size( f[ 'size' ] )}  {R.ago( now - f[ 'mtime' ] )}" if f else ""
+        served = _served( m, leaf, path, v.get( "open" ) )
+        first[ path ] = ( v.get( "t" ) or 0.0, Row( shown, detail, kind = "output",
+                                                    data = ( m.name, path ) + ( ( served, ) if served else ( ) ) ) )
+    for name, ( mtime, fs ) in bundles.items():
+        path = f"{leaf}/{name}"
+        if path in seen:
+            continue
+        seen.add( path )
+        first[ path ] = ( min( f[ "mtime" ] for f in fs ),
+                          Row( name, bundle_state( m, path, fs, mtime, now ), kind = "output", data = ( m.name, path ) ) )
+    for f in files:
+        if f[ "name" ] == "output.txt" or f[ "path" ] in seen:
+            continue                                    # the console is it; a view said already
+        top, sep, _ = f[ "name" ].partition( "/" )
+        if sep and top in bundles:
+            continue                                    # inside a bundle: the bundle's row is it
+        detail = f"{_size( f[ 'size' ] )}  {R.ago( now - f[ 'mtime' ] )}"
+        if _rich( f[ "name" ] ):
+            first[ f[ "path" ] ] = ( f[ "mtime" ], Row( f[ "name" ], detail, kind = "output", data = ( m.name, f[ "path" ] ) ) )
+        else:
+            plain.append( Row( f[ "name" ], detail, kind = "output", data = ( m.name, f[ "path" ] ) ) )
+    rich = [ r for _, r in sorted( first.values(), key = lambda tr: tr[ 0 ] ) ]
+    return rich, plain
+
+
+def _served( m, leaf: str, path: str, opens ) -> str | None:
+    """the URL of a view opened as it is ( `errand.Static` ), when its copy is served here ( `web.static` ): the one the
+    side that drove the run registered, or, for a run of this machine, the directory itself"""
+    static = next( ( o for o in opens or [ ] if isinstance( o, dict ) and "static" in o ), None )
+    if static is None or not path.startswith( f"{leaf}/" ):
+        return None
+    try:
+        from ..web import static as S
+        vid = S.view_id( leaf, path[ len( leaf ) + 1 : ] )
+        if vid not in S.registered():
+            if not ( m.here and Path( path ).is_dir() ):
+                return None
+            S.register( vid, path )
+        return S.url( vid, static[ "static" ] )
+    except Exception:
+        return None
+
+
+def _in_leaf( view: str, leaf: str ) -> str:
+    """where a view is, in the leaf's own spelling: a path said absolute by the run ( `/home/h/Projects-rsync/…/<leaf>/x` )
+    may name the leaf through a link ( `/data/Projects-rsync/…` ): the same file, one row"""
+    if not view.startswith( "/" ):
+        return f"{leaf}/{view}"
+    mark = f"/{leaf.rstrip( '/' ).rsplit( '/', 1 )[ -1 ]}/"
+    return f"{leaf}/{view.split( mark, 1 )[ 1 ]}" if mark in view and not view.startswith( f"{leaf}/" ) else view
+
+
+def bundle_state( m, path: str, files: list, mtime: float, now: float ) -> str:
+    """What a bundle says of itself: `331 frames`, `· running` while its manifest is not `complete` ( a scene store,
+    ADR 0017 ); else its size. Two small reads of its `manifest.json` through the agent: its head ( `complete` ) and
+    its end ( the last frame's file )."""
+    import re
+    size = _size( sum( f[ "size" ] for f in files ) )
+    if not any( f[ "name" ].endswith( "/manifest.json" ) for f in files ):
+        return f"{size}  {R.ago( now - mtime )}"
+    try:
+        head = m.ask( { "op": "tail", "path": f"{path}/manifest.json", "offset": 0, "size": 512 } )[ "data" ]
+        end = m.ask( { "op": "tail", "path": f"{path}/manifest.json", "size": 4096 } )[ "data" ]
+    except Exception:
+        return f"{size}  {R.ago( now - mtime )}"
+    last = re.findall( r'"frames/(\d+)\.bin"', end )
+    frames = f"{int( last[ -1 ] ) + 1} frames" if last else ""
+    running = '"complete":false' in head.replace( " ", "" )
+    return "  ".join( x for x in ( frames, "running" if running else "", R.ago( now - mtime ) ) if x )
 
 
 def _detail_key( r ):
@@ -547,12 +649,28 @@ def console( row, got ) -> list:
     if len( lines ) > 400:
         out.append( Row( f"  ┆ … {len( lines ) - 400} lines before ( o: all of it )", kind = "note" ) )
     empty = "( no output )" if what.get( "status" ) else "( nothing yet )"
-    for i, line in enumerate( lines[ -400 : ] or ( [ empty ] if row.kind == "run" else [ ] ) ):
+    for i, line in enumerate( drawn( lines[ -400 : ] ) or ( [ empty ] if row.kind == "run" else [ ] ) ):
         out.append( Row( f"  │ {line}", kind = "out", data = i ) )
     if row.kind == "run" and what.get( "status" ):
         took = f"  {R.ago( what[ 'duration' ] )}" if what.get( "duration" ) is not None else ""
         out.append( Row( f"  ╰ {what[ 'status' ]} {name}{took}", kind = "cend", data = what[ "status" ] ) )
     return out
+
+
+ROW_HEAD = "\033[38;5;75m"           # the head of a row, as `errand run` draws it ( `cli.render.ROW` )
+_OSC = re.compile( r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)" )
+
+
+def drawn( lines: list ) -> list:
+    """Lines of `output.txt` as `errand run` drew them: a row ( `errand.row` ) at the widths of the rows of the whole
+    output, its head coloured; any other escape a terminal shows nothing of ( an OSC ) taken out. Colours ( SGR ) stay:
+    the page draws them, the TUI takes them out ( `drawing` )."""
+    from .. import rows as RW
+    table, parsed = RW.Table(), [ RW.parse( l ) for l in lines ]
+    for p in parsed:
+        if p:
+            table.add( *p )
+    return [ table.draw( *p, ROW_HEAD ) if p else _OSC.sub( "", l ) for l, p in zip( lines, parsed ) ]
 
 
 def _size( n ) -> str:

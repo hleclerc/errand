@@ -26,6 +26,11 @@ def _dir() -> Path:
     return bootstrap.local_cache() / SEEN
 
 
+def ident( leaf ) -> str:
+    """A run's short name, from its directory over there: its link's name here, and in the page's address ( `/r/<id>` )."""
+    return hashlib.sha1( str( leaf ).encode() ).hexdigest()[ : 16 ]
+
+
 def note( leaf: Path, project: Path, what: str, env: str | None ):
     """A run starts in `leaf`. Never fatal: a link that cannot be written costs only the link."""
     leaf = Path( leaf ).resolve()
@@ -35,7 +40,7 @@ def note( leaf: Path, project: Path, what: str, env: str | None ):
             ( Path( mark ) / "leaf" ).write_text( str( leaf ) )
         d = _dir()
         d.mkdir( parents = True, exist_ok = True )
-        path = d / f"{hashlib.sha1( str( leaf ).encode() ).hexdigest()[ : 16 ]}.json"
+        path = d / f"{ident( leaf )}.json"
         tmp = path.with_suffix( ".tmp" )
         tmp.write_text( json.dumps( { "leaf": str( leaf ), "project": str( project ), "what": what,
                                       "env": env, "started": time.time() } ) )

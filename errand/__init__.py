@@ -28,7 +28,7 @@ from .entries import (          # noqa: F401  -- the public surface of a file of
     track,
 )
 from .local import Skipped, have, need, skip, value   # noqa: F401
-from .steps import step, view                         # noqa: F401  -- ADR 0010
+from .steps import Static, step, view                 # noqa: F401  -- ADR 0010; Static: ADR 0017
 from .rows import row                                 # noqa: F401  -- a line aligned with those before
 
 # Read by errand when it needs a default: `errand.default_env = "gpu"` in an `errand-*.py`.
@@ -38,7 +38,7 @@ default_env: str | None = None
 default_run: list | None = None
 
 __all__ = [
-    "Args", "Param", "Skipped", "bench", "cache_dir", "download", "entry", "experiment", "has_tag", "have",
+    "Args", "Param", "Skipped", "Static", "bench", "cache_dir", "download", "entry", "experiment", "has_tag", "have",
     "memo", "need", "out_dir", "require", "Rerun", "row", "skip", "step", "tag", "test", "track", "view",
     "configure", "default_env", "default_run", "Env", "envs", "providers", "runners", "main", "value",
     "Vars", "Venv", "Micromamba", "Conda", "Uv", "Nix", "Guix", "Module",

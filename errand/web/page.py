@@ -400,7 +400,9 @@ function fold(unfold) {
 
 // ── the detail ─────────────────────────────────────────────────────────────
 const ANSI = /\x1b\[([0-9;]*)m/g;
+const OSC = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;    // what a terminal reads and shows nothing of ( `errand.row`'s mark )
 function ansi(text) {                                   // the program's colours, as spans
+  text = String(text ?? "").replace(OSC, "");
   let out = "", cls = [], last = 0, m;
   const flush = s => { if (s) out += cls.length ? `<span class="${cls.join(" ")}">${esc(s)}</span>` : esc(s); };
   ANSI.lastIndex = 0;
@@ -576,6 +578,10 @@ function showConsole() { view = {key: sel, console: true}; drawView(); drawDetai
 async function show(path, dir, again) {
   if (!path || !sel) return;
   const key = sel;
+  if (viewUrl(path)) {                                    // its own page, in a frame: it reads what is beside it there
+    if (!view || view.path != path || view.url != viewUrl(path)) { view = {key, path, url: viewUrl(path)}; $("right").classList.add("viewing"); drawView(); drawDetail(); }
+    return;
+  }
   if (!again || !view || view.path != path) { view = {key, path, dir, got: null}; $("right").classList.add("viewing"); drawView(); drawDetail(); }
   try {
     let got;
@@ -610,6 +616,13 @@ function drawView() {
   }
   const {path, dir, got} = view, name = path.split("/").pop();
   const parent = path.slice(0, path.lastIndexOf("/")) || "/";
+  if (view.url) {
+    put($("vh"), `<div class="vhead"><span class="where" title="${esc(path)}">&lrm;${esc(parent)}/<b>${esc(name)}</b></span>` +
+      `<a class="btn" href="${esc(view.url)}" target="_blank" rel="noopener" title="open in a tab">↗</a>` +
+      `<button data-v="copy" title="copy the path">copy path</button><button data-v="close" title="back to the console ( esc )">×</button></div>`);
+    put($("vb"), `<div class="peek" style="height:100%"><iframe src="${esc(view.url)}"></iframe></div>`);
+    return;
+  }
   put($("vh"), `<div class="vhead"><span class="where" title="${esc(path)}">&lrm;${esc(parent)}/<b>${esc(name)}</b>${dir ? "/" : ""}</span>${vbuttons(path, dir)}</div>`);
   let h = "";
   if (!got) h += `<div class="note">reading…</div>`;
@@ -631,15 +644,18 @@ function drawView() {
   if (put($("vb"), h) && stick) v.scrollTop = v.scrollHeight;   // a file that grows, read from its end: stays there
 }
 // open: what the hand expects of a double-click -- a page or an image in a tab, a text in an editor, a folder in the Finder
+// a view opened as it is ( `errand.Static`, ADR 0017 ): its own page, served beside this one ( `web.static` )
+function viewUrl(path) { const r = det && det.rows.find(r => r.kind == "output" && r.path == path && r.url); return r ? r.url : null; }
 function open(path, dir) {
   if (!path) return say("no output yet");
+  if (viewUrl(path)) return openTab(viewUrl(path));
   if (dir) return det && det.here ? act("reveal", {path}) : show(path, true);
   if (OPENED_IN_A_TAB.test(path)) return openTab(fileUrl(path));
   if (det && det.here) return act("edit", {path});
   openTab(tabUrl(path));
 }
 // a tab: a page, an image, a pdf as they are; a text in the job's page, highlighted
-function tabUrl(path) { return OPENED_IN_A_TAB.test(path) ? fileUrl(path) : "/job?" + new URLSearchParams({key: sel, path, only: 1}); }
+function tabUrl(path) { return viewUrl(path) || (OPENED_IN_A_TAB.test(path) ? fileUrl(path) : "/job?" + new URLSearchParams({key: sel, path, only: 1})); }
 function openTab(url) {                                 // a link followed: what popup blockers let through
   const a = document.createElement("a"); a.href = url; a.target = "_blank"; a.rel = "noopener";
   document.body.appendChild(a); a.click(); a.remove();

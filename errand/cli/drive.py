@@ -397,7 +397,7 @@ def _views( where, root ) -> Views:
     ssh = where.ssh
     if ssh is None:
         return Views( root )
-    return Views( root, lambda rel: L.fetch_file( rel, ssh.host, where.there, root, ssh.options, say = say ),
+    return Views( root, lambda rel, **kind: L.fetch_view( rel, ssh.host, where.there, root, ssh.options, say = say, **kind ),
                   ssh.host )
 
 

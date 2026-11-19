@@ -17,7 +17,7 @@ from pathlib import Path
 # verb or after it.
 VERBS = {
     "run"   : ( "run a file, a command or entries, in one or several environments",
-                [ "runner", "entry_tags", "jobs", "no_queue", "no_setup", "batch", "keep_out",
+                [ "runner", "entry_tags", "jobs", "open", "no_queue", "no_setup", "batch", "keep_out",
                   "out", "plain", "grid", "pull", "exclusive", "cpus", "ram", "gpus", "gpu_ram", "ranks", "time", "mem", "label", "quiet", "log",
                   "at" ] ),
     "list"  : ( "what a target designates, with its parameters",
@@ -87,6 +87,9 @@ def build_parser( tag_names = ( ) ):
     # internal: which phase this process is, when a command is run in two
 
     # run, shell
+    p.add_argument( "-O", "--open", dest = "open", action = "store_true",
+                    help = "open each run's page in the browser as it starts ( `errand web` ); "
+                           "configure( open = True ) for always" )
     p.add_argument( "--no-queue", action = "store_true",
                     help = "do not wait for the machine to be free" )
     p.add_argument( "--no-setup", action = "store_true", help = "skip the freshness check" )

@@ -277,6 +277,10 @@ def _main( argv = None ):
     # dispatch runs a command nobody typed, over there.
     if inside is None and verb == "run":
         history.push( root, argv )
+    if inside is None and verb == "run" and getattr( known, "open", False ):
+        # each run's page opened as it starts ( `render.opens` ): this process's renderers, and those of `-j`'s children
+        from .render import OPEN
+        os.environ[ OPEN ] = "1"
 
     if inside is None and verb == "run" and known.batch:
         forward = [ a for a in before if a != "--batch" ] + ( [ target ] if target else [ ] ) + after

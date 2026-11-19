@@ -410,3 +410,144 @@ The examples keep their page: `Recorder.close( html = )` writes the self-contain
 too (`sviz export --html`, its `OUTPUT: file://` link said). A real foam run on lmo (2026-11-19,
 `--env lmo-torch -o`, 10 min 11 s): 331 frames, `foam.sviz` 25 MB, `foam.html` 32 MB, brought back at
 the end (342 files); `sviz open` shows it, an uncached frame in 16 ms.
+
+## Step 5(a) done, 2026-11-19
+
+- **The run's link.** `here.py` gives the head of a case its directory, resolved (`"leaf"` in the `head`
+  op of a driven session); `Renderer.head( …, leaf = )` says `↗ http://127.0.0.1:<port>/r/<id>` under
+  the head (`PAGE: …` when the output is plain), `id = seen.ident( leaf )` (the name `seen` already
+  gave its link file). `web.run_link( leaf )` builds it from `said()`: nothing is said when no agent
+  serves the page here.
+- **`/r/<id>`** (`web/server.py`): the run whose directory has that name, among the rows of the runs tab,
+  redirected to its `/job?key=…`; while no machine says it yet, a page that asks again every 2 s. The
+  terminal never needs the name the page gives the machine.
+- **Access.** The token is kept (`cache/web-token`, 0600) instead of drawn at each start of the agent;
+  the cookie has `Max-Age` 30 days and is set again by each page loaded. A code used once (`?o=`) is
+  taken on `/`, `/job` and `/r/…`, and leads to the same address without it (already logged in: the
+  same).
+- **`errand run --open` (`-O`)**, `configure( open = True )` (`settings.open`), `$ERRAND_OPEN` (set by
+  `--open` for this process and `-j`'s children): each head opens its page with a code used once (no
+  cookie needed), a tab for each of the first 4 runs of the process, then the main page once.
+  `web.ensure()` (factored out of `errand web`) starts the host agent when `--open` needs it.
+
+Not done: a user-level config file (`configure( open = True )` is per project for now, ADR 0018 brings
+the user's); after the login form, the page goes to `/`, not back to the run asked (the form is in
+`page.py`, edited elsewhere at the time).
+
+Tests: `errand/tests/test_web_run_link.py` (`/r/<id>` behind the cookie, a code on it, 30 days, the
+token across restarts on the user's port; the link under a head, `--open` 4 tabs then the main page,
+`PAGE:` in plain); `test_web.py` and `test_render.py` pass. Tried with `errand web dev` (the host agent
+had a tl24 job running, so it was not restarted): `/r/<id>` of the foam run on lmo opens its page.
+The host agent serves the new code once it restarts.
+
+## Step 5(b) done, 2026-11-19
+
+`tui/screen.py`: `detail_rows` takes a run's outputs from `outputs( m, what, step, files )`, shared by
+`errand tui` and `errand web`, with no change to the agents (remote ones run older code) nor to
+`web/page.py` (edited elsewhere at the time):
+
+- one list under "outputs": first what is made to be looked at, by when it appeared (the views of the
+  journal, at their time; pages, images, documents, videos, at their date), then the console, then the
+  other files, newest first;
+- a **bundle**, a directory of the leaf whose name has an extension (`foam.sviz/`, as a macOS package),
+  is one row; its files are not listed (the agent's `ls` goes two levels down: `frames/*` was never
+  there). Its state, when it has a `manifest.json`, from two small reads through the agent: the head
+  (`"complete":false` → `running`) and the end (the last `frames/NNNNNN.bin` → `331 frames`);
+- a view named by an absolute path through a link (`/home/…/Projects-rsync/…` while the leaf is
+  `/data/Projects-rsync/…` on lmo) is the same row as its file (`_in_leaf`), with the file's size;
+- icons stay each view's own (`web/page.py`'s `iconOf`, from the name): a bundle has the plain file icon
+  until `page.py` gives it one.
+
+A click on a bundle shows its listing (the directory preview of today); the page in an iframe comes
+with `errand.Static` (5(d)).
+
+Tests: `errand/tests/test_outputs_list.py`; `test_web.py` (its order of outputs updated: the image before
+the console) and `test_tui.py` pass. Seen with `errand web dev` on the foam run of lmo: `foam.html`,
+`foam.sviz  331 frames`, then the console and the files.
+
+## Step 5(c) done, 2026-11-19
+
+- **The run's side.** `errand.view( path, last = None )`: `path` may be a directory; `last` (a name or
+  a list) goes into the journal line. `footer.Followed.view_kind` sees over there whether the view is a
+  directory, and the session's mark says it: `{ "op": "view", "path", "dir": true, "last": [ … ] }`.
+- **The driving side.** `Views` keeps each path's kind and calls `pull( path, dir =, last = )`;
+  `drive._views` passes it to `layers.fetch_view`: a file as before (`fetch_file`), a directory in three
+  moves through the agent (`syncop.pull`, what differs only, nothing deleted here): its `last` files
+  read **first**, into a place aside in the project (`.errand-view-*`, removed after); the rest of the
+  directory, those files excluded; then they are put in place. What an index names was written before
+  it, so it is here when the index is: the rule of "the manifest last", made explicit by the producer
+  (`last`) instead of guessed from dates.
+- **sdot.** `StoreWriter.write_manifest` calls `errand.view( store, last = "manifest.json" )` when
+  errand is importable (an errand without `last`: nothing), at most once a second as the manifest. No
+  `on_frame` needed for that.
+- **The run's link** is said even when no agent serves the page now: at its user's port, the host agent
+  woken from a thread (`web._wake`), never a wait for the run; `--open` still waits for the page.
+
+Tried for real (`errand run --env lmo-torch -o 'otrec/experiments/exp_2d_real.py::foam' --reduction 4`):
+while the run went on, `foam.sviz` grew on the Mac (106 frames at the first look, every frame its
+manifest names present), and `sviz open` of the local copy followed it live (141 → 189 frames in 15 s,
+the last frame shown). The run's end brought only 9 files (29 kB): the store was already here.
+
+Tests: `errand/tests/test_views_dirs.py` (journal, mark, `Views`; the ssh part skips without `ssh
+localhost`, and was run by hand against lmo: what changed comes, the index after, nothing deleted, the
+place aside gone); `test_web_run_link.py` (the link with no page served); `test_views.py` as before —
+its "a run in a session of its own…" already failed at 08:48, before these changes; `sdot-ffi`
+`test_viz_store.py` (a store says itself a directory view).
+
+## Step 5(d) done, 2026-11-19
+
+- **`errand.Static( index = "index.html" )`** (`steps.py`, exported by `errand`): `errand.view( path,
+  open = )` writes `"open": [ { "static": "index.html" } ]` in the journal (a list: the first by
+  default); the summary keeps it; the session's mark carries it (`footer.Followed.view_kind`).
+- **`web/static.py`**: a server of its own, started by the host agent beside `errand web`
+  (`web.start`), port `port_of_user() + 2`, token in the path kept in `static-token` (0600), the
+  registered directories in `static-views.json` (read at each request), files only, never above their
+  directory, `index.html` for the directory. `view_id( leaf, rel )` = a hash of the run's `seen.ident`
+  and the view's path in its leaf: the side that drives a run and the run's page compute the same.
+- **Terminal**: `Views._served` registers the copy here of a `Static` view (its leaf from the head the
+  session drew, `Renderer.leaf`) and says `↗ http://127.0.0.1:<port>/<token>/<id>/` instead of the
+  path; the host agent woken aside when nobody serves.
+- **The run's page**: `screen.outputs` gives a `Static` view its URL when its copy is registered here
+  (or registers it, for a run of this machine) — `data` is `( machine, path, url )`, `/detail` says
+  `url`; a bundle that is also a view keeps its state (`185 frames`). `page.py`: a row with a URL shows
+  its page in an iframe (no sandbox: another origin, which holds nothing), opens it in a tab
+  (double-click, ↗); the page's CSP frames the static origin.
+- **sdot**: the store's view says `open = errand.Static( "index.html" )` when errand has it.
+
+Tried for real: a foam run on lmo (`--reduction 4`), with the static server and `errand web dev`
+started by hand (the host agent had a tl24 job running, so it still serves the code of before): the
+terminal said `↗ http://127.0.0.1:20501/r/…` and `↗ http://127.0.0.1:20503/<token>/<id>/`; the latter
+followed the run live (75 → 106 frames in 8 s); the run's page listed `foam.sviz  185 frames` and
+showed the viewer in its preview, live.
+
+Tests: `errand/tests/test_static_views.py` (journal and summary; the server: token, ids, 301, 404s,
+`..` and `%2e%2e`; `Views` says the URL and registers; `outputs` gives the URL); the suites of web,
+views, tui, outputs pass, but for the failure of `test_views.py` already there at 08:48; sdot's
+`test_viz_store.py`.
+
+Left: the host agent serves all this once it restarts; `errand.Opener` (a program) and a list of
+openers with a right-click wait for a first user.
+
+## After Hugo's try, 2026-11-19
+
+- **`--open` refused**: `errand run` checks its options against `VERBS[ "run" ]` (`cli/parsing.py`),
+  where `open` was missing ("-O is not an option of `errand run`"); added, and tested from the parser.
+- **The page shows nothing for `foam.sviz`**: the host agent serving `errand web` (port 20501) had been
+  started at 10:46 by `_wake`, before the static server and the page's iframe existed, and nothing serves
+  20503. It serves all of it once it restarts (`errand agents stop host-…`, when nothing runs on it).
+- **The static server's URL is not said in the terminal** any more: a `Static` view is registered for
+  the run's page and said nowhere else; the run's page is the one link (decided with Hugo).
+- **The run's folder, said once** under its head, as `↗ file:///…/<leaf>/` (`FOLDER:` when plain): its
+  place here, from the head's `rel` (its directory from the copy's root, computed where the case runs,
+  since the leaf is resolved there: `/data/…` for `~/Projects-rsync/…` on lmo) and the project here
+  (`Renderer.local_root`, set by `follow_all`). otrec's Recorder no longer prints `frames to …`.
+- `test_render.py`'s "-j in sessions" block counts the head's lines apart (at most 2, right under the
+  head).
+- **A page that stays on old code.** A host agent's directory is named by errand's sources
+  (`host-<sources_key>-<machine>`): each change of errand starts a new host agent, and the old one keeps
+  `web.lock` — and lives on, since a page that asks keeps its agent. `errand agents stop` does not reach
+  it either: it asks the hubs, and a host agent here is reached directly, by no hub. Now `web.json` says
+  the serving agent's directory and sources; `web.ensure` (`errand web`, `--open`) asks a host agent of
+  older sources to go (`stop`, never forced: one that runs work keeps the page), then starts the one of
+  these sources; a run's link wakes that aside. Tested with a real host agent in a cache of its own.
+  A `web.json` written before (no `sources`) counts as older, its agent found among the `host-*` here.

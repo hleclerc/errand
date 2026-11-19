@@ -289,6 +289,9 @@ def follow_all( sessions, report, boxes, relay = None, views = None ):
     """Every session to its end, each on a thread of its own. -> their return codes, or None after
     Ctrl-C: then each was stopped -- SIGINT, SIGTERM, SIGKILL, whatever it takes -- and is gone."""
     rcs = [ 0 ] * len( sessions )
+    for s in sessions:                       # where a case's directory is here: said under its head ( `render.head` )
+        if views is not None and getattr( s, "render", None ) is not None:
+            s.render.local_root = views.root
 
     def one( i ):
         rcs[ i ] = follow( sessions[ i ], report, boxes[ i ], relay, views )

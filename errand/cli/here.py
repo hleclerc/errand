@@ -229,6 +229,14 @@ last_tail: dict = { }
 crossed: list = [ ]
 
 
+def _from_root( leaf, root ) -> str | None:
+    """a case's directory from the copy's root ( the same on both sides ): where it is on the side that drives it"""
+    try:
+        return Path( leaf ).resolve().relative_to( Path( root ).resolve() ).as_posix()
+    except ( ValueError, OSError ):
+        return None
+
+
 def _crossed( journal ):
     if not crossed:
         return
@@ -303,9 +311,11 @@ def run_case( e, modules, *, root, out_root, overrides, env_name, tags, version,
     if marks:
         from ..agents.ops import say
         say( { "op": "head", "name": e.name, "site": site, "params": { k: str( v ) for k, v in shown.items() },
-               **( { "gpus": list( devices ) } if devices else { } ) } )
+               **( { "gpus": list( devices ) } if devices else { } ), "leaf": str( Path( leaf ).resolve() ),
+               **( { "rel": rel } if ( rel := _from_root( leaf, root ) ) else { } ) } )
     else:
-        shows.head( e.name, site, { k: str( v ) for k, v in shown.items() }, gpus = devices )
+        shows.head( e.name, site, { k: str( v ) for k, v in shown.items() }, gpus = devices, leaf = str( Path( leaf ).resolve() ),
+                    local = str( Path( leaf ).resolve() ) )
 
     E.begin_run( e, resolved, leaf )
     status, error, hint = "PASS", None, None

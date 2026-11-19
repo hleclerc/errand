@@ -23,6 +23,7 @@ import re
 import shutil
 import sys
 import threading
+from pathlib import Path
 import time
 
 from .. import rows
@@ -39,6 +40,33 @@ INSET = "  "                    # a case under its place
 
 _SGR  = re.compile( r"\x1b\[[0-9;]*m" )
 _lock = threading.RLock()          # one terminal: every renderer draws whole pieces
+
+
+OPEN = "ERRAND_OPEN"         # "1": each run's page opened in the browser ( `errand run --open` ), children of `-j` too
+TABS = 4                     # beyond, the main page once
+_OPENED = [ 0 ]
+
+
+def opens( ) -> bool:
+    """`$ERRAND_OPEN`, else `configure( open = … )`."""
+    got = os.environ.get( OPEN )
+    if got is not None:
+        return got == "1"
+    try:
+        from .. import config
+        return bool( getattr( config.settings, "open", False ) )
+    except Exception:
+        return False
+
+
+def _browse( link: str ):
+    """the page, opened with a code used once: no cookie needed ( a browser that never saw the page )"""
+    from ..web import once
+    try:
+        import webbrowser
+        webbrowser.open( link + ( "&" if "?" in link else "?" ) + f"o={once()}" )
+    except Exception:
+        pass
 
 
 def mode( ) -> str:
@@ -146,6 +174,8 @@ class Renderer:
         self.in_case = False
         self.head_seen = False
         self.env = None                     # the environment of its cases ( `banner` ), said after each name
+        self.leaf = None                    # the directory of the case drawn, over there ( `head` )
+        self.local_root = None              # the project here, when the case runs elsewhere ( `sessions.follow_all` )
         # Under the case's last line, while it runs and says nothing: how long it has run, its step
         # ( `steps` ), whether it seems to wait for input -- erased by whatever it writes next.
         self.since = None
@@ -324,8 +354,9 @@ class Renderer:
         self._line( "\n" + self._c( PLACE, f"▸ {host}" )
                     + ( self._c( DIM, f"  {what}" + ( f" · {jobs.strip()}" if jobs else "" ) ) if n > 1 or jobs else "" ) )
 
-    def head( self, name: str, site: str, params: dict | None = None, gpus = None ):
-        """`▸ solve (lmo-torch · gpu 0)  s.py:3 · n=3`: its name, where it runs and on which cards, its values."""
+    def head( self, name: str, site: str, params: dict | None = None, gpus = None, leaf = None, local = None ):
+        """`▸ solve (lmo-torch · gpu 0)  s.py:3 · n=3`: its name, where it runs and on which cards, its values; under it,
+        the address of its page ( `leaf`: its directory over there, ADR 0017 §5 ), opened with `--open`."""
         told = " · ".join( f"{k}={v}" for k, v in ( params or { } ).items() )
         self.in_case = True                   # first: under `-j` the header opens the held block
         self.head_seen = True
@@ -340,6 +371,33 @@ class Renderer:
             threading.Thread( target = self._tick, daemon = True ).start()
         self._line( INSET + self._c( BOLD + CYAN, f"▸ {name}" ) + self._c( DIM, env ) + "  "
                     + self._c( DIM, site + ( f" · {told}" if told else "" ) ) )
+        self.leaf = leaf                      # ( its views opened as they are: `views.Views`, `web.static` )
+        if leaf:
+            self._page( leaf )
+        if local:                             # where its directory is here, once: the page does not say it
+            uri = Path( local ).absolute().as_uri() + "/"
+            self._line( f"FOLDER: {uri}" if self.mode in ( "off", "plain" ) else INSET + "  " + self._c( CYAN, "↗" ) + " " + self._c( DIM, uri ) )
+
+    def _page( self, leaf: str ):
+        """The run's page: said under its head ( `↗ http://…/r/<id>` ), opened in the browser with `--open`: a tab
+        for each of the first `TABS` runs of this command, then the main page once."""
+        try:
+            from ..web import run_link
+            link = run_link( leaf, start = opens() )
+        except Exception:
+            link = None
+        if not link:
+            return
+        if self.mode in ( "off", "plain" ):
+            self._line( f"PAGE: {link}" )
+        else:
+            self._line( INSET + "  " + self._c( CYAN, "↗" ) + " " + self._c( DIM, link ) )
+        if opens():
+            _OPENED[ 0 ] += 1
+            if _OPENED[ 0 ] <= TABS:
+                _browse( link )
+            elif _OPENED[ 0 ] == TABS + 1:
+                _browse( link.rsplit( "/r/", 1 )[ 0 ] + "/" )
 
     def tail( self, status: str, name: str, site: str = "", *, error = None, seconds = None, results = None,
               output = None ):
@@ -476,7 +534,8 @@ class Renderer:
         if op == "banner":
             self.banner( m[ "n" ], m[ "env" ], m[ "place" ] )
         elif op == "head":
-            self.head( m[ "name" ], m[ "site" ], m.get( "params" ), gpus = m.get( "gpus" ) )
+            local = str( Path( self.local_root ) / m[ "rel" ] ) if m.get( "rel" ) and self.local_root else None
+            self.head( m[ "name" ], m[ "site" ], m.get( "params" ), gpus = m.get( "gpus" ), leaf = m.get( "leaf" ), local = local )
         elif op == "ran" and "status" in m:
             e = m.get( "entry" ) or { }
             t = m.get( "tail" ) or { }

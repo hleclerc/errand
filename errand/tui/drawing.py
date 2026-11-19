@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import curses
+import re
 
 from .terminal import C_ACTIVE, C_BAD, C_OK, C_TITLE, C_WARN, dim, selected
 
 
 BOX = "╭╮╰╯─│"
+_ESC = re.compile( r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)" )   # what a terminal reads: curses would show it
 
 # control characters ( NUL makes curses raise, the others move the cursor )
 # become one visible cell each, so the widths computed by callers still hold
@@ -75,7 +77,7 @@ def draw_rows( win, rows, cursor, box_inner, active, plain = False ):
         if row.kind == "out" and row.label[ 2 : 3 ] in ( "│", "┃" ):            # the gutter dim, the line as it is
             put( win, y, left, " " * width, width, look( 0 ) )
             put( win, y, left, row.label[ : 4 ], 4, look( dim() ) )
-            put( win, y, left + 4, row.label[ 4 : ], width - 4, look( 0 ) )
+            put( win, y, left + 4, _ESC.sub( "", row.label[ 4 : ] ), width - 4, look( 0 ) )       # ( no colours here )
             continue
         if row.kind == "cend":                                                   # `╰ PASS name  2.1 s`
             put( win, y, left, " " * width, width, look( 0 ) )

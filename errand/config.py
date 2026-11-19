@@ -249,6 +249,8 @@ class Settings:
     # How `errand run` draws a case's output ( ADR 0016 ): behind a `bar` ( │ stdout, ┃ stderr ), behind
     # `spaces`, or `off`; `plain` is `off` without colors. `$ERRAND_OUTPUT` and `--plain` win.
     output           : str = "bar"
+    # Each run's page opened in the browser as it starts ( `errand run --open`, ADR 0017 §5 ).
+    open             : bool = False
 
 
 class Envs( dict ):

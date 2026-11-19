@@ -61,7 +61,7 @@ class Web:
     # ── life ─────────────────────────────────────────────────────────────────
 
     @classmethod
-    def start( cls, cache: Path, port = None, machines_of = None, linger = LINGER, reload_page = False ):
+    def start( cls, cache: Path, port = None, machines_of = None, linger = LINGER, reload_page = False, agent = "" ):
         """Serve from threads, if nobody serves from `cache` yet -> the Web, or None."""
         from ..agents.endpoint import hold
         from . import LOCK, SAID, port_of_user
@@ -70,6 +70,7 @@ class Web:
         if held is None:
             return None
         web = cls( machines_of, linger, reload_page )
+        web.token = _kept_token( cache )
         web._held = held
         try:
             httpd = _bind( web, port_of_user() if port is None else port )
@@ -81,7 +82,9 @@ class Web:
         tmp = path.with_suffix( ".tmp" )
         fd = os.open( str( tmp ), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600 )
         with os.fdopen( fd, "w" ) as f:
-            json.dump( { "port": web.port, "token": web.token, "pid": os.getpid() }, f )
+            # its agent and its sources: a host agent of newer sources asks this one to give the page up ( `web.ensure` )
+            json.dump( { "port": web.port, "token": web.token, "pid": os.getpid(), "sources": _sources(),
+                         "agent": agent or "" }, f )
         tmp.replace( path )
         threading.Thread( target = httpd.serve_forever, kwargs = { "poll_interval": 0.5 }, daemon = True ).start()
         threading.Thread( target = web._reap, daemon = True ).start()
@@ -194,7 +197,9 @@ class Web:
             if r.kind == "plain" and isinstance( r.data, tuple ):
                 d[ "k" ], d[ "v" ] = str( r.data[ 0 ] ), str( r.data[ 1 ] )
             elif r.kind == "output":
-                d[ "machine" ], d[ "path" ] = r.data
+                d[ "machine" ], d[ "path" ] = r.data[ : 2 ]
+                if len( r.data ) > 2:
+                    d[ "url" ] = r.data[ 2 ]                    # opened as it is ( `errand.Static`, `web.static` )
             elif r.kind == "cend":
                 d[ "status" ] = r.data
             out.append( d )
@@ -450,6 +455,65 @@ def _set( s ) -> set:
     return { w for w in ( s or "" ).split( "," ) if w }
 
 
+def _sources( ) -> str:
+    from .. import bootstrap
+    try:
+        return bootstrap.sources_key()
+    except Exception:
+        return ""
+
+
+COOKIE_DAYS = 30
+TOKEN = "web-token"
+
+
+def _kept_token( cache: Path ) -> str:
+    """The page's token, the same from one start of the agent to the next ( `cache/web-token`, its user's only ):
+    a cookie of 30 days outlives the agent, and a run's link said in a terminal keeps opening its page."""
+    path = cache / TOKEN
+    try:
+        got = path.read_text().strip()
+        if len( got ) >= 32:
+            return got
+    except OSError:
+        pass
+    token = secrets.token_urlsafe( 48 )                    # 384 bits
+    tmp = path.with_name( f".{TOKEN}.{os.getpid()}.tmp" )
+    fd = os.open( str( tmp ), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600 )
+    with os.fdopen( fd, "w" ) as f:
+        f.write( token )
+    tmp.replace( path )
+    return token
+
+
+def run_key( web, ident: str ) -> str | None:
+    """The key of the run whose directory is named `ident` ( `seen.ident` ), among the rows of the page; None while
+    no machine says it yet ( it starts )."""
+    from ..agents.seen import ident as ident_of
+    from ..tui import rows as R
+    for r in R.build( web.machines(), tab = "runs", shown = 1 << 30 ):
+        what = r.data[ 1 ] if isinstance( r.data, tuple ) and isinstance( r.data[ 1 ], dict ) else None
+        if what and what.get( "leaf" ) and ident_of( what[ "leaf" ] ) == ident:
+            return _key( r )
+    return None
+
+
+WAITING = """<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="2">
+<title>errand: a run starts</title></head><body style="font:14px sans-serif;margin:2em;color:#666">
+the run starts: its page comes as soon as its machine says it …</body></html>"""
+
+
+def _static_origin( ) -> str:
+    """where the views opened as they are come from ( `web.static` ): framed by the page of a run"""
+    from . import static
+    from .. import bootstrap
+    try:
+        p = json.loads( ( bootstrap.local_cache() / static.SAID ).read_text() )[ "port" ]
+    except Exception:
+        p = static.port()
+    return f"http://127.0.0.1:{p}"
+
+
 def _key( row ) -> str:
     from ..tui import rows as R
     return json.dumps( R.key( row ) )
@@ -529,9 +593,13 @@ class _Handler( BaseHTTPRequestHandler ):
     def _json( self, obj, code = 200 ):
         self._send( code, json.dumps( obj ).encode() )
 
-    def _logged_in( self ):
-        self._send( 303, b"", "text/plain", [ ( "Location", "/" ),
-            ( "Set-Cookie", f"{self.cookie}={self.web.token}; HttpOnly; SameSite=Strict; Path=/" ) ] )
+    def _set_cookie( self ):
+        """the cookie, for 30 days from now: set at login, set again by each page loaded"""
+        return ( "Set-Cookie", f"{self.cookie}={self.web.token}; HttpOnly; SameSite=Strict; Path=/; "
+                               f"Max-Age={COOKIE_DAYS * 86400}" )
+
+    def _logged_in( self, where = "/" ):
+        self._send( 303, b"", "text/plain", [ ( "Location", where ), self._set_cookie() ] )
 
     def do_GET( self ):
         url = urlsplit( self.path )
@@ -539,17 +607,23 @@ class _Handler( BaseHTTPRequestHandler ):
         if not self._host_ok():
             self._send( 403, b"not for this address\n", "text/plain" )
             return
-        if url.path == "/" and "o" in q:
+        page_like = url.path in ( "/", "/job" ) or url.path.startswith( "/r/" )
+        if page_like and "o" in q:
+            # a code used once ( `errand web`, `errand run --open` ): the cookie, and the same address without it
             from . import spend
             if spend( q[ "o" ] ):
-                self._logged_in()
+                rest = "&".join( p for p in url.query.split( "&" ) if not p.startswith( "o=" ) )
+                self._logged_in( url.path + ( f"?{rest}" if rest else "" ) )
+            elif self._allowed():
+                rest = "&".join( p for p in url.query.split( "&" ) if not p.startswith( "o=" ) )
+                self._send( 303, b"", "text/plain", [ ( "Location", url.path + ( f"?{rest}" if rest else "" ) ) ] )
             else:
                 from .page import LOGIN
                 self._send( 403, LOGIN.replace( "{said}", "this link was used already, or is too old" ).encode(),
                             "text/html; charset=utf-8" )
             return
         if not self._allowed():
-            if url.path in ( "/", "/job" ):
+            if page_like:
                 from .page import LOGIN
                 self._send( 401, LOGIN.replace( "{said}", "" ).encode(), "text/html; charset=utf-8" )
             else:
@@ -563,7 +637,14 @@ class _Handler( BaseHTTPRequestHandler ):
                     importlib.reload( page )
                 self._send( 200, page.PAGE.encode(), "text/html; charset=utf-8",
                             [ ( "Content-Security-Policy", "default-src 'self'; script-src 'unsafe-inline'; "
-                                "style-src 'unsafe-inline'; img-src 'self' data:; frame-src 'self'; frame-ancestors 'none'" ) ] )
+                                "style-src 'unsafe-inline'; img-src 'self' data:; frame-src 'self' " + _static_origin() + "; frame-ancestors 'none'" ),
+                              self._set_cookie() ] )                     # ( 30 days again from each page loaded )
+            elif url.path.startswith( "/r/" ):              # a run by its directory's name ( `run_link` ): its page
+                key = run_key( self.web, url.path[ 3 : ].strip( "/" ) )
+                if key is None:
+                    self._send( 200, WAITING.encode(), "text/html; charset=utf-8" )
+                else:
+                    self._send( 303, b"", "text/plain", [ ( "Location", f"/job?key={quote( key )}" ) ] )
             elif url.path == "/state":
                 self._json( self.web.state( q ) )
             elif url.path == "/detail":

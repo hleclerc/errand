@@ -156,9 +156,29 @@ def step( text: str | None = None, *, done: float | None = None, **values ):
 _announced: set = set()          # the views this process said itself, once each
 
 
-def view( path, title: str | None = None, content: str | bytes | None = None ) -> bool:
+class Static:
+    """What opens a view that is a directory carrying its own page ( ADR 0017 §5 ): `errand.view( "foam.sviz", open =
+    errand.Static( "index.html" ) )`. Its files are served as they are, from the copy brought back here, on a server
+    of errand's beside its page ( `web.static` ): nothing runs here, and the page is the one written with the data."""
+
+    def __init__( self, index: str = "index.html" ):
+        self.index = str( index )
+
+    def wire( self ) -> dict:
+        return { "static": self.index }
+
+    def __repr__( self ):
+        return f"errand.Static( {self.index!r} )"
+
+
+def view( path, title: str | None = None, content: str | bytes | None = None, last = None, open = None ) -> bool:
     """`path` ( relative to the run's directory ) is a file of the run worth looking at as it
     evolves. With `content`, errand writes it, atomically: a reader never sees half of it.
+
+    `path` may be a DIRECTORY ( a scene store, ADR 0017 ): named again, what changed in it comes back to the side
+    that drives the run. `last`: a file of it ( or several ) that comes after the rest, read over there BEFORE the
+    rest is listed -- an index that names the other files ( `manifest.json` ) never names one not here yet.
+    `open`: what opens it ( `Static`, or a list, the first by default ): said by the producer, nothing to declare.
 
     -> whether errand says where to open it ( `OUTPUT: file://...`, once per file ): the side that
     drives a run elsewhere brings the file back at once and says its path there ( `cli.views` ); a run
@@ -177,7 +197,10 @@ def view( path, title: str | None = None, content: str | bytes | None = None ) -
         tmp.replace( target )
     if journal is None:
         return False
-    journal.add( { "view": str( path ), **( { "title": title } if title else { } ) }, now = True )
+    last = [ last ] if isinstance( last, str ) else list( last or ( ) )
+    opens = [ o.wire() if hasattr( o, "wire" ) else o for o in ( open if isinstance( open, ( list, tuple ) ) else [ open ] if open else [ ] ) ]
+    journal.add( { "view": str( path ), **( { "title": title } if title else { } ), **( { "last": last } if last else { } ),
+                   **( { "open": opens } if opens else { } ) }, now = True )
     if not os.environ.get( RELAY ) and str( target ) not in _announced:
         _announced.add( str( target ) )
         print( f"OUTPUT: { target.absolute().as_uri() }", flush = True )
@@ -238,7 +261,7 @@ def summarize( events: list ) -> dict | None:
             out[ "done" ] = e[ "done" ]
             dones.append( ( e.get( "t" ) or 0, e[ "done" ] ) )
         if e.get( "view" ) and not any( v[ "view" ] == e[ "view" ] for v in out[ "views" ] ):
-            out[ "views" ].append( { "view": e[ "view" ], "title": e.get( "title" ) } )
+            out[ "views" ].append( { "view": e[ "view" ], "title": e.get( "title" ), **( { "open": e[ "open" ] } if e.get( "open" ) else { } ) } )
         for k, v in e.items():
             if k not in KEYS and isinstance( v, ( int, float ) ):
                 out[ "curves" ].setdefault( k, [ ] ).append( v )

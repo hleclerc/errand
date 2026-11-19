@@ -193,7 +193,9 @@ if test( "-j in sessions: each case one block, from its header to its end, whoev
         for name in ( "a", "b" ):
             start = lines.index( next( l for l in lines if l.startswith( f"  ▸ case {name}" ) ) )
             end = lines.index( next( l for l in lines if l.startswith( f"  ╰ PASS case {name}" ) ) )
-            inside = lines[ start + 1 : end ]
+            heads = [ l for l in lines[ start + 1 : end ] if l.startswith( "    ↗ " ) ]       # its page, its folder ( ADR 0017 )
+            inside = [ l for l in lines[ start + 1 : end ] if not l.startswith( "    ↗ " ) ]
+            assert len( heads ) <= 2 and all( lines.index( h ) <= start + 2 for h in heads ), heads
             mine = [ l for l in inside if re.match( rf"^  [│┃] {name} (out|err|child) \d$", l ) ]
             assert len( mine ) == 9 and len( inside ) == 9, f"case {name}:\n" + "\n".join( inside ) + f"\n---\n{output}"
 

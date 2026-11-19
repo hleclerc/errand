@@ -343,6 +343,38 @@ def fetch_file( path: str, host: str, remote_root, local_root: Path, options = (
         raise FileNotFoundError( f"{host}:{remote_root}/{path}" )
 
 
+def fetch_view( path: str, host: str, remote_root, local_root: Path, options = ( ), say = print, dir = False, last = ( ) ):
+    """A view of the copy brought back at once ( `cli.views` ): a file ( `fetch_file` ), or a DIRECTORY ( a scene
+    store, ADR 0017 ): what changed in it, nothing deleted here. Its `last` files ( `manifest.json` ) are read over
+    there FIRST, into a place aside, then the rest of the directory comes, then they are put in place: an index never
+    names a file that is not here, since what it names was written before it."""
+    if not dir:
+        return fetch_file( path, host, remote_root, local_root, options, say = say )
+    import shutil
+    import tempfile
+    from .. import sync as S
+    from ..agents import syncop, upstream
+    rel = Path( path ).as_posix().strip( "/" )
+    local_root = Path( local_root )
+    conn = agents.open( upstream.of_host( host, options ) )
+    aside = Path( tempfile.mkdtemp( prefix = ".errand-view-", dir = local_root ) ) if last else None
+    try:
+        if last:
+            syncop.pull( conn, remote_root, aside, [ f"{rel}/{n}" for n in last ], where = host, say = say )
+        sel = S.Selection( excludes = [ f"/{rel}/{n}" for n in last ] ) if last else None
+        syncop.pull( conn, remote_root, local_root, [ rel ], sel = sel, where = host, say = say )
+        for n in last or ( ):
+            got = aside / rel / n
+            if got.is_file():
+                ( local_root / rel / n ).parent.mkdir( parents = True, exist_ok = True )
+                os.replace( got, local_root / rel / n )               # ( its date kept: the run's coming back leaves it )
+    finally:
+        if aside is not None:
+            shutil.rmtree( aside, ignore_errors = True )
+    if not ( local_root / rel ).is_dir():
+        raise FileNotFoundError( f"{host}:{remote_root}/{rel}" )
+
+
 def fetch( paths, host: str, remote_root: Path, local_root: Path, options = ( ), finished_only = False, keep = False ):
     """Best effort: a path the remote run never created is nothing to bring back. Nothing here is
     deleted. `finished_only`: the paths are run trees, and a run comes back only once it has written
