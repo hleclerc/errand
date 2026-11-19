@@ -127,5 +127,8 @@ if test( "a Static view: its copy here registered, nothing said; the run's page 
                   for n in ( "foam.sviz/manifest.json", "foam.sviz/index.html" ) ]
         step = { "views": [ { "view": "/data/runs/leaf/foam.sviz", "open": [ { "static": "index.html" } ] } ] }
         rich, _ = outputs( M(), { "leaf": "/data/runs/leaf" }, step, files )
-        assert len( rich ) == 1 and rich[ 0 ].data == ( "box", "/data/runs/leaf/foam.sviz", S.url( vid ) ), rich[ 0 ].data
+        assert len( rich ) == 1 and rich[ 0 ].data[ : 2 ] == ( "box", "/data/runs/leaf/foam.sviz" ), rich[ 0 ].data
+        look = rich[ 0 ].data[ 2 ]
+        assert look[ "url" ] == S.url( vid ) and look[ "look" ] == "static", look
+        assert look[ "ready" ] is False, "no server said here: not ready"
         assert rich[ 0 ].detail.startswith( "1 frames  running" ), rich[ 0 ].detail

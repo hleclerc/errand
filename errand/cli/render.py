@@ -42,6 +42,8 @@ _SGR  = re.compile( r"\x1b\[[0-9;]*m" )
 _lock = threading.RLock()          # one terminal: every renderer draws whole pieces
 
 
+LOCAL_ROOT = [ None ]         # the copy's root here, for the cases driven elsewhere: set before their sessions start
+                             # ( `drive` ), since a session draws its marks as they come, before anyone follows it
 OPEN = "ERRAND_OPEN"         # "1": each run's page opened in the browser ( `errand run --open` ), children of `-j` too
 TABS = 4                     # beyond, the main page once
 _OPENED = [ 0 ]
@@ -534,7 +536,8 @@ class Renderer:
         if op == "banner":
             self.banner( m[ "n" ], m[ "env" ], m[ "place" ] )
         elif op == "head":
-            local = str( Path( self.local_root ) / m[ "rel" ] ) if m.get( "rel" ) and self.local_root else None
+            here = self.local_root or LOCAL_ROOT[ 0 ]
+            local = str( Path( here ) / m[ "rel" ] ) if m.get( "rel" ) and here else None
             self.head( m[ "name" ], m[ "site" ], m.get( "params" ), gpus = m.get( "gpus" ), leaf = m.get( "leaf" ), local = local )
         elif op == "ran" and "status" in m:
             e = m.get( "entry" ) or { }

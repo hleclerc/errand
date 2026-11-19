@@ -88,6 +88,16 @@ def register( vid: str, local_dir, cache: Path | None = None ):
     os.replace( tmp, cache / VIEWS )
 
 
+def serving( cache: Path | None = None ) -> bool:
+    """whether the server said in `static.json` is there"""
+    try:
+        pid = json.loads( ( Path( cache or bootstrap.local_cache() ) / SAID ).read_text() )[ "pid" ]
+        os.kill( int( pid ), 0 )
+        return True
+    except ( OSError, ValueError, KeyError, TypeError ):
+        return False
+
+
 def url( vid: str, index: str = "index.html", cache: Path | None = None ) -> str:
     """where view `vid` opens: at the port the server says, else at its user's ( the one it takes when it starts )"""
     cache = Path( cache or bootstrap.local_cache() )

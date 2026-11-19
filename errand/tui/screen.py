@@ -70,21 +70,43 @@ class Screen:
         self.peeked   : dict = { }                  # ( machine, path ) -> { "at", "text", "size", "error" }
         self.fetching : set = set()
         self.run_outside = None                     # set by the loop: runs argv with curses suspended
+        self.marked   : set = set()                 # the runs' rows chosen together ( ⇧↑ ⇧↓ ), by key, for d and D
+        self.anchor   = None                        # where they were chosen from
+        self.poke     = lambda: None                # set by the loop: draw again now ( a thread said something )
 
     # ── the lists ────────────────────────────────────────────────────────────
 
     def machine( self, name ):
         return next( m for m in self.machines if m.name == name )
 
+    def reader( self, row ) -> str | None:
+        """the machine a row's files are read on: a run of this machine's record has its directory here ( ADR 0025 ),
+        wherever it ran"""
+        machine, what = row.data if isinstance( row.data, tuple ) else ( None, None )
+        if row.kind == "run" and isinstance( what, dict ) and what.get( "rel" ) and not what.get( "there" ) or \
+                ( machine and not any( m.name == machine for m in self.machines ) ):
+            return next( ( m.name for m in self.machines if m.here ), machine )
+        return machine
+
     def build( self ):
         if self.tab == "caches":
             from . import caches as K
             K.want( self.machines, entries = [ o[ 8 : ] for o in self.opened if isinstance( o, str ) and o.startswith( "entries:" ) ],
                     days = self.cache_days )
+        for m in self.machines:                       # their gauges: measured while the machines tab is shown ( ADR 0024 )
+            want = getattr( m, "want_resources", None )
+            if want is not None:
+                want( self.tab == "machines" )
         rows = R.build( self.machines, folded = self.folded, opened = self.opened, query = self.query,
                         only = self.mine if self.only else None, mine = self.mine, shown = self.shown, tab = self.tab,
                         days = self.cache_days, every = self.cache_every )
         self.list.keep( rows, R.key )
+        if self.marked:
+            keys = [ R.key( r ) for r in rows ]
+            self.marked &= set( keys )
+            self.list.marked = { i for i, k in enumerate( keys ) if k in self.marked } if len( self.marked ) > 1 else set()
+        else:
+            self.list.marked = set()
         self.list.title = { "runs": "running, waiting, done", "machines": "machines",
                             "caches": f"library caches  ·  unused: {self.cache_days:g} days"
                                       + ( "  ·  every entry" if self.cache_every else "" ) }[ self.tab ] \
@@ -118,7 +140,7 @@ class Screen:
         output read again in a thread ( `fetch` )."""
         if row is None:
             return [ Row( "nothing here", kind = "note" ) ]
-        machine, what = row.data if isinstance( row.data, tuple ) else ( None, None )
+        machine = self.reader( row )
         m = self.machine( machine ) if machine else None
         got = None
         if row.kind in ( "proc", "run" ):
@@ -207,6 +229,12 @@ class Screen:
             self.opened.symmetric_difference_update( { machine } )
         elif row.kind == "day":
             self.folded.symmetric_difference_update( { ( "day", what ) } )
+        elif row.kind in ( "tnode", "tset" ):            # the runs' tree ( ADR 0023 ): folded until opened, busy ones open
+            k = f"t:{what[ 'tree' ]}"
+            if row.open:
+                self.opened.discard( k ); self.folded.add( k )
+            else:
+                self.folded.discard( k ); self.opened.add( k )
         elif row.kind == "more":
             self.shown += 50
 
@@ -313,7 +341,7 @@ class Screen:
         if not got.get( "path" ):
             self.message = "no output yet"
             return
-        self.page( row.data[ 0 ], got[ "path" ] )
+        self.page( self.reader( row ), got[ "path" ] )
 
     def page( self, machine, path ):
         """A file in `$PAGER`, fetched first when it is on another machine."""
@@ -407,6 +435,148 @@ class Screen:
 
         self.prompt = Prompt( A.rename_title( m ), m.name, go )
 
+    def check_runs( self ):
+        """`c` in the runs tab: the other machines asked for the runs they hold that this one's record does not
+        ( ADR 0025 ), from a thread; found, they are listed at their place, marked"""
+        from . import rows as R
+
+        def run():
+            try:
+                self.message = R.check( self.machines )
+            except Exception as err:
+                self.message = f"check: {err}"
+            self.poke()
+        self.message = "checking the other machines…"
+        threading.Thread( target = run, daemon = True ).start()
+
+    def bring_back( self ):
+        """`b` in the runs tab: a run the check found on another machine only, brought here"""
+        from . import rows as R
+        row = self.list.current()
+        what = row.data[ 1 ] if row is not None and isinstance( row.data, tuple ) else None
+        if row is None or row.kind != "run" or not isinstance( what, dict ) or not what.get( "there" ):
+            self.message = "b: on a run the check found on another machine only"
+            return
+        m = self.machine( row.data[ 0 ] )
+
+        def run():
+            try:
+                self.message = R.bring_back( m, what )
+            except Exception as err:
+                self.message = f"bring back: {err}"
+            self.poke()
+        self.message = "bringing it back…"
+        threading.Thread( target = run, daemon = True ).start()
+
+    def extend( self, delta: int ):
+        """⇧↓ ⇧↑ in the runs tab: the rows from where it started to the cursor, chosen together ( for d, D )"""
+        pane = self.list
+        if self.tab != "runs" or self.active != 0 or not pane.rows:
+            return
+        keys = [ R.key( r ) for r in pane.rows ]
+        if not self.marked or self.anchor not in keys:
+            self.anchor = keys[ pane.cursor ]
+        pane.move( delta )
+        a = keys.index( self.anchor )
+        lo, hi = sorted( ( a, pane.cursor ) )
+        self.marked = set( keys[ lo : hi + 1 ] )
+        pane.marked = set( range( lo, hi + 1 ) ) if hi > lo else set()
+
+    def unmark( self ) -> bool:
+        had = bool( self.marked )
+        self.marked, self.list.marked = set(), set()
+        return had
+
+    def remove_runs( self, how: str ):
+        """`d` / `D` in the runs tab: the runs under the row ( or the rows chosen together ) removed, or all but the
+        latest of each set, once confirmed. The window at once ( `removal.plan` asks nobody ), the room freed in it when
+        the machines said it ( `measure`, from a thread ); yes: the runs greyed, removed from a thread. For good."""
+        from . import removal as RM
+        pane = self.list
+        chosen = [ r for r in pane.rows if R.key( r ) in self.marked ] if len( self.marked ) > 1 else [ pane.current() ]
+        chosen = [ r for r in chosen if r is not None and r.kind in ( "run", "tnode", "tset", "thead" ) and r.mark != "going" ]
+        try:
+            r = RM.plan( chosen, self.machines, how )
+        except ValueError as err:
+            self.message = str( err )
+            return
+
+        def measure():
+            try:
+                RM.measure( r )
+            except Exception as err:
+                r.lines[ : ] = r.lines + [ f"the room freed: not known ( {err} )" ]
+            c = self.confirm
+            if c is not None and c.lines is r.lines:      # ( its window still shown: with the count the machines said )
+                self.confirm = c._replace( title = r.title )
+            self.poke()
+        threading.Thread( target = measure, daemon = True ).start()
+
+        def go():
+            RM.mark( r )
+            self.unmark()
+            n = r.count
+            self.message = f"removing {n} run{'s' if n > 1 else ''}…"
+
+            def run():
+                try:
+                    self.message = RM.send( r )
+                except Exception as err:
+                    self.message = f"remove: {err}"
+                self.poke()
+            threading.Thread( target = run, daemon = True ).start()
+
+        self.confirm = Confirm( r.title, r.lines, "remove for good", go, danger = True )
+
+    def sort_column( self ):
+        """`s` in the runs tab: the parameter table under the cursor sorted by its next column ( each column up, then
+        down ), its header found above the row"""
+        pane = self.list
+        i = pane.cursor
+        while i >= 0 and pane.rows[ i ].kind not in ( "thead", ) and pane.rows[ i ].kind in ( "tset", "run" ):
+            i -= 1
+        if i < 0 or pane.rows[ i ].kind != "thead":
+            self.message = "s: on a table of parameters, to sort it"
+            return
+        what = pane.rows[ i ].data[ 1 ]
+        cols = [ c[ 0 ] for c in what[ "cols" ] ]
+        pre = f"s:{what[ 'tree' ]}="
+        now = next( ( o[ len( pre ) : ] for o in self.opened if isinstance( o, str ) and o.startswith( pre ) ), None )
+        self.opened -= { o for o in self.opened if isinstance( o, str ) and o.startswith( pre ) }
+        if now is None:
+            nxt = cols[ 0 ]
+        elif not now.startswith( "-" ):
+            nxt = "-" + now
+        else:
+            j = cols.index( now[ 1 : ] ) if now[ 1 : ] in cols else -1
+            nxt = cols[ ( j + 1 ) % len( cols ) ]
+        self.opened.add( pre + nxt )
+        self.message = f"sorted by {nxt.lstrip( '-' )} {'down' if nxt.startswith( '-' ) else 'up'}"
+
+    def browse( self ):
+        """`w`: the page of the run under the cursor in the browser ( `errand web`: its dashboard ), with a code used once
+        ( no cookie needed ). From a thread: the page may have to be started."""
+        row = self.list.current()
+        what = row.data[ 1 ] if row is not None and isinstance( row.data, tuple ) and isinstance( row.data[ 1 ], dict ) else { }
+        if row is None or row.kind not in ( "proc", "run" ) or not what.get( "leaf" ):
+            self.message = "w: on a run, to open its page"
+            return
+
+        def go():
+            from ..cli.render import _browse
+            from ..web import run_link
+            try:
+                link = run_link( what[ "leaf" ], start = True )
+            except Exception:
+                link = None
+            if not link:
+                self.message = "no page served here ( errand web )"
+                return
+            _browse( link )
+            self.message = f"opened {link}"
+        self.message = "opening its page…"
+        threading.Thread( target = go, daemon = True ).start()
+
     def activate( self ):
         """`a`: a machine contacted or not, from now on ( `actions.toggle_watch` )."""
         from . import actions as A
@@ -492,21 +662,26 @@ def detail_rows( row, m, got, preview = None ) -> list:
     step = what.get( "step" ) if row.kind == "proc" else got.get( "step" )
     if row.kind == "run":
         out += [ Row( f"{k:<9} {v}", data = ( k, v ) ) for k, v in R.step_facts( step, m.now() ) ]
-    # The outputs, in one list ( ADR 0017 §5 ): first what is made to be looked at -- the views the run designated
-    # ( ADR 0010 ), its pages, images, documents, its bundles ( `foam.sviz/`: one line, with its state ) -- in the order
-    # they appeared; then what it printed, as `errand run` draws it; then its other files. The one under the cursor
-    # ( tab to get there ) is shown below; enter opens it, e edits it.
+    # The outputs ( ADR 0017 §5 ): what it printed, as `errand run` draws it, first; then what is made to be looked at --
+    # the views the run designated ( ADR 0010 ), its pages, images, documents, its bundles ( `foam.sviz/`: one line, with
+    # its state ) -- in the order they appeared; then its other files; apart, at the end, the files errand writes in
+    # every run ( `OWN` ). The one under the cursor ( tab to get there ) is shown below; enter opens it, e edits it.
     out.append( Row( "", kind = "note" ) )
     out.append( Row( "outputs", "", kind = "head" ) )
     rich, plain = outputs( m, what, step, got.get( "files" ) or [ ] )
-    out += rich
+    own = [ r for r in plain if r.label in OWN ]
     out.append( Row( "console", got.get( "source" ) or "", kind = "output", data = ( m.name, None ) ) )
-    out += plain
+    out += rich + [ r for r in plain if r.label not in OWN ]
+    if own:                                             # always there, seldom read: apart, at the end
+        out.append( Row( "", kind = "note" ) )
+        out.append( Row( "errand's files", "", kind = "head" ) )
+        out += own
     out.append( Row( "", kind = "note" ) )
     out += console( row, got ) if preview is None else preview
     return out
 
 
+OWN  = ( "stdout.txt", "stderr.txt", "steps.jsonl", "result.yaml", "summary.yaml" )   # what errand writes in every run
 RICH = ( ".html", ".htm", ".svg", ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".mp4", ".webm" )
 
 
@@ -548,8 +723,17 @@ def outputs( m, what: dict, step, files: list ) -> tuple:
         else:
             detail = name if v.get( "title" ) else f"{_size( f[ 'size' ] )}  {R.ago( now - f[ 'mtime' ] )}" if f else ""
         served = _served( m, leaf, path, v.get( "open" ) )
+        # to be looked at ( the run's dashboard, `web/page.py` ): a page served as it is, or a file that shows itself
+        if served:
+            look = { "url": served[ 0 ], "look": "static", "ready": served[ 1 ] }
+        elif _rich( name ):
+            look = { "look": "file", "ready": f is not None }
+        else:
+            look = None
+        if look:
+            look[ "t" ] = v.get( "t" ) or 0.0
         first[ path ] = ( v.get( "t" ) or 0.0, Row( shown, detail, kind = "output",
-                                                    data = ( m.name, path ) + ( ( served, ) if served else ( ) ) ) )
+                                                    data = ( m.name, path ) + ( ( look, ) if look else ( ) ) ) )
     for name, ( mtime, fs ) in bundles.items():
         path = f"{leaf}/{name}"
         if path in seen:
@@ -572,9 +756,10 @@ def outputs( m, what: dict, step, files: list ) -> tuple:
     return rich, plain
 
 
-def _served( m, leaf: str, path: str, opens ) -> str | None:
-    """the URL of a view opened as it is ( `errand.Static` ), when its copy is served here ( `web.static` ): the one the
-    side that drove the run registered, or, for a run of this machine, the directory itself"""
+def _served( m, leaf: str, path: str, opens ) -> tuple | None:
+    """`( url, ready )` of a view opened as it is ( `errand.Static` ), when its copy is served here ( `web.static` ): the
+    one the side that drove the run registered, or, for a run of this machine, the directory itself. Ready: its server
+    answers, its index is here, and, a store, its first frame ( a `frames/` with a file )."""
     static = next( ( o for o in opens or [ ] if isinstance( o, dict ) and "static" in o ), None )
     if static is None or not path.startswith( f"{leaf}/" ):
         return None
@@ -585,7 +770,11 @@ def _served( m, leaf: str, path: str, opens ) -> str | None:
             if not ( m.here and Path( path ).is_dir() ):
                 return None
             S.register( vid, path )
-        return S.url( vid, static[ "static" ] )
+        here = Path( S.registered()[ vid ] )
+        frames = here / "frames"
+        ready = S.serving() and ( here / static[ "static" ] ).is_file() and \
+            ( not frames.is_dir() or next( frames.iterdir(), None ) is not None )
+        return S.url( vid, static[ "static" ] ), bool( ready )
     except Exception:
         return None
 

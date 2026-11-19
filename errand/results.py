@@ -388,6 +388,9 @@ def write_result( leaf: Path, *, entry, root, env_name, where, tags, status, err
     if required:
         data[ "required" ] = _plain( required )        # what its `errand.require` asked ( ADR 0014 )
     yamlish.write( leaf / RESULT, data )
+    from . import steps
+    steps._rung[ 0 ] = 0.0                     # a run ended: its agents told now, whatever was told just before
+    steps.nudge()
     return data
 
 

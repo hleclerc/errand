@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import curses
+import time
 import os
 import subprocess
 from pathlib import Path
@@ -12,7 +13,7 @@ from .screen import Screen
 from .terminal import C_ACTIVE, C_BAD, C_DIM, C_OK, C_TITLE, C_WARN, dim, get_mouse, OWN_MOUSE, PRESSED, read_key, \
     REPAINT, TRACE, WHEEL, WHEEL_DOWN, WHEEL_UP, without_rep
 
-HINT = "1 runs · 2 machines · 3 caches · ↑↓ choose · →← unfold, fold · tab detail · enter open · e edit · k kill · f forget · r rename · a watch · / filter · ? keys · q quit"
+HINT = "1 runs · 2 machines · 3 caches · ↑↓ choose · →← unfold, fold · tab detail · enter open · e edit · k kill · f forget · r rename · a watch · w page · / filter · ? keys · q quit"
 
 KEYS = [
     ( "↑ ↓  pgup pgdn", "move in the active pane" ),
@@ -26,6 +27,11 @@ KEYS = [
     ( "a", "watch the machine under the cursor, or not: saved, errand status follows it; a greyed one is not contacted" ),
     ( "r", "name the machine under the cursor: every name it is reached by shows as one" ),
     ( "o", "the whole console, or the output under the cursor, in $PAGER" ),
+    ( "w", "the page of the run under the cursor in the browser ( its dashboard: what it shows, its console )" ),
+    ( "s", "runs: the parameter table under the cursor sorted by its next column ( up, then down )" ),
+    ( "d  D", "runs: remove the runs under the row, or keep only the latest of each set and env ( for good, once confirmed )" ),
+    ( "⇧↑  ⇧↓", "runs: several rows chosen together, for d and D · esc: one again" ),
+    ( "c  b", "runs: check the other machines for runs not here ( ◇ ) · bring one back" ),
     ( "x", "a shell on its machine, where it works" ),
     ( "/", "filter: machine, project, command, state ( esc clears it )" ),
     ( "p", "the current project only, or every project" ),
@@ -207,9 +213,15 @@ def handle( screen: Screen, key ):
         except curses.error:
             return None
         _mouse( screen, y, x, state )
+    elif key in ( curses.KEY_SF, 336 ):             # ⇧↓ ⇧↑: rows chosen together ( the runs tab, for d and D )
+        screen.extend( 1 )
+    elif key in ( curses.KEY_SR, 337 ):
+        screen.extend( -1 )
     elif key == curses.KEY_DOWN:
+        screen.unmark()
         pane.move( 1 )
     elif key == curses.KEY_UP:                      # `k` kills: no vi keys to move
+        screen.unmark()
         pane.move( -1 )
     elif key == curses.KEY_NPAGE:
         pane.move( max( 1, pane.inner[ 2 ] - 1 ) )
@@ -248,6 +260,16 @@ def handle( screen: Screen, key ):
         screen.forget()
     elif key == ord( "a" ):
         screen.activate()
+    elif key == ord( "w" ):
+        screen.browse()
+    elif screen.tab == "runs" and key == ord( "s" ):
+        screen.sort_column()
+    elif screen.tab == "runs" and key == ord( "c" ):
+        screen.check_runs()
+    elif screen.tab == "runs" and key == ord( "b" ):
+        screen.bring_back()
+    elif screen.tab == "runs" and screen.active == 0 and key in ( ord( "d" ), ord( "D" ) ):
+        screen.remove_runs( "latest" if key == ord( "D" ) else "all" )
     elif key == ord( "o" ):
         screen.whole()
     elif key == ord( "x" ):
@@ -255,7 +277,8 @@ def handle( screen: Screen, key ):
     elif key == ord( "/" ):
         screen.typing = True
     elif key == 27:
-        screen.query = ""
+        if not screen.unmark():
+            screen.query = ""
     elif key == ord( "p" ):
         if screen.mine:
             screen.only = not screen.only
@@ -333,12 +356,24 @@ def loop( win, screen: Screen ):
             _mouse_on( True )
 
     screen.run_outside = outside
+    # Drawn again when something happened ( ADR 0024 ): an agent said something ( a listener of the machines ), a key,
+    # or a second passed ( the clocks that tick ); never asking anyone
+    import threading
+    heard = threading.Event()
+    from . import machines as TM
+    TM.LISTENERS.append( lambda m, e: heard.set() )
+    screen.poke = heard.set
+    drawn_at = 0.0
     while True:
-        screen.build()
-        draw( win, screen )
-        key = read_key( win, 500 )
+        if heard.is_set() or time.monotonic() - drawn_at >= 1.0:
+            heard.clear()
+            drawn_at = time.monotonic()
+            screen.build()
+            draw( win, screen )
+        key = read_key( win, 100 )
         if key == -1:
             continue
+        drawn_at = 0.0                    # a key: drawn again at once
         # The mouse events already waiting are dealt with before the next picture: a turn of the
         # wheel is dozens of events, and a picture each is a screen that lags behind the hand.
         for _ in range( 200 ):

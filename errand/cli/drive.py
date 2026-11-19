@@ -267,6 +267,13 @@ def drive( env, tags, verb, known, *, root, out_root, report, pull = ( ) ) -> in
     runs = { **base, "known": { **base[ "known" ], **told, "from_plan": not single, "phase": "run",
                                 "transfers": where.transfers } }
     talk = _interactive()
+    from . import render as RD
+    RD.LOCAL_ROOT[ 0 ] = str( root )                  # where a case's folder is here ( its head says it ), from its start
+    try:                                              # its runs listed here ( ADR 0025 ), wherever they run
+        from ..agents import registry
+        registry.note_root( root )
+    except Exception:
+        pass
     if single:
         sessions = [ reach.start( runs, child, talk ) ]
     else:

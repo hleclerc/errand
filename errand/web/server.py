@@ -57,6 +57,13 @@ class Web:
         self._read    = { }                 # row key -> ( when, what `_read` said )
         self._files   = { }                 # ( machine, path, size ) -> bytes: files of other machines, kept
         self._caches  = ( set(), set(), 30.0, False )   # the caches tab as the page last asked it: folded, opened, days, all
+        # what the agents said, as notices for the pages' streams ( `/events`, ADR 0024 ): ( number, lists?, details )
+        self._heard   = threading.Condition()
+        self._said_n  = 0
+        self._notices = [ ]
+        self._told    = ( 0, "" )           # the last thing said to the pages ( a removal done ): ( notice number, text )
+        self._plans   = { }                 # removals waiting for their yes ( ADR 0023 ): id -> removal.Plan
+        self._machines_at = 0.0             # when a page last showed the machines tab: their resources asked till 30 s after
 
     # ── life ─────────────────────────────────────────────────────────────────
 
@@ -111,7 +118,47 @@ class Web:
             self.last = time.monotonic()
             if self._list is None:
                 self._list = ( self._of or _watched )()
+                from ..tui import machines as TM
+                if self._hear not in TM.LISTENERS:
+                    TM.LISTENERS.append( self._hear )
             return self._list
+
+    def _hear( self, m, e: dict ):
+        """An event of a machine's agent, as a notice for the pages: the lists changed ( what runs, the history, the
+        resources ), the detail of these rows did ( a run that wrote, a run put again )"""
+        lists = any( k in e for k in ( "table", "seen", "runs", "resources" ) )
+        details = set( )
+        procs = { p.get( "id" ): p for p in ( m.table or { } ).get( "procs", [ ] ) }
+        for pid in e.get( "output" ) or [ ]:
+            p = procs.get( pid )
+            if p:
+                details.add( json.dumps( [ "work", m.name, p.get( "leaf" ) or p.get( "ident" ) or p.get( "id" ) or p.get( "name" ) ] ) )
+        for r in ( e.get( "runs" ) or { } ).get( "put" ) or [ ]:
+            details.add( json.dumps( [ "work", m.name, r.get( "leaf" ) ] ) )
+        if "table" in e:
+            details.add( "*" )                       # a process started, ended, said a step: whatever is shown
+        if not lists and not details:
+            return
+        with self._heard:
+            self._said_n += 1
+            self._notices = ( self._notices + [ ( self._said_n, lists, details ) ] )[ -500 : ]
+            self._heard.notify_all()
+
+    def tell( self, said = "" ):
+        """a notice of our own: the lists changed ( runs greyed, removed ), and `said`, for the pages' feet"""
+        with self._heard:
+            self._said_n += 1
+            self._notices = ( self._notices + [ ( self._said_n, True, set() ) ] )[ -500 : ]
+            if said:
+                self._told = ( self._said_n, said )
+            self._heard.notify_all()
+
+    def notices( self, after: int, wait = 20.0 ) -> tuple:
+        """-> ( the last number, lists changed?, the detail keys changed ) since `after`, waiting at most `wait` s"""
+        with self._heard:
+            self._heard.wait_for( lambda: self._said_n > after, timeout = wait )
+            news = [ x for x in self._notices if x[ 0 ] > after ]
+            return self._said_n, any( x[ 1 ] for x in news ), set().union( *( x[ 2 ] for x in news ) ) if news else set()
 
     def machine( self, name: str ):
         m = next( ( m for m in self.machines() if m.name == name ), None )
@@ -138,6 +185,12 @@ class Web:
         from ..tui import rows as R
         ms = self.machines()
         tab = q.get( "tab" ) if q.get( "tab" ) in R.TABS else "runs"
+        if tab == "machines":
+            self._machines_at = time.monotonic()
+        for m in ms:                                  # their gauges: measured while the machines tab is shown ( ADR 0024 )
+            want = getattr( m, "want_resources", None )
+            if want is not None:
+                want( time.monotonic() - self._machines_at < 30 )
         folded = { ( "day", w[ 4 : ] ) if w.startswith( "day:" ) else ( "cache", w[ 6 : ] ) if w.startswith( "cache:" ) else w
                    for w in _set( q.get( "folded" ) ) }
         opened = _set( q.get( "opened" ) )
@@ -164,18 +217,92 @@ class Web:
                  "counts": { "running": running, "waiting": waiting, "machines": len( ms ),
                              "off": sum( 1 for m in ms if getattr( m, "dormant", False ) ) } }
 
+    def runs_rows( self, keys: list ) -> list:
+        """the rows of the runs tab these keys name ( everything unfolded ); LookupError when one is not there any more"""
+        from ..tui import rows as R
+        out = [ ]
+        for k in keys:
+            row = self._runs_row( k )
+            if row is None:
+                raise LookupError( "not there any more" )
+            out.append( row )
+        return out
+
+    def _runs_row( self, key: str ):
+        """the row of the runs tab `key` names: only what is above it opened ( the tree holds 70,000 runs )"""
+        from ..tui import rows as R
+        try:
+            reach = tuple( json.loads( key ) )
+        except ValueError:
+            return None
+        return next( ( r for r in R.build( self.machines(), tab = "runs", shown = 1 << 30, reach = reach ) if _key( r ) == key ), None )
+
     def find( self, key: str ):
         """The row `key` names, and its machine: rows rebuilt with everything shown."""
         from ..tui import rows as R
         ms = self.machines()
         folded, opened, days, all_ = self._caches
-        every = R.build( ms, tab = "machines", shown = 1 << 30 ) + R.build( ms, tab = "runs", shown = 1 << 30 ) \
-            + R.build( ms, tab = "caches", folded = folded, opened = opened, days = days, every = all_ )
-        row = next( ( r for r in every if _key( r ) == key ), None )
+        kind = ( json.loads( key ) or [ None ] )[ 0 ] if key.startswith( "[" ) else None
+        row = None
+        if kind in ( "work", "tnode", "tset", "thead", "day", "proc", "run" ):
+            row = self._runs_row( key )
+        if row is None and not str( kind ).startswith( "c" ):
+            row = next( ( r for r in R.build( ms, tab = "machines", shown = 1 << 30 ) if _key( r ) == key ), None )
+        if row is None:
+            row = next( ( r for r in R.build( ms, tab = "caches", folded = folded, opened = opened, days = days, every = all_ )
+                          if _key( r ) == key ), None )
         if row is None:
             raise LookupError( "not there any more" )
         machine = row.data[ 0 ] if isinstance( row.data, tuple ) else None
+        what = row.data[ 1 ] if isinstance( row.data, tuple ) else None
+        if row.kind == "run" and isinstance( what, dict ) and what.get( "rel" ) and not what.get( "there" ):
+            machine = next( ( m.name for m in ms if m.here ), machine )   # a run of the record: its directory is here ( ADR 0025 )
         return row, next( ( m for m in ms if m.name == machine ), None )
+
+    def _background( self, work ):
+        """`work()` from a thread; what it says goes to the pages' feet, their lists read again"""
+        def run():
+            try:
+                said = work()
+            except Exception as err:
+                said = _said( err )
+            self.tell( said or "" )
+        threading.Thread( target = run, daemon = True ).start()
+
+    def _remove_runs( self, op: str, body: dict ) -> dict:
+        """`runs_remove`: the plan of what goes ( quick, nobody asked ) kept under an id for the window; `runs_measure`:
+        the room it frees, asked of the machines; `runs_remove` `sure`: its runs greyed at once, removed from a thread,
+        the pages told when it is done"""
+        from ..tui import removal as RM
+        pid = str( body.get( "plan" ) or "" )
+        if op == "runs_measure":
+            p = self._plans.get( pid )
+            if p is None:
+                raise LookupError( "this window is closed" )
+            return { "lines": RM.measure( p ), "title": p.title }
+        p = self._plans.pop( pid, None ) if body.get( "sure" ) else None
+        if p is None:
+            keys = [ str( k ) for k in body.get( "keys" ) or [ ] ] or [ str( body.get( "key", "" ) ) ]
+            p = RM.plan( self.runs_rows( keys ), self.machines(), str( body.get( "how" ) ) )
+            if not body.get( "sure" ):
+                pid = secrets.token_hex( 6 )
+                self._plans[ pid ] = p
+                while len( self._plans ) > 20:
+                    self._plans.pop( next( iter( self._plans ) ) )
+                return { "confirm": { "title": p.title, "lines": p.lines, "verb": "remove for good", "danger": True,
+                                      "plan": pid, "measure": "runs_measure" } }
+        RM.mark( p )
+        self.tell()
+
+        def run():
+            try:
+                said = RM.send( p )
+            except Exception as err:
+                said = f"remove: {_said( err )}"
+            self.tell( said )
+        threading.Thread( target = run, daemon = True ).start()
+        n = p.count
+        return { "said": f"removing {n} run{'s' if n > 1 else ''}…" }
 
     def detail( self, key: str ) -> dict:
         """The detail of a row, as `errand tui` draws it ( `detail_rows` ), as rows of JSON."""
@@ -198,8 +325,8 @@ class Web:
                 d[ "k" ], d[ "v" ] = str( r.data[ 0 ] ), str( r.data[ 1 ] )
             elif r.kind == "output":
                 d[ "machine" ], d[ "path" ] = r.data[ : 2 ]
-                if len( r.data ) > 2:
-                    d[ "url" ] = r.data[ 2 ]                    # opened as it is ( `errand.Static`, `web.static` )
+                if len( r.data ) > 2 and isinstance( r.data[ 2 ], dict ):
+                    d.update( r.data[ 2 ] )                     # to be looked at: url, look, ready, t ( `screen.outputs` )
             elif r.kind == "cend":
                 d[ "status" ] = r.data
             out.append( d )
@@ -314,6 +441,21 @@ class Web:
                 m.wake.set()
             self._read.clear()
             return { "said": "asking again" }
+        if op in ( "runs_remove", "runs_measure" ):    # ADR 0023: d, D -- the window at once, its sizes after
+            return self._remove_runs( op, body )
+        if op == "runs_check":                         # ADR 0025: c -- the runs other machines hold that are not here
+            from ..tui import rows as R
+            self._background( lambda: R.check( self.machines() ) )
+            return { "said": "checking the other machines…" }
+        if op == "runs_fetch":                         # ADR 0025: b -- a run there only, brought here
+            from ..tui import rows as R
+            row, _ = self.find( str( body.get( "key", "" ) ) )
+            what = row.data[ 1 ] if isinstance( row.data, tuple ) else None
+            if row.kind != "run" or not isinstance( what, dict ) or not what.get( "there" ):
+                raise ValueError( "b: on a run the check found on another machine only" )
+            m = self.machine( row.data[ 0 ] )
+            self._background( lambda: R.bring_back( m, what ) )
+            return { "said": f"bringing {what.get( 'rel', '' ).rsplit( '/', 1 )[ -1 ]} back…" }
         row, m = self.find( str( body.get( "key", "" ) ) )
         if op == "cache_hold":                   # ADR 0022: h
             from ..tui import caches as K
@@ -428,6 +570,8 @@ def _can( row, m ) -> dict:
         can[ "kill" ] = True
     except ValueError:
         pass
+    if row.kind in ( "tnode", "tset", "thead" ) or ( row.kind == "run" and isinstance( row.data[ 1 ], dict ) ):
+        can[ "runs" ] = True                        # ADR 0023: d removes, D keeps the latest
     if row.kind in ( "cache", "cachefs" ):          # ADR 0022
         can[ "caches" ] = [ "dead", "unused" ]
         if row.kind == "cachefs" and not row.data[ 1 ].get( "guest" ):
@@ -491,11 +635,26 @@ def run_key( web, ident: str ) -> str | None:
     no machine says it yet ( it starts )."""
     from ..agents.seen import ident as ident_of
     from ..tui import rows as R
-    for r in R.build( web.machines(), tab = "runs", shown = 1 << 30 ):
+    ms = web.machines()
+    for r in R.build( ms, tab = "runs", shown = 1 << 30 ):                      # running, waiting: its leaf over there
         what = r.data[ 1 ] if isinstance( r.data, tuple ) and isinstance( r.data[ 1 ], dict ) else None
         if what and what.get( "leaf" ) and ident_of( what[ "leaf" ] ) == ident:
             return _key( r )
+    # done: its directory here ( ADR 0025 ), the same path under `runs/` as over there, which its machine's history says
+    rel = next( ( R.rel_of( h.get( "leaf" ) ) for m in ms for h in ( m.history or { } ).get( "runs", [ ] )
+                  if h.get( "leaf" ) and ident_of( h[ "leaf" ] ) == ident ), None )
+    for m, rec, _ in R.record_runs( ms ):
+        if ident_of( rec[ "leaf" ] ) == ident or ( rel and rec.get( "rel" ) == rel ):
+            return json.dumps( R.key( _Run( m, rec ) ) )
     return None
+
+
+class _Run:
+    """what `rows.key` reads of a run's row"""
+    kind = "run"
+
+    def __init__( self, m, rec ):
+        self.data = ( m.name, rec )
 
 
 WAITING = """<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="2">
@@ -523,10 +682,16 @@ def _row( r ) -> dict:
     machine, what = r.data if isinstance( r.data, tuple ) else ( None, None )
     fold = ( machine if r.kind in ( "machine", "broken" ) else f"day:{what}" if r.kind == "day" else
              machine if r.kind == "group" else f"cache:{what[ 'cache' ]}" if r.kind == "cache" else
-             f"entries:{what[ 'cache' ]}" if r.kind == "centries" else None ) if r.open is not None else None
-    return { "key": _key( r ), "label": r.label, "detail": r.detail, "kind": r.kind, "mark": r.mark or "",
-             "depth": r.depth, "open": r.open, "fold": fold, "machine": machine,
-             "meters": [ [ n, round( f, 3 ) ] for n, f in r.meters ], "hits": list( r.hits ) }
+             f"entries:{what[ 'cache' ]}" if r.kind == "centries" else
+             f"t:{what[ 'tree' ]}" if r.kind in ( "tnode", "tset" ) else None ) if r.open is not None else None
+    out = { "key": _key( r ), "label": r.label, "detail": r.detail, "kind": r.kind, "mark": r.mark or "",
+            "depth": r.depth, "open": r.open, "fold": fold, "machine": machine,
+            "meters": [ [ n, round( f, 3 ) ] for n, f in r.meters ], "hits": list( r.hits ) }
+    if r.tabled:                                        # a run that is a line of its table: no machine first
+        out[ "tabled" ] = True
+    if r.kind == "thead":                               # the header of a parameter table: its columns sort ( ADR 0023 )
+        out.update( tree = what[ "tree" ], cols = what[ "cols" ] )
+    return out
 
 
 def _said( err ) -> str:
@@ -593,6 +758,35 @@ class _Handler( BaseHTTPRequestHandler ):
     def _json( self, obj, code = 200 ):
         self._send( code, json.dumps( obj ).encode() )
 
+    def _events( self ):
+        """`/events`: Server-Sent Events, a notice when the agents said something -- `{"lists": bool, "details": [ keys ]}`
+        ( `*`: any ) --, a comment every 20 s otherwise. Open, it counts as a page that asks: the machines stay watched."""
+        self.send_response( 200 )
+        self.send_header( "Content-Type", "text/event-stream" )
+        self.send_header( "Cache-Control", "no-store" )
+        self.send_header( "X-Content-Type-Options", "nosniff" )
+        self.end_headers()
+        self.web.machines()
+        mine = self.web._said_n
+        try:
+            self.wfile.write( b": open\n\n" )
+            self.wfile.flush()
+            while True:
+                n, lists, details = self.web.notices( mine )
+                self.web.last = time.monotonic()
+                if n == mine:
+                    self.wfile.write( b": still here\n\n" )
+                else:
+                    told_n, told = self.web._told
+                    out = { "lists": lists, "details": sorted( details ) }
+                    if mine < told_n <= n:
+                        out[ "said" ] = told
+                    mine = n
+                    self.wfile.write( b"data: " + json.dumps( out ).encode() + b"\n\n" )
+                self.wfile.flush()
+        except OSError:
+            return                                    # the page went
+
     def _set_cookie( self ):
         """the cookie, for 30 days from now: set at login, set again by each page loaded"""
         return ( "Set-Cookie", f"{self.cookie}={self.web.token}; HttpOnly; SameSite=Strict; Path=/; "
@@ -639,6 +833,8 @@ class _Handler( BaseHTTPRequestHandler ):
                             [ ( "Content-Security-Policy", "default-src 'self'; script-src 'unsafe-inline'; "
                                 "style-src 'unsafe-inline'; img-src 'self' data:; frame-src 'self' " + _static_origin() + "; frame-ancestors 'none'" ),
                               self._set_cookie() ] )                     # ( 30 days again from each page loaded )
+            elif url.path == "/events":                     # what changes, pushed ( ADR 0024 )
+                self._events()
             elif url.path.startswith( "/r/" ):              # a run by its directory's name ( `run_link` ): its page
                 key = run_key( self.web, url.path[ 3 : ].strip( "/" ) )
                 if key is None:

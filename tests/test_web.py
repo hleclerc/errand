@@ -18,6 +18,9 @@ from pathlib import Path
 
 from errand import test
 
+from _record import from_histories
+from_histories()
+
 
 @contextlib.contextmanager
 def scratch( ):
@@ -147,7 +150,13 @@ if test( "the server: a code used once or the token typed, then a cookie; the ro
             assert whole[ "counts" ] == { "running": 1, "waiting": 1, "machines": 1, "off": 0 }, whole[ "counts" ]
             got = [ ( r[ "kind" ], r[ "mark" ] ) for r in rows ]
             assert got == [ ( "day", "" ), ( "proc", "run" ), ( "proc", "run" ), ( "day", "" ), ( "proc", "wait" ),
-                            ( "day", "" ), ( "run", "ok" ) ], [ r[ "label" ] for r in rows ]
+                            ( "tnode", "" ) ], [ r[ "label" ] for r in rows ]                  # ( the runs done: a tree, ADR 0023 )
+            node = rows[ 5 ]
+            assert node[ "open" ] is False and node[ "fold" ].startswith( "t:" ), node
+            got = st( "tab=runs&opened=" + node[ "fold" ] )[ "rows" ]
+            assert [ r[ "kind" ] for r in got ][ 5 : ] == [ "tnode", "tnode" ], got           # its file, its entry ( folded )
+            both = node[ "fold" ] + "," + got[ 6 ][ "fold" ]
+            assert [ r[ "kind" ] for r in st( "tab=runs&opened=" + both )[ "rows" ] ][ 5 : ] == [ "tnode", "tnode", "run" ]
             assert "waiting: slurm job 81234 pending" in rows[ 4 ][ "detail" ]
             found = st( "tab=runs&q=slurm" )[ "rows" ]
             assert [ r[ "kind" ] for r in found ] == [ "day", "proc" ] and "grid" in found[ 1 ][ "label" ], found
@@ -164,7 +173,7 @@ if test( "the server: a code used once or the token typed, then a cookie; the ro
             assert facts.get( "env" ) == "lin", facts
             outs = [ ( r[ "label" ], r.get( "path" ) ) for r in d[ "rows" ] if r[ "kind" ] == "output" ]
             names = [ n for n, _ in outs ]
-            assert names.index( "plot.png" ) < names.index( "console" ), outs      # ( what is made to be looked at first )
+            assert names[ 0 ] == "console" and "plot.png" in names, outs              # ( the console first, then what to look at )
             lines = [ r[ "label" ] for r in d[ "rows" ] if r[ "kind" ] == "out" ]
             assert lines[ -1 ].endswith( "step 99" ) and d[ "can" ].get( "kill" ) and d[ "console" ], d
             png = next( pth for n, pth in outs if n == "plot.png" )
@@ -281,9 +290,9 @@ if test( "e: an output of the row chosen opens in an editor of this machine, not
             src = Path( page.__file__ )
             text = src.read_text()
             try:
-                assert text.count( "const EVERY = 2000;" ) == 1
-                src.write_text( text.replace( "const EVERY = 2000;", "const EVERY = 2001;" ) )
-                assert b"const EVERY = 2001;" in get( w.port, "/", cookie )[ 2 ], "the page not read again"
+                assert text.count( "const EVERY = 30000;" ) == 1
+                src.write_text( text.replace( "const EVERY = 30000;", "const EVERY = 30001;" ) )
+                assert b"const EVERY = 30001;" in get( w.port, "/", cookie )[ 2 ], "the page not read again"
             finally:
                 src.write_text( text )
                 import importlib

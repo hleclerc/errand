@@ -115,6 +115,25 @@ class _Journal:
                 f.write( line )
         except OSError:
             pass                                        # a run must not fail over its steps
+        nudge()
+
+
+_rung = [ 0.0 ]
+NUDGE = 1.0                   # seconds between two rings of the agents' bell by a run, at most
+
+
+def nudge( ):
+    """The agents of this machine told something of a run changed ( a step, a view, the run noted: ADR 0024 ), at most
+    every `NUDGE` seconds: their watchers look now. A courtesy: never the run's failure."""
+    now = time.time()
+    if now - _rung[ 0 ] < NUDGE:
+        return
+    _rung[ 0 ] = now
+    try:
+        from .agents import look
+        look.ring()
+    except Exception:
+        pass
 
 
 _journal: _Journal | None = None

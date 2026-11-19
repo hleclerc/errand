@@ -98,6 +98,7 @@ class Agent:
                 writer.send( channel, F.REPLY, { "ok": True, "id": proc.id, "pid": proc.child.pid } )
                 proc.attach( writer, channel )
                 look.nudge()                         # its watchers see it now
+                look.ring()                          # and those of the host agents here ( ADR 0024 )
             elif op == "attach":
                 proc = self.procs.get( req[ "id" ] )
                 if proc is None or proc.code is not None:
@@ -136,7 +137,7 @@ class Agent:
                 syncop.serve( self, writer, channels, channel, req )      # its own REPLY, from its thread
             elif op == "watch":
                 # A watcher's subscription ( `errand tui` ): events as things change ( `look.Watch` ).
-                w = look.Watch( writer, channel, req )
+                w = look.Watch( writer, channel, req, root = self.root if self.root.name.startswith( "host-" ) else None )
                 channels[ channel ] = w
                 writer.send( channel, F.REPLY, { "ok": True } )
                 w.start()

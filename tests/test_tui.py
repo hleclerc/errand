@@ -15,6 +15,9 @@ from pathlib import Path
 
 from errand import test
 
+from _record import from_histories
+from_histories()
+
 from _tty import DOWN, plain, Term, tui_env
 import sys
 
@@ -58,16 +61,18 @@ def a_machine( name = "lmo", here = False ):
     return m
 
 
-if test( "the runs tab: what runs, what waits, what is done by day, of every machine; the machines tab: machines and vms" ):
+if test( "the runs tab: what runs, what waits, every run as a tree ( ADR 0023 ), of every machine; the machines tab: machines and vms" ):
     from errand.tui import rows as R
     got = [ ( r.kind, r.mark, r.label.split()[ 0 ] ) for r in R.build( [ a_machine() ] ) ]
     assert got == [ ( "day", None, "running" ), ( "proc", "run", "lmo" ), ( "proc", "run", "lmo" ),
-                    ( "day", None, "waiting" ), ( "proc", "wait", "lmo" ), ( "day", None, "done" ), ( "run", "FAIL", "lmo" ) ], got
+                    ( "day", None, "waiting" ), ( "proc", "wait", "lmo" ), ( "tnode", "", "a.py" ) ], got
     rows = R.build( [ a_machine() ] )
     assert rows[ 1 ].label.split()[ 1 ] == "run" and "test_x.py::solve" in rows[ 1 ].label, "the machine, then what"
     waits = rows[ 4 ].detail
     assert "waiting: slurm job 81234 pending, 2 min" in waits and re.search( r"\d\d:\d\d$", waits ), waits
-    assert re.fullmatch( r"\d\d:\d\d", rows[ 6 ].detail ), "a run done says when it started, nothing else"
+    assert rows[ 5 ].open is False and rows[ 5 ].detail.startswith( "1 run" ), "its file, folded: how many runs, when"
+    run = next( r for r in R.build( [ a_machine() ], unfold = True ) if r.kind == "run" )
+    assert run.mark == "FAIL" and re.match( r"\d\d:\d\d", run.label ), run.label
     got = [ ( r.depth, r.kind, r.label.split()[ 0 ] ) for r in R.build( [ a_machine() ], tab = "machines" ) ]
     assert got == [ ( 0, "machine", "lmo" ), ( 1, "vm", "windows" ), ( 2, "proc", "sdot-ffi" ) ], got
     head = R.build( [ a_machine() ], tab = "machines" )[ 0 ]
@@ -101,7 +106,7 @@ if test( "a step: the row says its text and bar, the detail its curves and views
         here.read_at = time.time()
         here.history = { "runs": [ { "leaf": str( leaf ), "project": "/x/p", "what": "a.py::b", "started": 1 } ] }
         screen = Screen( [ here ] )
-        run = next( r for r in R.build( [ here ] ) if r.kind == "run" )
+        run = next( r for r in R.build( [ here ], unfold = True ) if r.kind == "run" )
         screen.describe( run )
         deadline = time.monotonic() + 10
         while R.key( run ) not in screen.seen and time.monotonic() < deadline:
@@ -117,7 +122,7 @@ if test( "the list: the filter, the current project only, and the current projec
     from errand.tui import rows as R
     found = R.build( [ a_machine() ], query = "slurm" )
     assert [ r.kind for r in found ] == [ "day", "proc" ] and "grid" in found[ 1 ].label, [ r.label for r in found ]
-    mine = R.build( [ a_machine() ], only = { "sdot-ffi" }, mine = { "sdot-ffi" } )
+    mine = R.build( [ a_machine() ], only = { "sdot-ffi" }, mine = { "sdot-ffi" }, unfold = True )
     assert all( "sdot-ffi" in str( r.data[ 1 ].get( "project" ) ) for r in mine if r.kind in ( "proc", "run" ) ), [ r.label for r in mine ]
     assert any( r.kind == "proc" for r in mine ) and any( r.kind == "run" for r in mine ), [ r.label for r in mine ]
     broken = a_machine()
@@ -188,7 +193,7 @@ if test( "the screen: what runs, its output; a run done, as the console drew it;
     with scratch() as base:
         cache = base / "cache"
         os.environ[ "ERRAND_CACHE_DIR" ] = str( cache )
-        leaf = base / "proj" / "errand-outputs" / "runs" / "t" / "case" / "2026-11-15_x"
+        leaf = base / "proj" / "errand-outputs" / "runs" / "t" / "case" / "2026-11-15_10h00m00-plain"   # ( a run's stamp )
         leaf.mkdir( parents = True )
         ( leaf / "output.txt" ).write_text( "the run said this\n" )
         ( leaf / "result.yaml" ).write_text( "status: PASS\nduration_s: 2.0\n" )
@@ -202,12 +207,17 @@ if test( "the screen: what runs, its output; a run done, as the console drew it;
         term = Term( [ sys.executable, "-m", "errand", "tui" ], base, env = env )
         try:
             assert term.wait_for( "sh -c echo", 30 ), plain( term.buf )[ -2000 : ]
-            shown = term.text()
+            term.read( 1.5 )
+            shown = plain( term.buf )               # ( drawn when something happens: everything written so far )
             assert "1 runs" in shown and "running ( 1 )" in shown, shown         # the runs tab first
             term.send( DOWN )                      # under `running`, the process: its output, beside it
             assert term.wait_for( "hello-from-the-process", 30 ), plain( term.buf )[ -3000 : ]
 
-            term.send( DOWN )                      # `done today`
+            RIGHT = "\x1bOC"                       # ( → )
+            term.send( DOWN )                      # the run done is in the tree ( ADR 0023, 0025 ): its file, folded
+            term.send( RIGHT )                     # unfolded: its entry
+            term.send( DOWN )
+            term.send( RIGHT )                     # unfolded: its run
             term.send( DOWN )                      # the run done: its output, as the console drew it
             assert term.wait_for( "the run said this", 10 ), plain( term.buf )[ -3000 : ]
             assert term.wait_for( "╰ PASS", 10 ), plain( term.buf )[ -3000 : ]
@@ -411,7 +421,7 @@ if test( "a on a watched machine stops watching it, saved; agents kept warm are 
         shutil.rmtree( base, ignore_errors = True )
 
 
-if test( "r names this machine too; ← → fold a day, ← goes up to it; the cursor stays on a run as it ends and others arrive" ):
+if test( "r names this machine too; ← → fold a node of the runs' tree, ← goes up to it; the cursor stays on a run as it ends and others arrive" ):
     from errand.agents import ledger
     from errand.tui import rows as R
     from errand.tui.loop import handle
@@ -431,28 +441,37 @@ if test( "r names this machine too; ← → fold a day, ← goes up to it; the c
         screen = Screen( [ here ] )
         screen.list.box = screen.detail.box = ( 1, 0, 20, 80 )
         screen.build()
-        assert [ r.kind for r in screen.list.rows ] == [ "day", "run", "run", "run" ], [ r.kind for r in screen.list.rows ]
-        handle( screen, curses.KEY_DOWN )
-        handle( screen, curses.KEY_DOWN )                    # on c1
-        assert screen.list.current().data[ 1 ][ "what" ] == "a.py::c1"
+        assert [ r.kind for r in screen.list.rows ] == [ "tnode" ], [ r.label for r in screen.list.rows ]   # a.py, folded
+        handle( screen, curses.KEY_RIGHT )                    # → unfolds it: its entries, newest first
+        screen.build()
+        assert [ r.label for r in screen.list.rows ] == [ "a.py", "c0", "c1", "c2" ], [ r.label for r in screen.list.rows ]
+        for _ in range( 3 ):                                  # each entry unfolded: its run
+            handle( screen, curses.KEY_DOWN )
+            handle( screen, curses.KEY_RIGHT )
+            screen.build()
+            handle( screen, curses.KEY_DOWN )
+        assert [ r.kind for r in screen.list.rows ] == [ "tnode", "tnode", "run", "tnode", "run", "tnode", "run" ], \
+            [ r.label for r in screen.list.rows ]
+        while screen.list.current().data[ 1 ].get( "what" ) != "a.py::c1":
+            handle( screen, curses.KEY_UP )
         # a new run, running: rows come before -- the cursor stays on c1
         here.table = { "procs": [ { "state": "running", "what": "a.py::new", "project": "/x/p", "leaf": "/x/new", "id": "n",
                                     "started": now } ] }
         screen.build()
-        assert screen.list.current().data[ 1 ][ "what" ] == "a.py::c1", screen.list.current().label
+        assert screen.list.current().data[ 1 ].get( "what" ) == "a.py::c1", screen.list.current().label
         # c1's own: running, then done -- the same run, by its leaf
         here.table = { "procs": [ ] }
         screen.build()
-        assert screen.list.current().data[ 1 ][ "what" ] == "a.py::c1"
-        handle( screen, curses.KEY_LEFT )                     # ← on a run: up to its day
-        assert screen.list.current().kind == "day", screen.list.current().kind
-        handle( screen, curses.KEY_LEFT )                     # ← on the day: folded
+        assert screen.list.current().data[ 1 ].get( "what" ) == "a.py::c1"
+        handle( screen, curses.KEY_LEFT )                     # ← on a run: up to its entry
+        assert screen.list.current().kind == "tnode" and screen.list.current().label == "c1", screen.list.current().label
+        handle( screen, curses.KEY_LEFT )                     # ← on the entry: folded
         screen.build()
-        assert [ r.kind for r in screen.list.rows ] == [ "day" ] and "( 3 )" in screen.list.rows[ 0 ].label
+        assert [ r.kind for r in screen.list.rows ].count( "run" ) == 2, [ r.label for r in screen.list.rows ]
         handle( screen, curses.KEY_RIGHT )                    # → unfolds it
         screen.build()
-        assert len( screen.list.rows ) == 4
-        handle( screen, ord( "r" ) )                          # on a day: nothing to name, said in a window
+        assert [ r.kind for r in screen.list.rows ].count( "run" ) == 3
+        handle( screen, ord( "r" ) )                          # on an entry: nothing to name, said in a window
         assert screen.confirm and "nothing to name" in screen.confirm.title, screen.confirm
         handle( screen, 10 )
         handle( screen, curses.KEY_DOWN )
@@ -495,7 +514,11 @@ if test( "the detail: outputs to go through, the one under the cursor shown, ent
         opened, edited = [ ], [ ]
         screen.run_outside = lambda argv, cwd = None: edited.append( argv )
         screen.build()
-        handle( screen, curses.KEY_DOWN )                     # the run
+        for _ in range( 2 ):                                  # the run's tree unfolded ( ADR 0023 ): its file, its entry
+            handle( screen, curses.KEY_RIGHT )
+            screen.build()
+            handle( screen, curses.KEY_DOWN )
+        assert screen.list.current().kind == "run", [ r.label for r in screen.list.rows ]
 
         def settle( what ):
             deadline = time.monotonic() + 10
@@ -535,7 +558,7 @@ if test( "the detail: outputs to go through, the one under the cursor shown, ent
         shutil.rmtree( leaf, ignore_errors = True )
 
 
-if test( "a run that still runs is under running only, not done as well; ↓ goes past it" ):
+if test( "a run that still runs: under running, and at its place in the tree, marked and open; ↓ goes past it" ):
     from errand.tui import rows as R
     from errand.tui.loop import handle
     from errand.tui.machines import Machine
@@ -552,8 +575,9 @@ if test( "a run that still runs is under running only, not done as well; ↓ goe
     screen.build()
     shown = [ ( r.kind, r.mark, r.label.split()[ -1 ] if r.label else "" ) for r in screen.list.rows ]
     assert [ k for k in shown if k[ 2 ] == "a.py::live" ] == [ ( "proc", "run", "a.py::live" ) ], shown
-    assert ( "run", "lost", "a.py::gone" ) in shown, shown
-    for _ in range( 4 ):
+    assert shown[ 2 : 5 ] == [ ( "tnode", "run", "a.py" ), ( "tnode", "run", "live" ), ( "run", "run", "running" ) ], shown
+    assert ( "tnode", "", "gone" ) in shown and screen.list.rows[ -1 ].open is False, "a run that ended unsaid: folded"
+    for _ in range( 6 ):
         handle( screen, curses.KEY_DOWN )
         screen.build()
-    assert screen.list.current().label.endswith( "a.py::gone" ), [ r.label for r in screen.list.rows ]
+    assert screen.list.current().label == "gone", [ r.label for r in screen.list.rows ]

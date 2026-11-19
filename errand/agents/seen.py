@@ -45,30 +45,90 @@ def note( leaf: Path, project: Path, what: str, env: str | None ):
         tmp.write_text( json.dumps( { "leaf": str( leaf ), "project": str( project ), "what": what,
                                       "env": env, "started": time.time() } ) )
         tmp.replace( path )
+        from . import look
+        look.ring()                                  # its agents' watchers see it now ( ADR 0024 )
     except OSError:
         pass
 
 
+# What this process read already ( an agent asks every few seconds, `look.Watch` ): a link by its name and date, a
+# `result.yaml` by its leaf and date, the listing by the directory's date. A machine keeps tens of thousands of links
+# ( a test suite run often ): read again, they cost a second each time; remembered, a few `stat`.
+_links: dict = { }                 # path -> ( mtime_ns, record )
+_results: dict = { }               # leaf -> ( mtime_ns, result )
+_listing = [ None, [ ] ]           # [ ( the directory, its mtime_ns ), the names ]
+_swept = [ 0.0 ]                   # when every leaf was last checked ( `SWEEP` )
+SWEEP = 600.0
+
+
+def _records( d: Path ) -> list:
+    try:
+        mtime = d.stat().st_mtime_ns
+    except OSError:
+        return [ ]
+    if ( str( d ), mtime ) != _listing[ 0 ]:
+        _listing[ 0 ], _listing[ 1 ] = ( str( d ), mtime ), [ str( d / n ) for n in os.listdir( d ) if n.endswith( ".json" ) ]
+    names = set( _listing[ 1 ] )
+    for gone in [ n for n in _links if n not in names ]:
+        del _links[ gone ]
+    out = [ ]
+    for n in _listing[ 1 ]:
+        p = Path( n )
+        got = _links.get( n )
+        if got is None:                                    # a link is written once ( `note` ): read once
+            try:
+                got = _links[ n ] = ( 0, json.loads( p.read_text() ) )
+            except ( OSError, ValueError ):
+                continue
+        out.append( ( p, got[ 1 ] ) )
+    return out
+
+
+def _result( leaf: str ) -> dict:
+    from .. import yamlish
+    path = Path( leaf ) / "result.yaml"
+    try:
+        mtime = path.stat().st_mtime_ns
+    except OSError:
+        _results.pop( leaf, None )
+        return { }
+    got = _results.get( leaf )
+    if got is None or got[ 0 ] != mtime:
+        try:
+            got = _results[ leaf ] = ( mtime, yamlish.read( path ) or { } )
+        except Exception:
+            return { }
+    return got[ 1 ]
+
+
 def runs( limit = 50 ) -> dict:
     """The runs whose leaf is still there, newest first: { "runs": [ … ], "more": how many left out }.
-    Each with what its `result.yaml` says, once there is one."""
-    from .. import yamlish
-    found = [ ]
-    for p in _dir().glob( "*.json" ) if _dir().is_dir() else [ ]:
-        try:
-            rec = json.loads( p.read_text() )
-        except ( OSError, ValueError ):
-            continue
+    Each with what its `result.yaml` says, once there is one. The leaves of the runs said are checked each time; all
+    of them every `SWEEP` seconds ( a link whose leaf is gone goes )."""
+    d = _dir()
+    if not d.is_dir():
+        return { "runs": [ ], "more": 0 }
+    records = _records( d )
+    if time.time() - _swept[ 0 ] >= SWEEP:
+        _swept[ 0 ] = time.time()
+        kept = [ ]
+        for p, rec in records:
+            if Path( rec.get( "leaf", "" ) ).is_dir():
+                kept.append( ( p, rec ) )
+            else:
+                p.unlink( missing_ok = True )
+        records = kept
+    records.sort( key = lambda pr: -pr[ 1 ].get( "started", 0 ) )
+    found, at = [ ], 0
+    while len( found ) < limit and at < len( records ):
+        p, rec = records[ at ]
+        at += 1
         if not Path( rec.get( "leaf", "" ) ).is_dir():
             p.unlink( missing_ok = True )
             continue
-        found.append( rec )
-    found.sort( key = lambda r: -r.get( "started", 0 ) )
-    for rec in found[ : limit ]:
-        try:
-            result = yamlish.read( Path( rec[ "leaf" ] ) / "result.yaml" ) or { }
-        except Exception:
-            result = { }
-        rec.update( status = result.get( "status" ), duration = result.get( "duration_s" ),
-                    **( { "file": result[ "file" ] } if result.get( "file" ) else { } ) )
-    return { "runs": found[ : limit ], "more": max( 0, len( found ) - limit ) }
+        result = _result( rec[ "leaf" ] )
+        found.append( { **rec, "status": result.get( "status" ), "duration": result.get( "duration_s" ),
+                        **( { "file": result[ "file" ] } if result.get( "file" ) else { } ),
+                        # what the runs tab puts in a table ( ADR 0023 ): the entry's name, its parameters, its results
+                        **{ k: result[ k ] for k in ( "name", "params", "results" ) if isinstance( result.get( k ), ( str, dict ) ) } } )
+    return { "runs": found, "more": max( 0, len( records ) - at ) }

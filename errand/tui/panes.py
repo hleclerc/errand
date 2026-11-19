@@ -8,12 +8,13 @@ from __future__ import annotations
 
 class Row:
     __slots__ = ( "label", "detail", "kind", "data", "depth", "checked", "mark", "open",
-                  "hits", "meters", "ident" )
+                  "hits", "meters", "ident", "tabled" )
 
     def __init__( self, label, detail = "", *, kind = "plain", data = None, depth = 0,
                   checked = None, mark = None, open = None, hits = ( ), meters = ( ) ):
         self.label, self.detail, self.kind, self.data = label, detail, kind, data
         self.ident   = None         # what it stands for, when the pane's own key needs it ( the detail )
+        self.tabled  = False        # a run that is a line of a parameter table ( its set's only run, ADR 0023 )
         self.meters  = tuple( meters )   # ( name, fraction ): gauges after the label ( a machine's resources )
         self.depth   = depth
         self.checked = checked      # None: not something that can be ticked
@@ -34,6 +35,7 @@ class Pane:
         self.top    = 0
         self.box    = ( 0, 0, 0, 0 )      # y, x, height, width
         self.plain  = False               # text, rather than a list of choices
+        self.marked : set = set()         # the rows chosen together ( ⇧↑ ⇧↓ ), by their index
 
     @property
     def inner( self ):

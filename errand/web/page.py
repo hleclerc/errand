@@ -65,7 +65,7 @@ button kbd { color: var(--dim); font: inherit; margin-left: 6px; }
 button.primary kbd { color: inherit; opacity: .7; }
 
 header { display: flex; gap: 10px; align-items: center; padding: 6px 14px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
-header .name { color: var(--acc); font-weight: 700; font-size: 14px; margin-right: 6px; }
+header .name { color: var(--acc); font-weight: 700; font-size: 14px; margin-right: 6px; text-decoration: none; }
 .tab { border: 0; border-radius: 5px; padding: 2px 10px; color: var(--dim); }
 .tab.on { background: var(--acc); color: var(--bg); font-weight: 600; }
 .tab kbd { font: inherit; opacity: .6; margin-right: 6px; }
@@ -92,10 +92,15 @@ body.dragging { user-select: none; }
 .row:hover { background: var(--hover); }
 .row.sel { background: var(--sel); }
 .pane:not(.focus) .row.sel { background: color-mix(in srgb, var(--sel) 55%, transparent); }
+.row.marked { background: color-mix(in srgb, var(--sel) 70%, transparent); box-shadow: inset 2px 0 0 var(--acc); }
+.row.going { opacity: .38; }                            /* being removed: greyed until it is gone */
+.row.going .label { text-decoration: line-through; text-decoration-color: var(--faint); }
 .row .fold { width: 1.2ch; color: var(--dim); flex: none; }
 .row .sign { width: 1.4ch; text-align: center; flex: none; }
 .row .label { overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
 .row .label .where { color: var(--dim); }
+.row.thead { color: var(--dim); cursor: default; } .row.thead .th { cursor: pointer; } .row.thead .th:hover { color: var(--acc); }
+.row.tnode .label { color: var(--fg); }
 .row .right { margin-left: auto; color: var(--dim); overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto;
               max-width: 55%; padding-left: 12px; }
 .row.proc .right, .row.run .right { flex: none; }        /* the time, the step: kept, the name gives way */
@@ -106,7 +111,7 @@ body.dragging { user-select: none; }
 .row.note .label, .row.more .label { color: var(--dim); }
 .row.broken .right { color: var(--bad); }
 .hit { color: var(--acc); font-weight: 700; }
-.m-run, .m-ok { color: var(--ok); } .m-wait { color: var(--wait); } .m-FAIL, .m-orph, .m-lost { color: var(--bad); } .m-dead { color: var(--wait); } .m-skip { color: var(--dim); }
+.m-run, .m-ok { color: var(--ok); } .m-wait { color: var(--wait); } .m-FAIL, .m-orph, .m-lost { color: var(--bad); } .m-dead { color: var(--wait); } .m-skip { color: var(--dim); } .m-there { color: var(--wait); }
 .row.machine .label, .row.broken .label, .row.dormant .label { flex: none; width: 24ch; }   /* the gauges in one column */
 .meters { display: flex; gap: 14px; color: var(--dim); flex: none; }
 .meter { display: flex; align-items: center; gap: 5px; width: 15ch; }
@@ -160,6 +165,20 @@ a.btn:hover { border-color: var(--dim); }
         background: var(--pre); border-radius: 0 5px 5px 0; }
 body.job #list, body.job .tab, body.job #q, body.job #hsplit { display: none !important; }
 body.job #view { height: 100% !important; }
+/* the run's dashboard ( grill/dashboard ): what to look at in big, the console in a strip below */
+.dash { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+#dtop { flex: 0 0 var(--dtop, 70%); min-height: 0; display: flex; flex-direction: column; }
+.dash:has(#dcons.folded) #dtop { flex: 1 1 auto; }
+#dbody { flex: 1 1 auto; min-height: 0; overflow: auto; }
+#dbody .peek, #dbody .peek iframe { height: 100%; }
+#dsplit { display: block; margin: 3px 0; }
+#dcons { flex: 1 1 auto; min-height: 0; overflow: auto; }
+#dcons.folded { flex: 0 0 auto; overflow: hidden; }
+.dchead { position: sticky; top: 0; z-index: 1; background: var(--bg); color: var(--dim); font-size: 12px; }
+.dchead button { border: none; background: none; color: inherit; cursor: pointer; padding: 0 4px; font: inherit; }
+#dtabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 4px; } #dtabs:empty { display: none; }
+.dtab { cursor: pointer; padding: 1px 8px; border: 1px solid var(--line); border-radius: 5px; color: var(--dim); }
+.dtab:hover { border-color: var(--dim); } .dtab.on { color: var(--fg); border-color: var(--acc); }
 body.only header, body.only footer, body.only #detail, body.only .split { display: none !important; }
 body.only main { grid-template-columns: 1fr; }
 body.only #view { padding: 4px 16px 16px; }
@@ -212,6 +231,8 @@ footer kbd { font: inherit; color: var(--fg); }
 .box input { width: 100%; font: inherit; padding: 6px 8px; margin: 0 0 14px; background: transparent; color: var(--fg);
              border: 1px solid var(--acc); border-radius: 5px; }
 .box .keys { display: flex; gap: 8px; justify-content: flex-end; }
+.box button:disabled { opacity: .45; cursor: default; }
+.box li.wait { color: var(--dim); }
 .help { display: grid; grid-template-columns: max-content 1fr; gap: 2px 16px; margin-bottom: 12px; }
 .help kbd { font: inherit; color: var(--acc); }
 @media (max-width: 800px) { main { grid-template-columns: 1fr; } .split.v { display: none; } #list { border-bottom: 1px solid var(--line); max-height: 45vh; } #counts { margin-left: 0; } }
@@ -219,11 +240,12 @@ footer kbd { font: inherit; color: var(--fg); }
 </head>
 <body>
 <header>
-  <span class="name">errand</span>
+  <a class="name" href="/" title="all the runs and machines">errand</a>
   <button class="tab" data-tab="runs"><kbd>1</kbd>runs</button>
   <button class="tab" data-tab="machines"><kbd>2</kbd>machines</button>
   <button class="tab" data-tab="caches"><kbd>3</kbd>caches</button>
   <input id="q" placeholder="/ filter: machine, project, what, env, state" autocomplete="off" spellcheck="false">
+  <button id="check" title="the runs other machines hold that are not here: listed, marked ◇, to bring back or remove">check<kbd>c</kbd></button>
   <button id="refresh" title="ask every machine again now">↻<kbd>R</kbd></button>
   <button id="helpb" title="keys">?</button>
   <span id="counts"></span>
@@ -242,8 +264,8 @@ footer kbd { font: inherit; color: var(--fg); }
 <div class="veil" id="veil"><div class="box" id="box"></div></div>
 <script>
 "use strict";
-const EVERY = 2000;
-const SIGNS = {run: "●", wait: "◌", ok: "✓", FAIL: "✗", skip: "–", lost: "?", orph: "?", dead: "✗"};
+const EVERY = 30000;                                    // a slow look: what changes comes through `/events`
+const SIGNS = {run: "●", wait: "◌", ok: "✓", FAIL: "✗", skip: "–", lost: "?", orph: "?", dead: "✗", going: "·", there: "◇"};
 // what the detail says always; the rest is folded ( `more` )
 const RARE = new Set(["pid", "agent", "id", "outputs", "reached", "host", "keeper", "qemu", "port", "image", "warm", "agents", "said"]);
 const OPENED_IN_A_TAB = /\.(html?|svg|pdf|png|jpe?g|gif|webp|bmp)$/i;
@@ -257,7 +279,11 @@ const KEYS = [
   ["double-click, ⌘-click", "open it: a page or an image in a tab, a text in an editor, a folder in the Finder"],
   ["right-click", "everything that can be done with it"],
   ["enter  o", "open the output chosen ( as a double-click )"], ["e", "the output chosen in an editor of this machine"],
-  ["d", "the output chosen, downloaded"], ["esc", "back to the console · clear the filter"],
+  ["d", "the output chosen, downloaded · in the runs' list: remove the runs under the row ( for good, once confirmed )"],
+  ["D", "runs: keep only the latest of each parameter set and env ( and its last PASS ), the rest removed"],
+  ["c  b", "runs: check the other machines for runs not here ( ◇ ) · bring one back"],
+  ["⇧↑  ⇧↓  ⇧-click", "runs: several rows chosen together, for d and D · ⌘-click: one more, or one less · esc: one again"],
+  ["s / click a column", "runs: a parameter table sorted by that column ( again: the other way )"], ["esc", "back to the console · clear the filter"],
   ["k", "kill what is chosen, once confirmed: a process, a vm, or all errand runs on a machine"],
   ["f  a  r", "forget, watch or not, name the machine"], ["/", "filter: machine, project, command, state"], ["R", "ask every machine again now"],
   ["i  u", "caches: remove the dead entries, those unused for n days -- of a place, or of every place on a cache's row"],
@@ -285,6 +311,7 @@ let cacheDays = load("cacheDays", 30), cacheAll = load("cacheAll", false);
 let tab = load("tab", "runs"), folded = new Set(load("folded", [])), opened = new Set(load("opened", [])), shown = 50, query = "";
 let rows = [], sel = decodeURIComponent(location.hash.slice(1)) || null, focus = "list", showMore = load("more", false);
 let det = null, dsel = -1, said = "", saidAt = 0, modal = null, view = null;   // view: { key, path, dir, got }
+let marked = new Set(), anchor = null, greyed = new Set();   // rows chosen together ( ⇧ ), rows greyed before the page knows
 
 async function ask(path, opts) {
   const r = await fetch(path, opts);
@@ -333,7 +360,11 @@ sizes();
 // ── the list ───────────────────────────────────────────────────────────────
 function level(f) { return f >= .85 ? "l3" : f >= .6 ? "l2" : ""; }
 function label(r) {
-  if ((r.kind == "proc" || r.kind == "run") && tab == "runs") {          // its machine first, in grey
+  if (r.kind == "thead")                                 // a parameter table's header: a click on a column sorts by it
+    return r.cols.map(([n, a, b], i) => (i ? esc(r.label.slice(r.cols[i - 1][2], a)) : "") +
+      `<span class="th" data-sort="${esc(n)}" data-tree="${esc(r.tree)}" title="sort by ${esc(n)}">${esc(r.label.slice(a, b))}</span>`).join("");
+  if (r.kind == "tset") return esc(r.label);
+  if ((r.kind == "proc" || r.kind == "run") && tab == "runs" && !r.tabled) {          // its machine first, in grey
     const m = r.label.match(/^(\S+\s+)(.*)$/);
     if (m) return `<span class="where">${esc(m[1])}</span>${esc(m[2])}`;
   }
@@ -345,10 +376,12 @@ function label(r) {
 }
 function rowHtml(r) {
   const fold = r.open === null ? "" : r.open ? "▾" : "▸";
-  const sign = SIGNS[r.mark] ? `<span class="sign m-${esc(r.mark)}">${SIGNS[r.mark]}</span>` : "";
+  const sign = SIGNS[r.mark] ? `<span class="sign m-${esc(r.mark)}">${SIGNS[r.mark]}</span>` :
+               r.kind == "thead" || r.kind == "tset" ? `<span class="sign"></span>` : "";   // ( a table's lines start alike )
   const meters = r.meters.length ? `<span class="meters">${r.meters.map(([n, f]) =>
       `<span class="meter"><span>${esc(n)}</span><span class="bar"><i class="${level(f)}" style="width:${Math.round(100 * f)}%"></i></span><b>${Math.round(100 * f)}%</b></span>`).join("")}</span>` : "";
-  return `<div class="row ${esc(r.kind)}${r.key == sel ? " sel" : ""}" data-key="${esc(r.key)}" style="padding-left:${14 + 18 * r.depth}px">` +
+  const going = r.mark == "going" || greyed.has(r.key) ? " going" : "", many = marked.size > 1 && marked.has(r.key) ? " marked" : "";
+  return `<div class="row ${esc(r.kind)}${r.key == sel ? " sel" : ""}${many}${going}" data-key="${esc(r.key)}" style="padding-left:${14 + 18 * r.depth}px">` +
          `<span class="fold">${fold}</span>${sign}<span class="label">${label(r)}</span>${meters}<span class="right">${esc(r.detail)}</span></div>`;
 }
 function drawList() {
@@ -370,10 +403,12 @@ async function state() {
     const got = await ask("/state?" + p);
     rows = got.rows; drawCounts(got.counts);
     if (!rows.some(r => r.key == sel)) sel = (rows.find(r => r.kind == "proc" || r.kind == "run" || r.kind == "machine") || rows[0] || {}).key || null;
+    if (marked.size) { const here = new Set(rows.map(r => r.key)); for (const k of [...marked]) if (!here.has(k)) marked.delete(k); }
     drawList(); detail();
   } catch (e) { say(e.message); } finally { stating = false; }
 }
-function choose(key, reveal = true) {
+function choose(key, reveal = true, many = false) {
+  if (!many && marked.size) { marked.clear(); if (key == sel) drawList(); }
   if (key == sel) return;
   sel = key; history.replaceState(null, "", "#" + encodeURIComponent(key || "")); det = null; dsel = -1;
   closeView(); drawList(); detail(true);
@@ -383,9 +418,31 @@ function move(d) {
   if (!rows.length) return;
   choose(rows[Math.max(0, Math.min(rows.length - 1, rows.findIndex(r => r.key == sel) + d))].key);
 }
+// Several rows chosen together ( ⇧↑ ⇧↓, ⇧-click: from the first one chosen; ⌘-click: one more or one less ), for d, D
+function markTo(key) {
+  if (!marked.size || anchor === null || !rows.some(r => r.key == anchor)) anchor = sel;
+  const i = rows.findIndex(r => r.key == anchor), j = rows.findIndex(r => r.key == key);
+  if (i < 0 || j < 0) return;
+  marked = new Set(rows.slice(Math.min(i, j), Math.max(i, j) + 1).map(r => r.key));
+  choose(key, true, true); drawList();
+}
+function extend(d) {
+  if (!rows.length) return;
+  markTo(rows[Math.max(0, Math.min(rows.length - 1, rows.findIndex(r => r.key == sel) + d))].key);
+}
+function markOne(key) {
+  if (!marked.size) { marked.add(sel); anchor = sel; }
+  marked.has(key) && marked.size > 1 ? marked.delete(key) : marked.add(key);
+  choose(key, false, true); drawList();
+}
 function toggle(r) {
   if (r.kind == "more") { shown += 50; return refresh(); }
   if (!r.fold) return;
+  if (r.fold.startsWith("t:")) {                          // a node of the runs' tree ( ADR 0023 ): folded until opened,
+    if (r.open) { opened.delete(r.fold); folded.add(r.fold); }     // one that holds a run running open until folded
+    else { folded.delete(r.fold); opened.add(r.fold); }
+    keep("opened", [...opened]); keep("folded", [...folded]); return refresh();
+  }
   const inOpened = r.kind == "group" || r.kind == "centries", set = inOpened ? opened : folded;
   set.has(r.fold) ? set.delete(r.fold) : set.add(r.fold); keep(inOpened ? "opened" : "folded", [...set]); refresh();
 }
@@ -481,7 +538,8 @@ function runHead(f) {
   const machine = det.machine || (f.machine || "").split(" ")[0];
   if (machine) h += chip("machine", f.machine || machine, {machine}, "the machine: its row, in the machines tab");
   if (f.env) h += chip("env", f.env, {env: f.env}, "its environment: every run in it ( the filter )");
-  const took = f.took || (det.started && /^(running|waiting)/.test(f.state || "") ? ago(det.now - det.started) + " so far" : "");
+  const nowThere = det.now + (Date.now() / 1000 - (det.at || Date.now() / 1000));      // ( its clock, ticking here )
+  const took = f.took || (det.started && /^(running|waiting)/.test(f.state || "") ? ago(nowThere - det.started) + " so far" : "");
   if (took) h += chip("took", took, null, (f.took ? "how long it took" : "how long it runs") +
                      (det.started ? ` · started ${hhmm(det.started, det.now)}, ${f.started || ""}` : ""));
   h += `<span class="br"></span>`;                       // where it is, on a line of its own
@@ -522,6 +580,9 @@ function drawDetail() {
   if (can.watch) tools += `<button data-act="watch">${can.watch}<kbd>a</kbd></button>`;
   for (const how of can.caches || []) tools += `<button class="danger" data-act="cache_remove" data-how="${how}">${CACHE_ACTS[how][0]}<kbd>${CACHE_ACTS[how][1]}</kbd></button>`;
   if (can.hold) tools += `<button data-act="cache_hold">this machine holds it<kbd>h</kbd></button>`;
+  if (can.runs && row && row.mark == "there") tools += `<button data-act="runs_fetch">bring back<kbd>b</kbd></button>`;
+  if (can.runs) tools += `<button class="danger" data-act="runs_remove" data-how="latest">keep only the latest<kbd>D</kbd></button>` +
+                         `<button class="danger" data-act="runs_remove" data-how="all">remove<kbd>d</kbd></button>`;
   if (can.caches) tools += `<button data-days="1">unused after ${cacheDays} d<kbd>n</kbd></button><button data-all="1">${cacheAll ? "dead and unused only" : "every entry"}<kbd>v</kbd></button>`;
   if (can.rename) tools += `<button data-act="rename">rename machine<kbd>r</kbd></button>`;
   if (can.forget) tools += `<button data-act="forget">forget<kbd>f</kbd></button>`;
@@ -552,11 +613,15 @@ async function detail(now) {
   try {
     const got = await ask("/detail?" + new URLSearchParams({key}));
     if (key != sel) return;
-    det = got; drawDetail();
+    det = got; det.at = Date.now() / 1000; drawDetail();
     if (JOB) document.title = (ONLY && JOBQ.get("path") ? JOBQ.get("path").split("/").pop() + " · " : "") + det.title + " · errand";
     if (jobPath && jobPath == det.console) { showConsole(); jobPath = null; }     // the console, as the page draws it
     else if (jobPath) { show(jobPath, false); jobPath = null; }
-    else if (!view || view.key != sel || view.console) showConsole(); else show(view.path, view.dir, true);
+    else if (!view || view.key != sel) autoView();
+    else if (view.console) { if (!consoleBig[sel] && looks().length) autoView(); else showConsole(); }
+    else if (view.auto && looks().length && looks()[0].path != view.path) autoView();
+    else show(view.path, view.dir, true);
+    drawStrip();
   } catch (e) { if (key == sel) { det = {title: e.message, rows: [], can: {}}; drawDetail(); } } finally { detailing = false; }
 }
 
@@ -575,9 +640,51 @@ function consoleRows() {                                // what the detail rows 
   return rest;
 }
 function showConsole() { view = {key: sel, console: true}; drawView(); drawDetail(); }
+// ── the run's dashboard ( grill/dashboard ): what the run declared to look at, in big, the console in a strip below ──
+const consoleBig = {};                                  // run key -> the console asked in big ( a click on it )
+function askConsole() { consoleBig[sel] = true; showConsole(); }
+function looks() {                                      // ready, in the order: a page served as it is first, then the latest
+  if (!det) return [];
+  return det.rows.filter(r => r.kind == "output" && r.look && r.ready && r.path)
+    .sort((a, b) => (b.look == "static") - (a.look == "static") || (b.t || 0) - (a.t || 0));
+}
+function autoView() {
+  const L = looks();
+  if (L.length && !consoleBig[sel]) { show(L[0].path, false); if (view) view.auto = true; }
+  else showConsole();
+}
+const isRun = () => !!det && (det.kind == "proc" || det.kind == "run");
+function dashSizes() { document.documentElement.style.setProperty("--dtop", load("dashTop", 70) + "%"); }
+function dashBody() {                                   // where the big part goes: the dashboard's top while a run shows
+  const vb = $("vb");                                   // something else than its console, the whole pane otherwise
+  if (isRun() && view && !view.console) {
+    if (!$("dtop")) {                                   // made once: what changes is put in its parts ( a frame never reloads )
+      vb.innerHTML = `<div class="dash"><div id="dtop"><div id="dtabs"></div><div id="dbody"></div></div>` +
+        `<div class="split h" id="dsplit" title="drag"></div><div id="dcons"></div></div>`; vb._html = null;
+      drag($("dsplit"), e => { const r = vb.getBoundingClientRect();
+        keep("dashTop", Math.max(15, Math.min(92, 100 * (e.clientY - r.top) / r.height))); dashSizes(); });
+      $("dcons").addEventListener("click", e => { if (e.target.closest("[data-fold]")) { keep("consFold", !load("consFold", false)); drawStrip(); } });
+      $("dtabs").addEventListener("click", e => { const t = e.target.closest("[data-look]"); if (t) show(t.dataset.look, false); });
+      dashSizes();
+    }
+    return $("dbody");
+  }
+  if ($("dtop")) { vb.innerHTML = ""; vb._html = null; }
+  return vb;
+}
+function drawStrip() {                                  // the tabs and the console strip, while the dashboard is there
+  const c = $("dcons"); if (!c) return;
+  const L = looks(), folded = load("consFold", false), rs = consoleRows();
+  put($("dtabs"), L.length > 1 ? L.map(r => `<span class="dtab${view && view.path == r.path ? " on" : ""}" data-look="${esc(r.path)}" title="${esc(r.path)}">${esc(r.label)}</span>`).join("") : "");
+  c.classList.toggle("folded", folded);
+  const stick = c.scrollTop + c.clientHeight >= c.scrollHeight - 4;
+  const head = `<div class="dchead"><button data-fold="1" title="fold / unfold the console">${folded ? "▸" : "▾"}</button>console</div>`;
+  if (put(c, head + consoleHtml(folded ? rs.filter(r => r.kind == "out").slice(-1) : rs)) && (stick || folded)) c.scrollTop = c.scrollHeight;
+}
 async function show(path, dir, again) {
   if (!path || !sel) return;
   const key = sel;
+  if (!again) consoleBig[key] = false;
   if (viewUrl(path)) {                                    // its own page, in a frame: it reads what is beside it there
     if (!view || view.path != path || view.url != viewUrl(path)) { view = {key, path, url: viewUrl(path)}; $("right").classList.add("viewing"); drawView(); drawDetail(); }
     return;
@@ -604,7 +711,7 @@ function vbuttons(path, dir) {
 }
 function drawView() {
   if (!view) return;
-  const v = $("view");
+  const v = $("view"), body = dashBody();
   if (view.console) {                                     // the console: what is shown when nothing else is
     const isWork = det && (det.kind == "proc" || det.kind == "run"), path = det && det.console;
     const stick = v.scrollTop + v.clientHeight >= v.scrollHeight - 4;
@@ -620,7 +727,8 @@ function drawView() {
     put($("vh"), `<div class="vhead"><span class="where" title="${esc(path)}">&lrm;${esc(parent)}/<b>${esc(name)}</b></span>` +
       `<a class="btn" href="${esc(view.url)}" target="_blank" rel="noopener" title="open in a tab">↗</a>` +
       `<button data-v="copy" title="copy the path">copy path</button><button data-v="close" title="back to the console ( esc )">×</button></div>`);
-    put($("vb"), `<div class="peek" style="height:100%"><iframe src="${esc(view.url)}"></iframe></div>`);
+    put(body, `<div class="peek" style="height:100%"><iframe src="${esc(view.url)}"></iframe></div>`);
+    drawStrip();
     return;
   }
   put($("vh"), `<div class="vhead"><span class="where" title="${esc(path)}">&lrm;${esc(parent)}/<b>${esc(name)}</b>${dir ? "/" : ""}</span>${vbuttons(path, dir)}</div>`);
@@ -641,7 +749,8 @@ function drawView() {
                                                                     : `<div class="lines">${ansi(f.text) || "( empty )"}</div>`) + (f.more ? `<div class="note">┆ … ${size(f.more)} more ( double-click: all of it )</div>` : "");
   }
   const stick = v.scrollTop > 0 && v.scrollTop + v.clientHeight >= v.scrollHeight - 4;
-  if (put($("vb"), h) && stick) v.scrollTop = v.scrollHeight;   // a file that grows, read from its end: stays there
+  if (put(body, h) && stick) v.scrollTop = v.scrollHeight;   // a file that grows, read from its end: stays there
+  drawStrip();
 }
 // open: what the hand expects of a double-click -- a page or an image in a tab, a text in an editor, a folder in the Finder
 // a view opened as it is ( `errand.Static`, ADR 0017 ): its own page, served beside this one ( `web.static` )
@@ -668,12 +777,12 @@ function vAction(what, path, dir) {
   else if (what == "copy") navigator.clipboard.writeText(path).then(() => say("copied: " + path), () => say(path));
   else if (what == "show") show(path, dir);
   else if (what == "open") open(path, dir);
-  else if (what == "close") showConsole();
+  else if (what == "close") askConsole();
 }
 function pick(n) {                                       // an output chosen with the keys: shown below
   const os = outputs(); if (!os.length) return;
   const o = os[Math.max(0, Math.min(os.length - 1, n))];
-  o.path ? show(o.path, false) : showConsole();
+  o.path ? show(o.path, false) : askConsole();
   document.querySelector("#detail .out.sel, #detail .out .e.sel")?.scrollIntoView({block: "nearest"});
 }
 // the output shown below is the one chosen: one place says it, the keys move from it
@@ -754,6 +863,56 @@ function promptBox(p, go) {
   $("veil").classList.add("on"); $("yes").onclick = modal.enter; $("no").onclick = () => { closeBox(); say("nothing done"); };
   $("typed").focus(); $("typed").select();
 }
+// Runs removed ( d, D; ADR 0023 ), in two times: the window at once, what goes in it as soon as the page knows, the room
+// freed when the machines said it ( a `du` there ). Yes: the rows greyed at once, gone when their agents removed them.
+const TREE_KINDS = ["run", "tnode", "tset", "thead"];
+function removable() {
+  const keys = marked.size > 1 ? rows.filter(r => marked.has(r.key)).map(r => r.key) : [sel];
+  return keys.filter(k => { const r = rows.find(r => r.key == k); return r && TREE_KINDS.includes(r.kind) && r.mark != "going"; });
+}
+function boxLines(lines, waiting) {
+  const ul = $("box").querySelector("ul");
+  if (ul) ul.innerHTML = lines.map(l => `<li class="${waiting && l.endsWith("…") ? "wait" : ""}">${esc(l)}</li>`).join("");
+}
+function under(keys) {                                  // the rows below these, as the list shows them: greyed with them
+  const out = new Set(keys);
+  for (const k of keys) {
+    const i = rows.findIndex(r => r.key == k); if (i < 0) continue;
+    const d = rows[i].depth, head = rows[i].kind == "thead";
+    for (let j = i + 1; j < rows.length && (rows[j].depth > d || (head && rows[j].depth == d && (rows[j].kind == "tset" || rows[j].tabled))); j++) out.add(rows[j].key);
+  }
+  return out;
+}
+async function removeRuns(how, keys) {
+  const what = keys.length > 1 ? `${keys.length} rows` : "this row";
+  confirmBox({title: how == "latest" ? `keep only the latest of ${what}?` : `remove the runs of ${what}?`,
+              lines: ["what goes: being looked at…"], verb: "remove for good", danger: true}, () => {});
+  const mine = modal; let plan = null;
+  $("yes").disabled = true;
+  mine.enter = () => {
+    if (!plan) return;
+    closeBox();
+    if (how == "all") { greyed = under(keys); drawList(); }
+    marked.clear();
+    ask("/act", {method: "POST", headers: {"Content-Type": "application/json"},
+                 body: JSON.stringify({op: "runs_remove", how, keys, plan, sure: true})})
+      .then(g => say(g.said || "")).catch(e => say(e.message))
+      .finally(() => { greyed = new Set(); state(); });
+  };
+  $("yes").onclick = mine.enter;
+  const post = body => ask("/act", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  try {
+    const got = await post({op: "runs_remove", how, keys});
+    if (modal !== mine) return;
+    if (!got.confirm) { closeBox(); return say(got.said || ""); }
+    plan = got.confirm.plan;
+    $("box").querySelector("h4").textContent = got.confirm.title;
+    boxLines(got.confirm.lines, true);
+    $("yes").disabled = false; $("yes").focus();
+    const m = await post({op: got.confirm.measure, plan});
+    if (modal === mine) { boxLines(m.lines, false); if (m.title) $("box").querySelector("h4").textContent = m.title; }
+  } catch (e) { if (modal === mine) { closeBox(); say(e.message); } }     // ( closed meanwhile: its sizes not wanted )
+}
 function helpBox() {
   $("box").className = "box";
   $("box").innerHTML = `<h4>keys</h4><div class="help">${KEYS.map(([k, w]) => `<kbd>${esc(k)}</kbd><span>${esc(w)}</span>`).join("")}</div>` +
@@ -766,7 +925,7 @@ function setFocus(f) {
   focus = f; $("list").classList.toggle("focus", f == "list"); $("detail").classList.toggle("focus", f == "detail");
 
 }
-function setTab(t) { if (t == tab) return; tab = t; keep("tab", t); sel = null; det = null; closeView(); setFocus("list"); refresh(); }
+function setTab(t) { if (t == tab) return; tab = t; keep("tab", t); sel = null; det = null; marked.clear(); closeView(); setFocus("list"); refresh(); }
 function refresh() { state(); }
 function askDays() {                                      // the caches tab: unused after how many days ( ADR 0022 )
   promptBox({title: "unused after how many days?", text: String(cacheDays)}, t => {
@@ -792,7 +951,9 @@ document.addEventListener("keydown", e => {
   const k = e.key, inList = focus == "list";
   const page = Math.max(1, Math.floor($("list").clientHeight / 21) - 1);
   let done = true;
-  if (k == "ArrowDown") inList ? move(1) : pick(shownIndex() + 1);
+  if (k == "ArrowDown" && e.shiftKey && inList) extend(1);
+  else if (k == "ArrowUp" && e.shiftKey && inList) extend(-1);
+  else if (k == "ArrowDown") inList ? move(1) : pick(shownIndex() + 1);
   else if (k == "ArrowUp") inList ? move(-1) : pick(Math.max(0, shownIndex() - 1));
   else if (k == "PageDown") inList ? move(page) : $("detail").scrollBy(0, $("detail").clientHeight - 40);
   else if (k == "PageUp") inList ? move(-page) : $("detail").scrollBy(0, -$("detail").clientHeight + 40);
@@ -803,6 +964,11 @@ document.addEventListener("keydown", e => {
   else if (k == "Tab") JOB || setFocus(inList ? "detail" : "list");
   else if ((k == "1" || k == "2" || k == "3") && !JOB) setTab({"1": "runs", "2": "machines", "3": "caches"}[k]);
   else if (tab == "caches" && "iudD".includes(k) && !JOB) act("cache_remove", {how: {i: "dead", u: "unused", d: "flagged", D: "everywhere"}[k]});
+  else if (tab == "runs" && k == "s" && !JOB && focus == "list") sortNext();
+  else if (tab == "runs" && k == "c" && !JOB) act("runs_check");
+  else if (tab == "runs" && k == "b" && !JOB) act("runs_fetch");
+  else if (tab == "runs" && "dD".includes(k) && !JOB && focus == "list" && removable().length)   // ( in the detail, d downloads )
+    removeRuns(k == "D" ? "latest" : "all", removable());
   else if (tab == "caches" && k == "h" && !JOB) act("cache_hold");
   else if (tab == "caches" && k == "n" && !JOB) askDays();
   else if (tab == "caches" && k == "v" && !JOB) toggleAll();
@@ -820,14 +986,34 @@ document.addEventListener("keydown", e => {
   else if (k == "R") act("refresh");
   else if (k == "/") $("q").focus();
   else if (k == "?") helpBox();
-  else if (k == "Escape") { if (view && !view.console) showConsole(); else { query = ""; $("q").value = ""; refresh(); } }
+  else if (k == "Escape" && marked.size && inList) { marked.clear(); drawList(); }
+  else if (k == "Escape") { if (view && !view.console) askConsole(); else { query = ""; $("q").value = ""; refresh(); } }
   else done = false;
   if (done) e.preventDefault();
 });
+function sortNext() {                                   // s: the table above the row, by its next column ( up, then down )
+  let j = rows.findIndex(r => r.key == sel);
+  while (j >= 0 && (rows[j].kind == "tset" || rows[j].kind == "run")) j--;
+  const h = rows[j]; if (!h || h.kind != "thead") return say("s: on a table of parameters, to sort it");
+  const cols = h.cols.map(c => c[0]), pre = `s:${h.tree}=`, now = [...opened].find(o => o.startsWith(pre));
+  const v = now ? now.slice(pre.length) : null;
+  const nxt = v === null ? cols[0] : !v.startsWith("-") ? "-" + v : cols[(cols.indexOf(v.slice(1)) + 1) % cols.length];
+  for (const o of [...opened]) if (o.startsWith(pre)) opened.delete(o);
+  opened.add(pre + nxt); keep("opened", [...opened]); refresh();
+}
+function sortBy(tree, col) {                             // a parameter table sorted by a column; again: the other way
+  const pre = `s:${tree}=`, now = [...opened].find(o => o.startsWith(pre));
+  for (const o of [...opened]) if (o.startsWith(pre)) opened.delete(o);
+  opened.add(pre + (now == pre + col ? "-" + col : col)); keep("opened", [...opened]); refresh();
+}
 $("list").addEventListener("click", e => {
+  const th = e.target.closest(".th"); if (th) return sortBy(th.dataset.tree, th.dataset.sort);
   const el = e.target.closest(".row"); if (!el) return;
   const r = rows.find(r => r.key == el.dataset.key); if (!r) return;
-  setFocus("list"); choose(r.key, false);
+  setFocus("list");
+  if (e.shiftKey && tab == "runs") return markTo(r.key);
+  if ((MAC ? e.metaKey : e.ctrlKey) && tab == "runs") return markOne(r.key);
+  choose(r.key, false);
   if (e.target.closest(".fold") || r.kind == "day" || r.kind == "group" || r.kind == "more" || (r.open !== null && e.detail == 2)) toggle(r);
 });
 function pathClick(e, el) {
@@ -838,7 +1024,9 @@ function pathClick(e, el) {
 $("detail").addEventListener("click", e => {
   if (e.target.closest("button[data-days]")) return askDays();
   if (e.target.closest("button[data-all]")) return toggleAll();
-  const b = e.target.closest("button[data-act]"); if (b) return act(b.dataset.act, b.dataset.how ? {how: b.dataset.how} : undefined);
+  const b = e.target.closest("button[data-act]");
+  if (b && b.dataset.act == "runs_remove") return removable().length ? removeRuns(b.dataset.how, removable()) : say("nothing to remove here");
+  if (b) return act(b.dataset.act, b.dataset.how ? {how: b.dataset.how} : undefined);
   if (e.target.closest("#more")) { showMore = !showMore; keep("more", showMore); return drawDetail(); }
   const c = e.target.closest(".chip.click");
   if (c && c.dataset.machine) { const key = `["machine", ${JSON.stringify(c.dataset.machine)}, null]`;
@@ -846,7 +1034,7 @@ $("detail").addEventListener("click", e => {
   if (c && c.dataset.env) { query = c.dataset.env; $("q").value = query; return refresh(); }
   if (c && c.dataset.path) return pathClick(e, c);
   const o = e.target.closest(".out .e, .out:not(.empty)");
-  if (o) { setFocus("detail"); return o.dataset.console && !opening(e) ? showConsole() : pathClick(e, o); }
+  if (o) { setFocus("detail"); return o.dataset.console && !opening(e) ? askConsole() : pathClick(e, o); }
   const p = e.target.closest(".path"); if (p) return pathClick(e, p);
 });
 $("view").addEventListener("click", e => {
@@ -858,8 +1046,17 @@ for (const pane of ["detail", "view"]) $(pane).addEventListener("contextmenu", e
   e.preventDefault(); menu(e.clientX, e.clientY, el.dataset.path, !!el.dataset.dir);
 });
 $("detail").addEventListener("focus", () => focus != "detail" && setFocus("detail"));
+// A framed page ( an html output, a view's own page ) may take the focus as it loads ( a slider it focuses ): the keys
+// would go there. Given back to the pane it was on, unless the hand is over the frame ( a click in it keeps it ).
+let overFrame = false;
+document.addEventListener("mouseover", e => { overFrame = e.target.tagName == "IFRAME"; });
+window.addEventListener("blur", () => setTimeout(() => {
+  const a = document.activeElement;
+  if (a && a.tagName == "IFRAME" && !overFrame) { a.blur(); $(focus == "list" ? "list" : "detail").focus({preventScroll: true}); }
+}, 0));
 document.querySelectorAll(".tab").forEach(b => b.onclick = () => setTab(b.dataset.tab));
 $("refresh").onclick = () => act("refresh");
+$("check").onclick = () => act("runs_check");
 $("helpb").onclick = helpBox;
 let typing; $("q").addEventListener("input", () => { clearTimeout(typing); typing = setTimeout(() => { query = $("q").value; refresh(); }, 150); });
 $("veil").addEventListener("click", e => { if (e.target == $("veil")) closeBox(); });
@@ -871,7 +1068,21 @@ if (JOB) {
   $("list").classList.remove("focus"); $("detail").classList.add("focus");
 }
 foot(); refresh();
+// What changes is pushed ( `/events`, ADR 0024 ): the lists read again when they changed, the detail when it is the one
+// shown. A slow look stays, for a page whose stream was cut ( the browser reopens it by itself ).
+function listen() {
+  const es = new EventSource("/events");
+  es.onmessage = e => {
+    let m; try { m = JSON.parse(e.data); } catch (_) { return; }
+    if (m.said) say(m.said);
+    if (m.lists) { state(); foot(); }
+    else if (sel && (m.details.includes("*") || m.details.includes(sel))) detail();
+  };
+}
+listen();
 setInterval(() => { if (!document.hidden) { state(); foot(); } }, EVERY);
+// what ticks: how long a run has run, every second, asking nobody
+setInterval(() => { if (!document.hidden && det && det.started && !det.duration) drawDetail(); }, 1000);
 </script>
 </body>
 </html>

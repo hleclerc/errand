@@ -10,6 +10,9 @@ from pathlib import Path
 
 from errand import test
 
+from _record import from_histories
+from_histories()
+
 
 @contextlib.contextmanager
 def scratch( ):

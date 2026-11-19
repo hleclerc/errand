@@ -57,10 +57,10 @@ def _lead( row ) -> str:
 
 
 # A state as a sign, its colour from `_colour`: read at a glance down the left edge ( ADR 0016's console too ).
-SYMBOLS = { "run": "●", "wait": "◌", "ok": "✓", "FAIL": "✗", "skip": "–", "lost": "?", "orph": "?" }
+SYMBOLS = { "run": "●", "wait": "◌", "ok": "✓", "FAIL": "✗", "skip": "–", "lost": "?", "orph": "?", "going": "·", "there": "◇" }
 
 
-def draw_rows( win, rows, cursor, box_inner, active, plain = False ):
+def draw_rows( win, rows, cursor, box_inner, active, plain = False, marked = () ):
     top_y, left, height, width = box_inner
     # The gauges of every machine start at one column: read down at a glance, whatever the names.
     gauged = [ len( _lead( r ) + r.label ) for r in rows if r.meters ]
@@ -71,7 +71,7 @@ def draw_rows( win, rows, cursor, box_inner, active, plain = False ):
             break
         row = rows[ index ]
         y = top_y + i
-        chosen = active and index == cursor[ 1 ]
+        chosen = active and ( index == cursor[ 1 ] or index in marked )
         look = selected if chosen else ( lambda a: a )
         base = 0
         if row.kind == "out" and row.label[ 2 : 3 ] in ( "│", "┃" ):            # the gutter dim, the line as it is
@@ -152,7 +152,9 @@ def _meters( win, y, left, at, until, meters, look ) -> int:
 
 
 def _colour( row ):
-    if row.kind == "dormant":
+    if row.mark == "there":                     # a run on another machine only ( the check, ADR 0025 )
+        return curses.color_pair( C_WARN )
+    if row.kind == "dormant" or row.mark == "going":          # ( a run being removed: greyed until it is gone )
         return dim()
     if row.kind in ( "machine", "cache" ):
         return curses.color_pair( C_TITLE ) | curses.A_BOLD
@@ -175,4 +177,4 @@ def _colour( row ):
 
 def draw_pane( win, pane, active ):
     draw_box( win, pane.box, pane.title, active )
-    draw_rows( win, pane.rows, ( pane.top, pane.cursor ), pane.inner, active, pane.plain )
+    draw_rows( win, pane.rows, ( pane.top, pane.cursor ), pane.inner, active, pane.plain, pane.marked )

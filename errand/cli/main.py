@@ -21,6 +21,13 @@ from .inside import here
 
 
 def main( argv = None ):
+    import os
+    try:
+        os.getcwd()
+    except FileNotFoundError:                     # ( the shell stood in a directory removed since: a run's, say )
+        print( bad( "  this shell's directory is gone ( removed since ): `cd` somewhere that is there, then again" ),
+               file = sys.stderr, flush = True )
+        return 1
     try:
         return _main( argv )
     except L.Unreachable as err:

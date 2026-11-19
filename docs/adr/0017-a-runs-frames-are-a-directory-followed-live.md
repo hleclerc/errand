@@ -551,3 +551,30 @@ openers with a right-click wait for a first user.
   older sources to go (`stop`, never forced: one that runs work keeps the page), then starts the one of
   these sources; a run's link wakes that aside. Tested with a real host agent in a cache of its own.
   A `web.json` written before (no `sources`) counts as older, its agent found among the `host-*` here.
+
+## The run's dashboard, 2026-11-19
+
+Grilled with Hugo (`grill/dashboard/decisions.md`), built the same day:
+
+- **The list**: the console first, then the outputs to look at and the run's other files; apart, under
+  "errand's files", what errand writes in every run (`stdout.txt`, `stderr.txt`, `steps.jsonl`,
+  `result.yaml`, `summary.yaml`).
+- **What to look at**: the views the run declared that show themselves (an `errand.Static`, a page, an
+  image, a PDF, a video). `screen.outputs` gives each `( machine, path, { look, ready, t, url? } )`;
+  ready: a file view's file is there; a `Static` one's server answers, its index is here and, a store,
+  its first frame (`static.serving`).
+- **The dashboard** (`web/page.py`, the run's page and the main page's right pane alike): with something
+  ready to look at, the pane splits — the view in big (70 %, a split dragged and kept), a console strip
+  below that follows the end and folds to its last line (kept). Several: tabs; shown by default a
+  `Static` before a file view, then the latest (`foam.sviz` stays when `foam.html` comes at the end).
+  A click in the list or a tab: that one, kept for the run; "console" (or esc): the console in big, until
+  something to look at is chosen. Nothing ready: the console in big, as before. The split is a skeleton
+  made once, its parts put apart: a frame never reloads with the console.
+- **TUI**: `w` opens the page of the run under the cursor (a code used once, from a thread).
+- **The run's folder** said under its head on a remote run: the local root is now set before the sessions
+  start (they draw their marks as they come, before `follow_all`).
+
+Seen on a foam run on lmo through `errand web dev`: `foam.sviz` in big while running, the console strip
+below; at the end `foam.html` a second tab, `foam.sviz` kept; tab, fold, console in big and back behave as
+decided. Tests: `test_outputs_list.py` (look and ready), `test_static_views.py`, `test_web.py`,
+`test_tui.py`, `test_web_run_link.py`.

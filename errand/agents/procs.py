@@ -92,6 +92,28 @@ class Proc:
                     log.write( chunk )
                     log.flush()
                     self._tell( kind, chunk )
+                self._wrote()
+
+    def _wrote( self ):
+        """it wrote: its watchers told ( `look`, ADR 0024 ), at most every `OUTPUT` seconds; what comes inside that
+        window is told at its end"""
+        from . import look
+        now = time.monotonic()
+        told = getattr( self, "_told_at", 0.0 )
+        if now - told >= look.OUTPUT:
+            self._told_at = now
+            try:
+                look.nudge( [ self.id ] )
+                look.ring( [ self.id ] )
+            except Exception:
+                pass
+        elif not getattr( self, "_later", False ):
+            self._later = True
+
+            def later():
+                self._later = False
+                self._wrote()
+            threading.Timer( look.OUTPUT - ( now - told ) + 0.01, later ).start()
 
     def _tell( self, kind, payload ):
         for writer, channel in list( self.listeners ):
@@ -123,6 +145,7 @@ class Proc:
         try:
             from . import look
             look.nudge()                       # its watchers see it end now
+            look.ring()                        # and those of the host agents here ( ADR 0024 )
         except Exception:
             pass
 

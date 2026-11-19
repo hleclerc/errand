@@ -87,13 +87,14 @@ TABS = ( "runs", "machines", "caches" )
 
 
 def build( machines, *, folded = (), opened = (), query = "", only = None, mine = (), shown = 50, tab = "runs",
-           days = 30, every = False ) -> list:
+           days = 30, every = False, unfold = False, reach = None ) -> list:
     """The rows of a tab. `runs`: what runs, what waits, what is done, of every machine watched
     ( `runs_rows` ). `machines`: each machine, its gauges, its VMs and their guests' work. `only`: the
     project names to keep ( `p` ), None for all; `mine`: those of the current project. `shown`: how many
     runs done."""
     if tab == "runs":
-        return runs_rows( machines, query = query, only = only, mine = mine, shown = shown, folded = folded )
+        return runs_rows( machines, query = query, only = only, mine = mine, shown = shown, folded = folded, opened = opened,
+                          unfold = unfold, reach = reach )
     if tab == "caches":
         from . import caches            # ADR 0022: `days` unused, `every` entry or the flagged ones only
         return caches.rows( machines, folded = folded, opened = opened, query = query, days = days, every = every )
@@ -190,9 +191,11 @@ def _day( t: float, now: float ) -> str:
     return time.strftime( "%a %d %b", day )
 
 
-def runs_rows( machines, *, query = "", only = None, mine = (), shown = 50, folded = () ) -> list:
-    """The runs tab: what runs, what waits, then what is done, newest first under the day it started --
-    every machine watched in one list. A machine not watched ( `dormant` ) is not asked: it says nothing."""
+def runs_rows( machines, *, query = "", only = None, mine = (), shown = 50, folded = (), opened = (), unfold = False,
+               reach = None ) -> list:
+    """The runs tab: what runs, what waits, then every run as a tree ( ADR 0023, `runtree` ): the directories of its
+    file, the file, the entry, its parameter sets as a table, their runs -- every machine watched in one tree. A machine
+    not watched ( `dormant` ) is not asked: it says nothing."""
     watched = [ m for m in machines if not getattr( m, "dormant", False ) ]
     work, done = [ ], [ ]
     for m in watched:
@@ -206,14 +209,10 @@ def runs_rows( machines, *, query = "", only = None, mine = (), shown = 50, fold
             for p in g.get( "procs", [ ] ):
                 if ( only is None or project_of( p ) in only ) and _matches( query, m.name, project_of( p ), p.get( "what" ) ):
                     work.append( ( m, { **p, "guest": g[ "vm" ] } ) )
-        for r in ( m.history or { } ).get( "runs", [ ] ):
-            if ( only is None or project_of( r ) in only ) and _matches( query, m.name, project_of( r ), r.get( "what" ),
-                                                                       r.get( "env" ), r.get( "status" ) ):
-                done.append( ( m, r ) )
     rows = [ ]
-    # a run that still runs is under `running`, not done as well ( its record has no result yet )
-    running = { ( m.name, p.get( "leaf" ) ) for m, p in work if p.get( "leaf" ) }
-    done = [ ( m, r ) for m, r in done if r.get( "status" ) or ( m.name, r.get( "leaf" ) ) not in running ]
+    # in the tree, every run of this machine's record ( ADR 0025 ), those running at their place too ( marked )
+    running = { x for m, p in work if p.get( "leaf" ) for x in ( rel_of( p[ "leaf" ] ), p[ "leaf" ] ) } - { None }
+    every = record_runs( machines, running, query = query, only = only )
     work.sort( key = lambda mp: mp[ 1 ].get( "started" ) or 0 )
     for title, which in ( ( "running", lambda p: not p.get( "waiting" ) ), ( "waiting", lambda p: p.get( "waiting" ) ) ):
         these = [ ( m, p ) for m, p in work if which( p ) ]
@@ -221,31 +220,225 @@ def runs_rows( machines, *, query = "", only = None, mine = (), shown = 50, fold
             is_open = ( "day", title ) not in folded
             rows.append( Row( f"{title} ( {len( these )} )", kind = "day", data = ( None, title ), open = is_open ) )
             rows += [ _work_row( m, p, mine ) for m, p in these ] if is_open else [ ]
-    done.sort( key = lambda mr: -( mr[ 1 ].get( "started" ) or 0 ) )
-    day, now = None, time.time()
-    days = { }
-    for m, r in done[ : shown ]:
-        days[ _day( r.get( "started", 0 ), now ) ] = days.get( _day( r.get( "started", 0 ), now ), 0 ) + 1
-    for m, r in done[ : shown ]:
-        d = _day( r.get( "started", 0 ), now )
-        if d != day:
-            day = d
-            is_open = ( "day", d ) not in folded
-            rows.append( Row( d if is_open else f"{d} ( {days[ d ]} )", kind = "day", data = ( None, d ), open = is_open ) )
-        if ( "day", d ) not in folded:
-            rows.append( _run_row( m, r, mine ) )
-    if len( done ) > shown:
-        rows.append( Row( f"{len( done ) - shown} more ( enter )", kind = "more", data = ( None, "more" ) ) )
+    from . import runtree as T
+    tree = tree_of( every )
+    if reach is not None:                      # a row looked up by its key: what is above it opened, nothing else
+        path = { f"t:{i}" for i in T.path_to( tree, reach ) }
+        opened, folded = set( opened ) | path, set( folded ) - path
+    rows += T.rows( tree, folded = folded, opened = opened, query = query, now = time.time(), unfold = unfold )
     if not rows:
         asking = any( m.table is None and not getattr( m, "dormant", False ) for m in machines )
         rows = [ Row( "asking the machines…" if asking else "nothing runs, nothing was run lately", kind = "note" ) ]
     return rows
 
 
+# ── this machine's record of runs ( ADR 0025 ) ───────────────────────────────
+
+RUNS_ANCHOR = "/errand-outputs/runs/"
+
+
+def rel_of( leaf ) -> str | None:
+    """a run's path under its project's `runs/`: the same here and on the machine it ran on"""
+    leaf = str( leaf or "" )
+    i = leaf.find( RUNS_ANCHOR )
+    return leaf[ i + len( RUNS_ANCHOR ) : ].strip( "/" ) if i >= 0 else None
+
+
+class Elsewhere:
+    """a machine a run ran on that errand does not watch ( a hostname only ): named, never asked"""
+    here, dormant, table, history, error = False, True, None, None, None
+
+    def __init__( self, name ):
+        self.name = name
+
+    def ask( self, *_, **__ ):
+        raise RuntimeError( f"{self.name}: no agent errand knows of there" )
+
+
+_elsewhere: dict = { }
+
+
+def machine_of( machines ):
+    """-> `of( host )`: the machine a run's `result.yaml` names ( its `host` ), as errand shows it -- this one ( whatever
+    number the network gave its name: `hugos-macbook-pro14`, `…23` ), one of the ledger's, or a name only"""
+    import re
+    import socket
+    from ..agents import ledger
+    by_host = { }
+    try:
+        for g in ledger.groups():
+            if g.get( "host" ):
+                by_host[ g[ "host" ].split( "." )[ 0 ] ] = g.get( "name" )
+    except Exception:
+        pass
+    for m in machines:
+        if getattr( m, "_host", None ):
+            by_host[ m._host.split( "." )[ 0 ] ] = m.name
+    named = { m.name: m for m in machines }
+    here = next( ( m for m in machines if getattr( m, "here", False ) ), None )
+    me = socket.gethostname().split( "." )[ 0 ].lower()
+    stem = re.sub( r"\d+$", "", me )
+    known: dict = { }
+
+    def of( host ):
+        h = str( host or "" ).split( "." )[ 0 ]
+        got = known.get( h )
+        low = h.lower()
+        if got is None:
+            if not h or low == me or ( stem and re.sub( r"\d+$", "", low ) == stem ) or by_host.get( h ) == getattr( here, "name", None ):
+                got = here
+            elif by_host.get( h ) in named:
+                got = named[ by_host[ h ] ]
+            else:
+                got = _elsewhere.setdefault( h, Elsewhere( h ) )
+            known[ h ] = got
+        return got
+    return of
+
+
+def record_runs( machines, running = (), query = "", only = None ) -> list:
+    """`( machine, record, running )` for every run of this machine's record, as the runs' tree reads them, and those the
+    check found on another machine only ( `there_only` ). Kept for the same record, check, runs running, filter and
+    machines ( the same list: the tree built from it is kept too )"""
+    from ..agents import registry as G
+    reg = G.shared()
+    reg.refresh( every = 3.0 )
+    recs = _records( reg )
+    key = ( _recs[ 0 ], CHECKED_V[ 0 ], frozenset( running ), query, None if only is None else frozenset( only ),
+            tuple( ( m.name, getattr( m, "_host", None ) ) for m in machines ) )
+    if _every[ 0 ] == key:
+        return _every[ 1 ]
+    of = machine_of( machines )
+    named = { m.name: m for m in machines }
+    out = [ ]
+    for m, r in [ ( of( r.get( "host" ) ), r ) for r in recs ] + \
+                [ ( named.get( n ) or Elsewhere( n ), r ) for n, rs in CHECKED.items() for r in rs ]:
+        if m is None:
+            continue
+        if ( only is None and not query ) or ( ( only is None or project_of( r ) in only ) and
+                                               _matches( query, m.name, project_of( r ), r.get( "what" ), r.get( "env" ), r.get( "status" ) ) ):
+            out.append( ( m, r, ( r.get( "rel" ) in running or r.get( "leaf" ) in running ) and not r.get( "status" ) ) )
+    _every[ 0 ], _every[ 1 ] = key, out
+    return out
+
+
+# ── the check ( ADR 0025 ): the runs a machine noted that this one's record does not hold ─────────────────────────
+
+CHECKED: dict = { }                 # machine name -> [ records of runs there only ]
+CHECKED_V = [ 0 ]
+CHECKED_AT: dict = { }              # machine name -> when it was checked, or why it could not be
+
+
+def check( machines ) -> str:
+    """every machine watched asked for all the runs it noted; those whose path under `runs/` is not in this machine's
+    record are listed, marked, at their place ( `there_only` ). -> what was found, said"""
+    from ..agents import registry as G
+    from . import removal as RM
+    reg = G.shared()
+    reg.refresh( force = True )
+    here_rels = { r.rel for r in list( reg.runs.values() ) }
+    asked = [ m for m in machines if not getattr( m, "here", False ) and not getattr( m, "dormant", False ) ]
+    got = RM._each( { m.name: ( m, None ) for m in asked },
+                    lambda m, _: m.ask( { "op": "seen", "limit": 1 << 30 }, timeout = 120 ) )
+    said = [ ]
+    for m in asked:
+        answer = got.get( m.name )
+        if isinstance( answer, Exception ) or answer is None:
+            CHECKED_AT[ m.name ] = f"not reached: {answer}"
+            said.append( f"{m.name}: not reached" )
+            continue
+        only = [ ]
+        for h in answer.get( "runs", [ ] ):
+            rel = rel_of( h.get( "leaf" ) )
+            if rel and rel not in here_rels:
+                only.append( { **h, "rel": rel, "there": True, "host": getattr( m, "_host", None ) or m.name,
+                               "project": _local_root_of( rel, reg.roots ) or f"{m.name}: {h.get( 'project' ) or '?'}",
+                               "remote_project": h.get( "project" ) } )
+        CHECKED[ m.name ] = only
+        CHECKED_AT[ m.name ] = time.time()
+        said.append( f"{m.name}: {len( only )} there only" if only else f"{m.name}: all here" )
+    CHECKED_V[ 0 ] += 1
+    return "checked: " + ", ".join( said ) if said else "no other machine watched to check"
+
+
+def _local_root_of( rel: str, roots ) -> str | None:
+    """the project here a run's path under `runs/` belongs to: the one that holds its file's directory already"""
+    from ..agents import registry as G
+    parts = rel.split( "/" )
+    for cut in range( len( parts ) - 1, 0, -1 ):
+        for root in roots:
+            if ( G.runs_dir( root ) / "/".join( parts[ : cut ] ) ).is_dir():
+                return root
+    return None
+
+
+def forget_there( m, leaves ):
+    """runs removed on a machine: out of its history and of what the check found there, at once"""
+    gone = set( leaves )
+    if not gone:
+        return
+    if isinstance( getattr( m, "history", None ), dict ):
+        m.history = { **m.history, "runs": [ r for r in m.history.get( "runs", [ ] ) if r.get( "leaf" ) not in gone ] }
+    if m.name in CHECKED:
+        CHECKED[ m.name ] = [ r for r in CHECKED[ m.name ] if r.get( "leaf" ) not in gone ]
+        CHECKED_V[ 0 ] += 1
+
+
+def bring_back( m, rec: dict ) -> str:
+    """a run there only, brought here ( as `-o` brings a run's directory ): it joins this machine's record"""
+    from ..agents import registry as G
+    from ..layers import gateways as L
+    target = getattr( m, "target", None ) or { }
+    remote_root, local_root = rec.get( "remote_project" ), rec.get( "project" )
+    if not ( target.get( "host" ) and remote_root and local_root and local_root.startswith( "/" ) ):
+        raise ValueError( f"{rec.get( 'rel' )}: where it goes here is not known" )
+    import os
+    rel = os.path.relpath( rec[ "leaf" ], remote_root )
+    L.fetch_view( rel, target[ "host" ], remote_root, Path( local_root ), target.get( "options" ) or ( ), say = lambda *_: None, dir = True )
+    CHECKED[ m.name ] = [ r for r in CHECKED.get( m.name, [ ] ) if r.get( "leaf" ) != rec[ "leaf" ] ]
+    CHECKED_V[ 0 ] += 1
+    G.shared().refresh( force = True )
+    return f"brought back: {Path( local_root ) / rel}"
+
+
+_every: list = [ None, None ]
+
+
+_recs: list = [ None, None ]          # ( the registry's version, its records )
+
+
+def _records( reg ) -> list:
+    if _recs[ 0 ] != ( id( reg ), reg.version ):
+        _recs[ 0 ], _recs[ 1 ] = ( id( reg ), reg.version ), reg.records()
+    return _recs[ 1 ]
+
+
+_trees: dict = { }
+_keep: list = [ ]
+
+
+def tree_of( every: list ):
+    """the runs' tree of these runs, built once for the same runs ( 70,000 of them: built again only when they change )"""
+    from . import runtree as T
+    key = id( every )                         # ( `record_runs` gives the same list for the same runs )
+    got = _trees.get( key )
+    if got is None:
+        from ..agents import registry as G
+        got = _trees[ key ] = T.build( every, G.shared().roots )
+        _keep.append( every )                  # ( its id stays its own while the tree is kept )
+        while len( _keep ) > 4:
+            _keep.pop( 0 )
+        while len( _trees ) > 4:
+            _trees.pop( next( iter( _trees ) ) )
+    return got
+
+
 def key( row: Row ):
     """What a row stands for, kept across rebuilds: the cursor stays on it."""
     machine, what = row.data if isinstance( row.data, tuple ) else ( None, None )
     kind = row.kind
+    if isinstance( what, dict ) and "tree" in what:
+        return ( kind, machine, what[ "tree" ] )                 # a node of the runs' tree ( ADR 0023 )
     if isinstance( what, dict ):
         # a run by its leaf: the same whether it runs or is done -- the cursor stays on it as it ends
         what = what.get( "leaf" ) or what.get( "ident" ) or what.get( "id" ) or what.get( "name" )
@@ -316,6 +509,7 @@ def facts( row: Row, m ) -> list:
         line( "outputs", p.get( "dir" ) )
     elif row.kind == "run":
         r = what
+        line( "machine", machine )                         # where it ran ( its files may be read here, ADR 0025 )
         line( "project", r.get( "project" ) )
         line( "what", r.get( "what" ) )
         line( "env", r.get( "env" ) )

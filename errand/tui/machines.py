@@ -10,8 +10,6 @@ import socket
 import threading
 import time
 
-EVERY   = { "here": 2.0, "remote": 3.0 }      # seconds between tables
-HISTORY = 15.0                                 # seconds between histories
 
 
 class Machine:
@@ -75,35 +73,45 @@ class Machine:
         self.table, self.error = None, None
 
     def _loop( self ):
-        """A machine over there is subscribed to ( `look.Watch` ): its agent says what changes as it
-        changes. This machine, or an agent that does not know `watch` ( an older errand ), is asked again
-        and again, as before."""
-        if not self.here:
-            while not self.stopped:
-                try:
-                    if not self._subscribed():
-                        break                        # an older agent: asked instead
-                except Exception as err:
-                    self.error = brief( err )
-                if not self.stopped:
-                    self.wake.wait( 3.0 )            # gone: subscribed again, a moment later
-                    self.wake.clear()
+        """Subscribed to ( `look.Watch`, ADR 0024 ): its agent says what changes as it changes -- this machine as well.
+        Gone, subscribed again a moment later. An agent that does not know `watch` ( an older errand ) is said so: it
+        is to be stopped ( `errand agents stop --force` ), not asked."""
         while not self.stopped:
             try:
-                got = self.ask( { "op": "table" }, timeout = 90 )
-                self.table, self.read_at, self.error = got, time.time(), None
-                if time.time() - self.history_at > HISTORY:
-                    self.history, self.history_at = self.ask( { "op": "seen", "limit": 200 } ), time.time()
+                if not self._subscribed():
+                    self.error = "an older agent, that says nothing: `errand agents stop --force`, then again"
             except Exception as err:
                 self.error = brief( err )
-            self.wake.wait( EVERY[ "here" if self.here else "remote" ] )
-            self.wake.clear()
+            if not self.stopped:
+                self.wake.wait( 3.0 )
+                self.wake.clear()
+
+    def want_resources( self, on: bool ):
+        """its resources measured and said while something shows them ( the machines tab ), not otherwise"""
+        on = bool( on )
+        if on == getattr( self, "_resources", False ):
+            return
+        self._resources = on
+        call = getattr( self, "_call", None )
+        if call is not None:
+            from ..agents import frames as F
+            try:
+                call.send( F.IN, json.dumps( { "resources": on } ).encode() )
+            except Exception:
+                pass
 
     def _subscribed( self ) -> bool:
         """Events until the subscription ends. -> False when the agent does not know `watch`."""
         from .. import agents
         from ..agents import frames as F
-        call = agents.open( self.target, noted = False ).open( { "op": "watch", "limit": 200 } )
+        req = { "op": "watch", "limit": 1000, "resources": getattr( self, "_resources", False ) }
+        if self.here:                                # this machine: through its host agent, which hears its bell
+            from ..agents import upstream as U
+            from ..web import host_agent_dir
+            conn = U.direct( { "kind": "local", "dir": str( host_agent_dir() ), "keep_alive": U.KEEP_ALIVE } )
+            call = conn.open( req )
+        else:
+            conn, call = None, agents.open( self.target, noted = False ).open( req )
         try:
             try:
                 call.reply( 90 )
@@ -111,6 +119,7 @@ class Machine:
                 if "unknown" in str( err ):
                     return False
                 raise
+            self._call = call
             while not self.stopped:
                 try:
                     kind, payload = call.next( timeout = 1.0 )
@@ -126,7 +135,10 @@ class Machine:
                 self.event( json.loads( payload ) )
             return True
         finally:
+            self._call = None
             call.close()
+            if conn is not None:
+                conn.close()
 
     def event( self, e: dict ):
         """One event of the subscription, into what is shown."""
@@ -145,7 +157,22 @@ class Machine:
             self.table = { **self.table, "resources": e[ "resources" ], "time": e.get( "time", self.table.get( "time" ) ) }
         if "seen" in e:
             self.history, self.history_at = e[ "seen" ], now
+        if "runs" in e:                                  # the history's delta: runs put ( new, changed ), dropped
+            d = e[ "runs" ]
+            put = { r[ "leaf" ]: r for r in d.get( "put" ) or [ ] }
+            drop = set( d.get( "drop" ) or [ ] ) | set( put )
+            old = [ r for r in ( self.history or { } ).get( "runs", [ ] ) if r.get( "leaf" ) not in drop ]
+            runs = sorted( old + list( put.values() ), key = lambda r: -( r.get( "started" ) or 0 ) )
+            self.history, self.history_at = { "runs": runs, "more": d.get( "more", 0 ) }, now
         self.read_at = now
+        for listen in list( LISTENERS ):
+            try:
+                listen( self, e )
+            except Exception:
+                pass
+
+
+LISTENERS: list = [ ]         # `f( machine, event )` after each event of each machine: `errand web`, the TUI ( ADR 0024 )
 
 
 def brief( err: Exception ) -> str:

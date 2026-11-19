@@ -77,3 +77,17 @@ if test( "the console draws a run's rows as `errand run` does: aligned, the head
     seen = [ RW._SGR.sub( "", l ) for l in out ]
     assert seen[ 0 ].index( "loss" ) == seen[ 2 ].index( "loss" ), seen            # ( aligned on the rows after it too )
     assert out[ 0 ].startswith( ROW_HEAD + "adjust" ), out[ 0 ]
+
+if test( "what to look at ( the run's dashboard ): a declared view that shows itself, ready when its file is there" ):
+    import time
+    from errand.tui.screen import outputs
+    leaf = Path( tempfile.mkdtemp() )
+    ( leaf / "end.html" ).write_text( "<html>" )
+    ( leaf / "notes.txt" ).write_text( "x" )
+    files = [ { "name": n, "size": 1, "mtime": time.time(), "path": f"{leaf}/{n}" } for n in ( "end.html", "notes.txt" ) ]
+    step = { "views": [ { "t": 5.0, "view": "end.html" }, { "t": 6.0, "view": "later.png" }, { "t": 7.0, "view": "notes.txt" } ] }
+    rich, _ = outputs( Here(), { "leaf": str( leaf ) }, step, files )
+    look = { r.label: ( r.data[ 2 ] if len( r.data ) > 2 else None ) for r in rich }
+    assert look[ "end.html" ] == { "look": "file", "ready": True, "t": 5.0 }, look
+    assert look[ "later.png" ] == { "look": "file", "ready": False, "t": 6.0 }, "declared, not there yet"
+    assert look[ "notes.txt" ] is None, "a text is no thing to look at"
