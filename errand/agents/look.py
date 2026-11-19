@@ -5,6 +5,9 @@
     ls      the files of a directory ( a run's leaf )
     tail    a file, from an offset
     kill    a process group: INT, TERM after 2 s, KILL after 5 s, then its `cancel` line ( ADR 0008/0009 )
+    caches  the library caches this machine holds, and its VM guests' ( `caches.report`, ADR 0022 )
+    caches_remove   entries of one of them removed, by key or by rule ( `caches.remove_in` ), here or in a guest
+    caches_hold     this machine holds one of them ( or all ): its host agent purges it ( `caches.hold` )
     watch   a subscription ( `Watch` ): events on the channel as things change, instead of asking again
 
 `answer( req )` is the one entry for the questions: the agent calls it for a remote watcher, the watcher calls it
@@ -14,11 +17,12 @@ from __future__ import annotations
 
 import os
 import signal
+import socket
 import threading
 import time
 from pathlib import Path
 
-OPS   = ( "table", "seen", "ls", "tail", "kill" )
+OPS   = ( "table", "seen", "ls", "tail", "kill", "caches", "caches_remove", "caches_hold" )
 CHUNK = 1 << 20          # what `tail` sends at most at once
 
 
@@ -40,9 +44,45 @@ def answer( req: dict ) -> dict:
                                          raw = bool( req.get( "raw" ) ) ) }
         if op == "kill":
             return kill( req )
+        if op in ( "caches", "caches_remove", "caches_hold" ):
+            return caches( req )
     except Exception as err:
         return { "error": f"{type( err ).__name__}: {err}" }
     return { "error": f"unknown request {op!r}" }
+
+
+def caches( req: dict ) -> dict:
+    """`caches`: { days, entries: [ names ], purge: { dry_run, unused_days }, guests } -> { host, dirs, guests }.
+    `caches_remove`: { id, cache, keys | rule, days, guest } -> { removed, freed, entries, size }. A `guest` ( a VM
+    of this machine ) is asked over its ssh, as `table` asks it."""
+    from .. import caches as C
+    if req.get( "guest" ):
+        from .table import guest_caches, vms
+        vm = next( ( v for v in vms( _cache() ) if v[ "name" ] == req[ "guest" ] ), None )
+        if vm is None:
+            return { "error": f"no VM {req[ 'guest' ]!r} here" }
+        return guest_caches( vm, { k: v for k, v in req.items() if k != "guest" } )
+    if req.get( "op" ) == "caches_hold":
+        return { "ok": True, "held": [ list( h ) for h in C.hold( req.get( "id" ) ) ], "host": socket.gethostname() }
+    if req.get( "op" ) == "caches_remove":
+        how = { "keys": req.get( "keys" ), "rule": req.get( "rule" ), "dry_run": bool( req.get( "dry_run" ) ) }
+        if req.get( "days" ) is not None:
+            how[ "days" ] = float( req[ "days" ] )
+        return { "ok": True, **C.remove_in( str( req.get( "id" ) or "" ), str( req.get( "cache" ) or "" ), **how ) }
+    got = C.report( days = float( req.get( "days" ) or C.UNUSED_DAYS ), entries = req.get( "entries" ) or ( ),
+                    purge_with = req.get( "purge" ) )
+    guests = [ ]
+    if req.get( "guests", True ):
+        from .table import guest_caches, vms
+        for vm in vms( _cache() ):
+            if vm[ "state" ] == "ready" and vm.get( "port" ) and vm.get( "image" ):
+                guests.append( { "vm": vm[ "name" ], **guest_caches( vm, { **req, "guests": False } ) } )
+    return { "ok": True, **got, "guests": guests }
+
+
+def _cache( ) -> Path:
+    from .. import bootstrap
+    return bootstrap.local_cache()
 
 
 def ls( d: Path ) -> list:

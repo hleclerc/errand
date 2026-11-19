@@ -54,7 +54,9 @@ class Screen:
         self.folded   : set = set()                 # machines whose rows are hidden
         self.opened   : set = set()                 # machines whose history is shown
         self.shown    = 50                          # runs of the history shown
-        self.tab      = "runs"                      # or "machines": 1, 2
+        self.tab      = "runs"                      # or "machines", "caches": 1, 2, 3
+        self.cache_days  = 30                       # caches: unused after this many days ( `n` )
+        self.cache_every = False                    # caches: every entry, or the dead and unused only ( `v` )
         self.only     = False                       # `p`: the current project only
         self.query    = ""
         self.typing   = False                       # `/` was pressed: keys go to the filter
@@ -74,10 +76,17 @@ class Screen:
         return next( m for m in self.machines if m.name == name )
 
     def build( self ):
+        if self.tab == "caches":
+            from . import caches as K
+            K.want( self.machines, entries = [ o[ 8 : ] for o in self.opened if isinstance( o, str ) and o.startswith( "entries:" ) ],
+                    days = self.cache_days )
         rows = R.build( self.machines, folded = self.folded, opened = self.opened, query = self.query,
-                        only = self.mine if self.only else None, mine = self.mine, shown = self.shown, tab = self.tab )
+                        only = self.mine if self.only else None, mine = self.mine, shown = self.shown, tab = self.tab,
+                        days = self.cache_days, every = self.cache_every )
         self.list.keep( rows, R.key )
-        self.list.title = ( "running, waiting, done" if self.tab == "runs" else "machines" ) \
+        self.list.title = { "runs": "running, waiting, done", "machines": "machines",
+                            "caches": f"library caches  ·  unused: {self.cache_days:g} days"
+                                      + ( "  ·  every entry" if self.cache_every else "" ) }[ self.tab ] \
                           + ( f"  ·  {', '.join( sorted( self.mine ) )} only" if self.only else "" ) \
                           + ( f"  ·  /{self.query}" if self.query else "" )
         detail = self._detail()
@@ -187,7 +196,11 @@ class Screen:
 
     def toggle( self, row ):
         machine, what = row.data
-        if row.kind in ( "machine", "broken" ):
+        if row.kind == "cache":
+            self.folded.symmetric_difference_update( { ( "cache", what[ "cache" ] ) } )
+        elif row.kind == "centries":
+            self.opened.symmetric_difference_update( { f"entries:{what[ 'cache' ]}" } )
+        elif row.kind in ( "machine", "broken" ):
             self.folded.symmetric_difference_update( { machine } )
         elif row.kind == "group":
             self.opened.symmetric_difference_update( { machine } )
@@ -405,8 +418,56 @@ class Screen:
         except ValueError as err:
             self.message = str( err )
 
+    def remove_cached( self, how: str ):
+        """`i`, `u`, `d`, `D` in the caches tab: what goes, once confirmed ( `caches.plan` ), removed from a thread."""
+        from . import caches as K
+        try:
+            r = K.plan( self.list.current(), how, self.machines, self.cache_days )
+        except ValueError as err:
+            self.message = str( err )
+            return
+
+        def go():
+            def run():
+                self.message = K.send( r )
+                K.want( self.machines, days = self.cache_days, force = True )
+            threading.Thread( target = run, daemon = True ).start()
+
+        self.confirm = Confirm( r.title, r.lines, "remove", go, danger = True )
+
+    def hold_cached( self ):
+        """`h` in the caches tab: the machine of the place under the cursor holds its directory, once confirmed."""
+        from . import caches as K
+        try:
+            r = K.hold_plan( self.list.current(), self.machines )
+        except ValueError as err:
+            self.message = str( err )
+            return
+
+        def go():
+            def run():
+                self.message = K.send( r )
+                K.want( self.machines, days = self.cache_days, force = True )
+            threading.Thread( target = run, daemon = True ).start()
+
+        self.confirm = Confirm( r.title, r.lines, "hold", go )
+
+    def ask_cache_days( self ):
+        """`n`: the days after which an entry counts as unused."""
+        def go( text ):
+            try:
+                days = float( text )
+                assert days > 0
+            except ( ValueError, AssertionError ):
+                self.message = f"{text!r}: a number of days, above 0"
+                return
+            self.cache_days = days
+            self.message = f"unused: not used for {days:g} days"
+        self.prompt = Prompt( "unused after how many days?", f"{self.cache_days:g}", go )
+
     def refresh( self ):
         for m in self.machines:
+            m.caches_at = 0.0
             m.history_at = 0.0
             m.wake.set()
         self.seen.clear()

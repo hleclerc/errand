@@ -56,6 +56,7 @@ class Web:
         self._httpd   = None
         self._read    = { }                 # row key -> ( when, what `_read` said )
         self._files   = { }                 # ( machine, path, size ) -> bytes: files of other machines, kept
+        self._caches  = ( set(), set(), 30.0, False )   # the caches tab as the page last asked it: folded, opened, days, all
 
     # ── life ─────────────────────────────────────────────────────────────────
 
@@ -134,9 +135,20 @@ class Web:
         from ..tui import rows as R
         ms = self.machines()
         tab = q.get( "tab" ) if q.get( "tab" ) in R.TABS else "runs"
-        folded = { ( "day", w[ 4 : ] ) if w.startswith( "day:" ) else w for w in _set( q.get( "folded" ) ) }
-        rows = R.build( ms, tab = tab, folded = folded, opened = _set( q.get( "opened" ) ), query = q.get( "q", "" ),
-                        shown = int( q.get( "shown" ) or 50 ) )
+        folded = { ( "day", w[ 4 : ] ) if w.startswith( "day:" ) else ( "cache", w[ 6 : ] ) if w.startswith( "cache:" ) else w
+                   for w in _set( q.get( "folded" ) ) }
+        opened = _set( q.get( "opened" ) )
+        try:
+            days = max( 0.001, float( q.get( "days" ) or 30 ) )
+        except ValueError:
+            days = 30.0
+        every = q.get( "all" ) in ( "1", "true" )
+        if tab == "caches":
+            from ..tui import caches as K
+            K.want( ms, entries = [ o[ 8 : ] for o in opened if o.startswith( "entries:" ) ], days = days )
+            self._caches = ( folded, opened, days, every )
+        rows = R.build( ms, tab = tab, folded = folded, opened = opened, query = q.get( "q", "" ),
+                        shown = int( q.get( "shown" ) or 50 ), days = days, every = every )
         running = waiting = 0
         for m in ms:
             for p in ( m.table or { } ).get( "procs", [ ] ):
@@ -153,7 +165,9 @@ class Web:
         """The row `key` names, and its machine: rows rebuilt with everything shown."""
         from ..tui import rows as R
         ms = self.machines()
-        every = R.build( ms, tab = "machines", shown = 1 << 30 ) + R.build( ms, tab = "runs", shown = 1 << 30 )
+        folded, opened, days, all_ = self._caches
+        every = R.build( ms, tab = "machines", shown = 1 << 30 ) + R.build( ms, tab = "runs", shown = 1 << 30 ) \
+            + R.build( ms, tab = "caches", folded = folded, opened = opened, days = days, every = all_ )
         row = next( ( r for r in every if _key( r ) == key ), None )
         if row is None:
             raise LookupError( "not there any more" )
@@ -296,6 +310,20 @@ class Web:
             self._read.clear()
             return { "said": "asking again" }
         row, m = self.find( str( body.get( "key", "" ) ) )
+        if op == "cache_hold":                   # ADR 0022: h
+            from ..tui import caches as K
+            r = K.hold_plan( row, self.machines() )
+            if not body.get( "sure" ):
+                return { "confirm": { "title": r.title, "lines": r.lines, "verb": "hold", "danger": False } }
+            return { "said": K.send( r ) }
+        if op == "cache_remove":                 # ADR 0022: i, u, d, D
+            from ..tui import caches as K
+            r = K.plan( row, str( body.get( "how" ) ), self.machines(), self._caches[ 2 ] )
+            if not body.get( "sure" ):
+                return { "confirm": { "title": r.title, "lines": r.lines, "verb": "remove", "danger": True } }
+            said = K.send( r )
+            K.want( self.machines(), days = self._caches[ 2 ], force = True )
+            return { "said": said }
         if op == "kill":
             plan = A.kill_plan( row, m )
             if not body.get( "sure" ):
@@ -395,6 +423,12 @@ def _can( row, m ) -> dict:
         can[ "kill" ] = True
     except ValueError:
         pass
+    if row.kind in ( "cache", "cachefs" ):          # ADR 0022
+        can[ "caches" ] = [ "dead", "unused" ]
+        if row.kind == "cachefs" and not row.data[ 1 ].get( "guest" ):
+            can[ "hold" ] = True
+    elif row.kind == "centry":
+        can[ "caches" ] = [ "flagged", "everywhere" ]
     if m is not None and row.kind in ( "machine", "broken", "dormant" ):      # a machine's, not its runs'
         can[ "rename" ] = True
         if not m.here:
@@ -424,7 +458,8 @@ def _key( row ) -> str:
 def _row( r ) -> dict:
     machine, what = r.data if isinstance( r.data, tuple ) else ( None, None )
     fold = ( machine if r.kind in ( "machine", "broken" ) else f"day:{what}" if r.kind == "day" else
-             machine if r.kind == "group" else None ) if r.open is not None else None
+             machine if r.kind == "group" else f"cache:{what[ 'cache' ]}" if r.kind == "cache" else
+             f"entries:{what[ 'cache' ]}" if r.kind == "centries" else None ) if r.open is not None else None
     return { "key": _key( r ), "label": r.label, "detail": r.detail, "kind": r.kind, "mark": r.mark or "",
              "depth": r.depth, "open": r.open, "fold": fold, "machine": machine,
              "meters": [ [ n, round( f, 3 ) ] for n, f in r.meters ], "hits": list( r.hits ) }

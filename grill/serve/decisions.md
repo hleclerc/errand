@@ -22,3 +22,22 @@
 - **sviz** : `open [--url] [--there plus tard]`, `export --html [--every --frames --max-mb]`, `export --vtk` ; GIF / vidéo par le bouton de la page, en ligne de commande plus tard.
 - **Extension** : `.sviz`.
 - **ADR et ordre** : 0017 réécrit ( format, store, page, sviz, vues de répertoires, ouvreurs ; plus de `/s/<cap>/` ), 0018 `errand serve` ; ordre : sdot + sviz seul, otrec, vues de répertoires + ouvreurs, errand serve ( remplace ollama-errand ), forward + `--there`.
+
+## Tour 4 ( la page d'un run, ses sorties, sviz dedans )
+
+- **Lien du run**: la ligne de tête d'un run porte `↗ http://127.0.0.1:<port>/job?key=…` ( la page de MON errand web, run local ou distant ), sans secret ; le cookie d'errand web dure 30 jours, renouvelé à chaque visite.
+- **Ouverture automatique**: `errand run --open` ( `-O` ) ; jusqu'à 4 runs un onglet chacun, au-delà la page principale ; défaut par utilisateur `errand.configure( open = True )` dans la config utilisateur.
+- **Liste à gauche**: vues et sorties fusionnées, les sorties riches ( html, sviz, image, pdf ) d'abord, dans l'ordre d'apparition ; un `.sviz` = une ligne avec son état ( frames, en cours ) ; clic = aperçu, double-clic = onglet.
+- **Ouvreur déclaré par le producteur**: `errand.view( path, open = "sviz open --url {path}" )` ; errand lance la commande sur la machine qui conduit, lit l'URL ; une table d'ouvreurs utilisateur seulement plus tard si besoin.
+- **sviz dans la page et le terminal**: iframe sur l'URL de sviz ( autre origine, jeton dans le chemin ) ; terminal `↗ http://…` dès la première frame ramenée ; le `foam.html` final reste une sortie `file://`.
+- **Ordre**: lien + `--open`, liste à gauche, vues de répertoires, ouvreurs, puis `errand serve` ; la section 5 de l'ADR 0017 réécrite avant de coder.
+
+## Tour 4 révisé et tour 5 ( l'ouvreur décrit par le producteur )
+
+- **Ouvreur déclaré par le producteur, objet riche**: `errand.view( path, open = sdot.sviz.opener )` ; l'objet dit tout ( pas de config utilisateur ).
+- **Deux sortes**: `errand.Static( "index.html" )` ( le répertoire porte sa page, servie telle quelle : même version que les données, rien d'exécuté sur le Mac ) ; `errand.Opener( command, env = errand.Uv(...) | Micromamba | ... | Node demain, name )` pour plus tard. sdot prend Static ; `sviz` reste pour qui n'a pas errand et pour `export`.
+- **Serveur statique**: un second serveur de l'agent hôte, à côté d'errand web, port fixe, jeton dans le chemin, lecture seule, seulement les répertoires déclarés Static ( copie locale du run ). Pas dans errand web ( iframe sandboxée, `/act` ).
+- **Opener programme ( plus tard )**: env construit dans le cache d'errand sur la machine qui conduit, une fois par tampon ; voyage en JSON dans le journal.
+- **Sources**: `source = <chemin du paquet>` si éditable, traduit en chemin local quand il est dans un arbre poussé par errand ( `pip install -e` de la copie locale ), sinon `paquet==version` ; `manifest.format` protège.
+- **Confiance**: pas de question ; un seul ouvreur : ouvert directement ; une liste ( `open = [ a, b ]` ) : le premier par défaut, les autres par un clic droit.
+- **Ordre**: lien du run + `--open`, liste à gauche, vues de répertoires, `errand.Static` + second serveur + sdot le déclare, puis `errand.Opener` et `errand serve`.

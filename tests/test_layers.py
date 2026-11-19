@@ -36,6 +36,14 @@ if test( "a vars layer may read the tags that were selected" ):
     assert folded( stack ).env == { "FTYPE": "FP64" }   # the default, when nothing asked
 
 
+if test( "{root} in a value is the project where the command runs; other braces are left as they are" ):
+    stack = [ L.Vars( { "PYTHONPATH": "{root}/loom/src:{root}/errand", "F": "{fp}" } ) ]
+    assert folded( stack ).env == { "PYTHONPATH": "/project/loom/src:/project/errand", "F": "{fp}" }
+    there = L.compose( stack, L.Command( [ "python" ] ), L.Context( root = Path( "E:\\Projects-rsync" ), remote = True ) )
+    assert there.env[ "PYTHONPATH" ] == "E:\\Projects-rsync/loom/src:E:\\Projects-rsync/errand", there.env
+    assert folded( [ L.Vars( lambda t: { "D": "{root}/" + t.get( "fp", "64" ) } ) ], fp = "32" ).env == { "D": "/project/32" }
+
+
 if test( "an interpreter-selecting layer swaps argv[0], and only that" ):
     cmd = folded( [ L.Venv( python = "/v/bin/python" ) ] )
     assert cmd.argv == [ "/v/bin/python", "-m", "errand", "x" ]

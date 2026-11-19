@@ -143,17 +143,41 @@ _caches_seen = set()
 
 
 def _caches_kept( root ) -> Path:
-    """`$ERRAND_CACHES` of this place, and once a process, what its caches no longer need removed: at most once a
-    day and a cache ( ADR 0020 ). One line for a cache something went from, nothing otherwise."""
+    """`$ERRAND_CACHES` of this place, written down in this machine's registry ( ADR 0022 ), and once a process,
+    what its caches no longer need removed: at most once a day, a cache and a view ( ADR 0020 ). The bare view is
+    the host agent's to purge; a run does it only when no host agent runs here. One line for a cache something
+    went from, nothing otherwise."""
     from .. import caches as C
     where = config.caches( root ).resolve()
-    if where not in _caches_seen:
-        _caches_seen.add( where )
+    view = C.detected_view()
+    if ( where, view ) not in _caches_seen:
+        _caches_seen.add( ( where, view ) )
+        C.register( where, view, root )
         try:
-            C.purge_all( where, only_due = True, say = lambda s: print( dim( f"  {s}" ), flush = True ) )
+            if view or not _host_agent_up():
+                C.purge_all( where, only_due = True, view = view, say = lambda s: print( dim( f"  {s}" ), flush = True ) )
         except Exception as err:             # a cache is never a reason for a run to fail
             print( dim( f"  caches: not purged ( {type( err ).__name__}: {err} )" ), flush = True )
     return where
+
+
+def _caches_view( ) -> str:
+    from .. import caches as C
+    return C.detected_view()
+
+
+def _host_agent_up( ) -> bool:
+    """This machine's host agent answers: the bare view's purge is its own ( ADR 0022 )."""
+    try:
+        from ..agents.endpoint import reach
+        from ..web import host_agent_dir
+        s = reach( host_agent_dir() )
+        if s is None:
+            return False
+        s.close()
+        return True
+    except Exception:
+        return False
 
 
 def _kept( names ):
@@ -265,7 +289,9 @@ def run_case( e, modules, *, root, out_root, overrides, env_name, tags, version,
                # what the shell's `download` calls ( ADR 0013 ): this errand, with this Python
                "ERRAND_PYTHON": sys.executable, "ERRAND_SRC": str( Path( __file__ ).resolve().parents[ 2 ] ),
                # where a library puts its caches, by its name ( ADR 0019 )
-               config.CACHES_ENV: str( _caches_kept( root ) ) }
+               config.CACHES_ENV: str( _caches_kept( root ) ),
+               # where what the library creates there is seen from ( ADR 0022 )
+               "ERRAND_CACHES_VIEW": _caches_view() }
     if marks:
         # Followed by the side that drives it: a download with no route asks it ( ADR 0013 ).
         from ..downloads import RELAY

@@ -144,6 +144,17 @@ def _reachable( targets, named = False ):
 
 # ── one environment, from outside it ────────────────────────────────────────
 
+def caches_view( env ) -> str:
+    """The view of an environment's runs on the files ( ADR 0022 ): its containers, innermost last; empty when it
+    runs on a machine as it is."""
+    try:
+        from ..layers.families import Container
+        said = [ f"{type( l ).__name__.lower()}:{l.container}" for l in env.stack_for( "run" ) if isinstance( l, Container ) ]
+    except Exception:
+        return ""
+    return ",".join( said )
+
+
 def child_env_for( env, tags ) -> dict:
     """What crosses into the environment: which one it is, its resolved tags,
     and the stamp of this command -- NOT `--env`, since re-selecting over there
@@ -152,5 +163,7 @@ def child_env_for( env, tags ) -> dict:
              TAGS: ",".join( f"{k}={v}" for k, v in sorted( tags.items() ) ),
              R.STAMP_ENV: R.stamp(),
              "PYTHONUNBUFFERED": "1",
+             # where what a library creates in its cache is seen from ( ADR 0022 )
+             "ERRAND_CACHES_VIEW": caches_view( env ),
              # `-v` over there too: the env a command crosses ssh with
              **( { trace.ENV: "1" } if trace.enabled() else { } ) }

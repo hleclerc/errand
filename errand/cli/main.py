@@ -122,7 +122,7 @@ def _main( argv = None ):
             print( bad( f"errand {verb}: unknown option {unknown[ 0 ]}" ) )
             return 2
         wanted = { "forget": 1, "vm": 1, "setup": None, "attach": None, "agents": None, "machines": None,
-                   "download": 1, "web": None }.get( verb, 0 )
+                   "download": 1, "web": None, "caches": None }.get( verb, 0 )
         if wanted is not None and len( words ) != wanted:
             print( bad( f"errand {verb}: " + ( f"takes no argument ( got {' '.join( words )} )"
                                                if not wanted else "expects one argument" ) ) )
@@ -168,17 +168,8 @@ def _main( argv = None ):
         return 0
 
     if verb == "caches":
-        from .. import caches as C
-        where = config.caches( root )
-        found = C.caches_in( where )
-        if not found:
-            print( dim( f"no cache kept by errand's rules in {where}" ) )
-            return 0
-        for name, r in C.purge_all( where, dry_run = known.dry_run ):
-            what = ( f"{len( r[ 'removed' ] )} entries, {C.human( r[ 'freed' ] )} "
-                     f"{'would go' if known.dry_run else 'removed'}" ) if r[ "removed" ] else "nothing to remove"
-            print( f"caches/{name}: {r[ 'entries' ]} entries, {C.human( r[ 'size' ] )} -- {what}" )
-        return 0
+        from . import caches as CC
+        return CC.main( root, words, dry_run = known.dry_run, unused = known.unused )
 
     if verb == "forget":
         if words[ 0 ] == "finished":
@@ -204,6 +195,7 @@ def _main( argv = None ):
         got = standing.tables()
         standing.show_running( root, everything = bool( getattr( known, "all", False ) ), got = got )
         standing.show_live( root, got = got )
+        standing.show_caches( got )
         return show_batches( root, quiet_if_none = True )
 
     if verb == "watch":

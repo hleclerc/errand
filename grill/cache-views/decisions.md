@@ -9,3 +9,4 @@
 - **Partagées** : supprimer une partagée emmène les entrées qui en ont besoin (dit dans la confirmation) ; après une suppression à la main, les partagées que plus rien ne requiert partent tout de suite. Une entrée récemment utilisée part quand même.
 - **CLI** : `errand caches [--env X] [--dry-run] [--unused DAYS]` ; pas de « partout » en CLI.
 - **`errand caches --env X`** (interprétation, à confirmer) : tourne dans l'env X comme une commande de `errand run --env X`, donc dans sa vue : compacte, juge ses entrées, applique les règles (+ `--unused`), affiche.
+- **Par système de fichiers (final)** : pas de `--env` ; registre par système de fichiers, atteint par la machine (et ses VM invitées via l'hôte) ; le responsable d'un répertoire est la première machine qui y a accès (celle qui a écrit `errand-caches.id`). CLI : `errand caches [MACHINE...] [--dry-run] [--unused DAYS]`. → ADR 0022.

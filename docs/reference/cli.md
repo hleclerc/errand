@@ -44,7 +44,7 @@ target is the target's: `errand --env gpu run t.py` and `errand run --env gpu t.
 | verb | |
 |---|---|
 | `download URL [--sha256 H]` | a file into the project's cache, as [`errand.download`](/reference/python-api#download) does; prints its path. The next push carries it |
-| `caches [--dry-run]` | the caches of `$ERRAND_CACHES` here that keep the `errand-cache/1` format: what each holds, and what no longer serves removed ( [ADR 0020](/adr/0020-a-library-cache-says-what-it-holds) ) |
+| `caches [MACHINE...] [--dry-run] [--unused DAYS]` | the library caches a machine holds ( this one by default, else machines of `errand machines` by name ), in the `errand-cache/1` format: what each holds, what is dead, and what no longer serves removed; `--unused`: also what has not served for DAYS days ( [ADR 0020](/adr/0020-a-library-cache-says-what-it-holds), [ADR 0022](/adr/0022-caches-are-looked-after-per-file-system) ). Removing on every machine at once: tab `3` of `errand tui` / `errand web`. `caches hold MACHINE [DIR...]`: MACHINE holds the directories it reaches ( its host agent purges them daily ), e.g. a cluster's login node |
 | `require [--gpus N] [--gpu-ram S] [--ram S] [--cpus N] [-x] [--extra]` | inside a run: grows its claim ( to that much in all; `--extra`: that much more than it was started with ), as [`errand.require`](/reference/python-api#require) does, waits, then prints what to set ( `CUDA_VISIBLE_DEVICES=1` ). Nothing outside errand; exit 75 when stopped to run again |
 
 **Suites**

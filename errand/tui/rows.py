@@ -83,16 +83,20 @@ def _proc_row( m, p, depth, mine ) -> Row:
                 hits = range( len( project ) ) if project in mine else ( ) )
 
 
-TABS = ( "runs", "machines" )
+TABS = ( "runs", "machines", "caches" )
 
 
-def build( machines, *, folded = (), opened = (), query = "", only = None, mine = (), shown = 50, tab = "runs" ) -> list:
+def build( machines, *, folded = (), opened = (), query = "", only = None, mine = (), shown = 50, tab = "runs",
+           days = 30, every = False ) -> list:
     """The rows of a tab. `runs`: what runs, what waits, what is done, of every machine watched
     ( `runs_rows` ). `machines`: each machine, its gauges, its VMs and their guests' work. `only`: the
     project names to keep ( `p` ), None for all; `mine`: those of the current project. `shown`: how many
     runs done."""
     if tab == "runs":
         return runs_rows( machines, query = query, only = only, mine = mine, shown = shown, folded = folded )
+    if tab == "caches":
+        from . import caches            # ADR 0022: `days` unused, `every` entry or the flagged ones only
+        return caches.rows( machines, folded = folded, opened = opened, query = query, days = days, every = every )
     rows = [ ]
     mine = set( mine )
 
@@ -244,7 +248,7 @@ def key( row: Row ):
     kind = row.kind
     if isinstance( what, dict ):
         # a run by its leaf: the same whether it runs or is done -- the cursor stays on it as it ends
-        what = what.get( "leaf" ) or what.get( "id" ) or what.get( "name" )
+        what = what.get( "leaf" ) or what.get( "ident" ) or what.get( "id" ) or what.get( "name" )
         if kind in ( "proc", "run" ):
             kind = "work"
     return ( kind, machine, what )
@@ -260,6 +264,9 @@ def facts( row: Row, m ) -> list:
         if v not in ( None, "" ):
             out.append( ( k, str( v ) ) )
 
+    if row.kind in ( "cache", "cachefs", "centries", "centry" ):
+        from . import caches
+        return caches.facts( row )
     if row.kind == "dormant":
         line( "machine", m.name )
         if m.watch_set is False:

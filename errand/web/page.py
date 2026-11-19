@@ -1,7 +1,8 @@
 """The page: HTML, CSS and a little JS, inline -- one file, no build, nothing fetched elsewhere.
 
-What `errand tui` shows, with the same keys, and buttons beside them. Two tabs: the runs ( running,
-waiting, done by day, every machine in one list ) and the machines ( their gauges, VMs, guests' work ).
+What `errand tui` shows, with the same keys, and buttons beside them. Three tabs: the runs ( running,
+waiting, done by day, every machine in one list ), the machines ( their gauges, VMs, guests' work ) and the
+library caches they hold ( ADR 0022: per cache, a row per place, its entries merged across places ).
 Right, the row chosen: its facts, its step, its views and outputs ( the console, then its files ); the
 output chosen is shown below them -- text, an image, a page --, and opens whole in a tab of its own.
 What is folded stays in the browser ( localStorage ), the row chosen in the URL ( #key ).
@@ -100,11 +101,12 @@ body.dragging { user-select: none; }
 .row.proc .right, .row.run .right { flex: none; }        /* the time, the step: kept, the name gives way */
 .row.machine .label, .row.broken .label { font-weight: 600; }
 .row.dormant { color: var(--faint); }
-.row.day .label, .row.group .label { color: var(--dim); font-weight: 600; }
+.row.day .label, .row.group .label, .row.centries .label { color: var(--dim); font-weight: 600; }
+.row.cache .label { font-weight: 600; }
 .row.note .label, .row.more .label { color: var(--dim); }
 .row.broken .right { color: var(--bad); }
 .hit { color: var(--acc); font-weight: 700; }
-.m-run, .m-ok { color: var(--ok); } .m-wait { color: var(--wait); } .m-FAIL, .m-orph, .m-lost { color: var(--bad); } .m-skip { color: var(--dim); }
+.m-run, .m-ok { color: var(--ok); } .m-wait { color: var(--wait); } .m-FAIL, .m-orph, .m-lost { color: var(--bad); } .m-dead { color: var(--wait); } .m-skip { color: var(--dim); }
 .row.machine .label, .row.broken .label, .row.dormant .label { flex: none; width: 24ch; }   /* the gauges in one column */
 .meters { display: flex; gap: 14px; color: var(--dim); flex: none; }
 .meter { display: flex; align-items: center; gap: 5px; width: 15ch; }
@@ -220,6 +222,7 @@ footer kbd { font: inherit; color: var(--fg); }
   <span class="name">errand</span>
   <button class="tab" data-tab="runs"><kbd>1</kbd>runs</button>
   <button class="tab" data-tab="machines"><kbd>2</kbd>machines</button>
+  <button class="tab" data-tab="caches"><kbd>3</kbd>caches</button>
   <input id="q" placeholder="/ filter: machine, project, what, env, state" autocomplete="off" spellcheck="false">
   <button id="refresh" title="ask every machine again now">↻<kbd>R</kbd></button>
   <button id="helpb" title="keys">?</button>
@@ -240,14 +243,14 @@ footer kbd { font: inherit; color: var(--fg); }
 <script>
 "use strict";
 const EVERY = 2000;
-const SIGNS = {run: "●", wait: "◌", ok: "✓", FAIL: "✗", skip: "–", lost: "?", orph: "?"};
+const SIGNS = {run: "●", wait: "◌", ok: "✓", FAIL: "✗", skip: "–", lost: "?", orph: "?", dead: "✗"};
 // what the detail says always; the rest is folded ( `more` )
 const RARE = new Set(["pid", "agent", "id", "outputs", "reached", "host", "keeper", "qemu", "port", "image", "warm", "agents", "said"]);
 const OPENED_IN_A_TAB = /\.(html?|svg|pdf|png|jpe?g|gif|webp|bmp)$/i;
-const HINT = "<kbd>1</kbd> runs · <kbd>2</kbd> machines · <kbd>↑↓</kbd> choose · <kbd>→←</kbd> unfold, fold · <kbd>tab</kbd> detail · " +
+const HINT = "<kbd>1</kbd> runs · <kbd>2</kbd> machines · <kbd>3</kbd> caches · <kbd>↑↓</kbd> choose · <kbd>→←</kbd> unfold, fold · <kbd>tab</kbd> detail · " +
              "click: show · double-click, <kbd>⌘</kbd>-click: open · right-click: more · <kbd>k</kbd> kill · <kbd>r</kbd> rename · <kbd>?</kbd> keys";
 const KEYS = [
-  ["↑ ↓  pgup pgdn", "move in the pane in front"], ["1  2", "the runs tab ( running, waiting, done ), the machines tab"],
+  ["↑ ↓  pgup pgdn", "move in the pane in front"], ["1  2  3", "the runs tab ( running, waiting, done ), the machines tab, the caches tab"],
   ["→  ←", "unfold, fold: a machine, a day · ← on a row inside: up to what holds it"],
   ["tab", "the other pane: the list, or the detail ( its outputs: the one chosen is shown below )"],
   ["click", "a row: its detail · a file, a folder: shown in the pane below"],
@@ -256,7 +259,12 @@ const KEYS = [
   ["enter  o", "open the output chosen ( as a double-click )"], ["e", "the output chosen in an editor of this machine"],
   ["d", "the output chosen, downloaded"], ["esc", "back to the console · clear the filter"],
   ["k", "kill what is chosen, once confirmed: a process, a vm, or all errand runs on a machine"],
-  ["f  a  r", "forget, watch or not, name the machine"], ["/", "filter: machine, project, command, state"], ["R", "ask every machine again now"]];
+  ["f  a  r", "forget, watch or not, name the machine"], ["/", "filter: machine, project, command, state"], ["R", "ask every machine again now"],
+  ["i  u", "caches: remove the dead entries, those unused for n days -- of a place, or of every place on a cache's row"],
+  ["d  D", "caches: the entry chosen removed where it is dead or unused, or everywhere it is"],
+  ["h", "caches: the machine of the place chosen holds its directory ( its agent purges it daily )"],
+  ["n  v", "caches: the days after which an entry is unused ( 30 ) · every entry, or the dead and unused only"]];
+const CACHE_ACTS = {dead: ["remove dead", "i"], unused: ["remove unused", "u"], flagged: ["remove where dead or unused", "d"], everywhere: ["remove everywhere", "D"]};
 
 const $ = id => document.getElementById(id);
 const MAC = /Mac|iPhone|iPad/.test(navigator.platform);
@@ -273,6 +281,7 @@ function ago(s) { s = Math.max(0, Math.floor(s)); return s < 90 ? s + " s" : s <
 const JOB = location.pathname == "/job", JOBQ = new URLSearchParams(location.search);
 const ONLY = JOB && JOBQ.has("only");                  // `&only=1`: the content alone, read again as it changes
 let jobPath = JOB ? JOBQ.get("path") : null;
+let cacheDays = load("cacheDays", 30), cacheAll = load("cacheAll", false);
 let tab = load("tab", "runs"), folded = new Set(load("folded", [])), opened = new Set(load("opened", [])), shown = 50, query = "";
 let rows = [], sel = decodeURIComponent(location.hash.slice(1)) || null, focus = "list", showMore = load("more", false);
 let det = null, dsel = -1, said = "", saidAt = 0, modal = null, view = null;   // view: { key, path, dir, got }
@@ -356,7 +365,8 @@ async function state() {
   if (JOB) return detail();                             // one run: nothing to list
   if (stating) return; stating = true;
   try {
-    const p = new URLSearchParams({tab, q: query, shown, folded: [...folded].join(","), opened: [...opened].join(",")});
+    const p = new URLSearchParams({tab, q: query, shown, folded: [...folded].join(","), opened: [...opened].join(","),
+                                   days: cacheDays, all: cacheAll ? 1 : 0});
     const got = await ask("/state?" + p);
     rows = got.rows; drawCounts(got.counts);
     if (!rows.some(r => r.key == sel)) sel = (rows.find(r => r.kind == "proc" || r.kind == "run" || r.kind == "machine") || rows[0] || {}).key || null;
@@ -376,8 +386,8 @@ function move(d) {
 function toggle(r) {
   if (r.kind == "more") { shown += 50; return refresh(); }
   if (!r.fold) return;
-  const set = r.kind == "group" ? opened : folded;
-  set.has(r.fold) ? set.delete(r.fold) : set.add(r.fold); keep(r.kind == "group" ? "opened" : "folded", [...set]); refresh();
+  const inOpened = r.kind == "group" || r.kind == "centries", set = inOpened ? opened : folded;
+  set.has(r.fold) ? set.delete(r.fold) : set.add(r.fold); keep(inOpened ? "opened" : "folded", [...set]); refresh();
 }
 function fold(unfold) {
   const i = rows.findIndex(r => r.key == sel), r = rows[i];
@@ -508,6 +518,9 @@ function drawDetail() {
   let tools = "";
   if (can.kill) tools += `<button class="danger" data-act="kill">${row && (row.kind == "machine" || row.kind == "broken") ? "kill all" : "kill"}<kbd>k</kbd></button>`;
   if (can.watch) tools += `<button data-act="watch">${can.watch}<kbd>a</kbd></button>`;
+  for (const how of can.caches || []) tools += `<button class="danger" data-act="cache_remove" data-how="${how}">${CACHE_ACTS[how][0]}<kbd>${CACHE_ACTS[how][1]}</kbd></button>`;
+  if (can.hold) tools += `<button data-act="cache_hold">this machine holds it<kbd>h</kbd></button>`;
+  if (can.caches) tools += `<button data-days="1">unused after ${cacheDays} d<kbd>n</kbd></button><button data-all="1">${cacheAll ? "dead and unused only" : "every entry"}<kbd>v</kbd></button>`;
   if (can.rename) tools += `<button data-act="rename">rename machine<kbd>r</kbd></button>`;
   if (can.forget) tools += `<button data-act="forget">forget<kbd>f</kbd></button>`;
   if (isWork && !JOB) tools += `<a class="btn" href="/job?${esc(new URLSearchParams({key: sel}))}" target="_blank" rel="noopener" title="this run as a page of its own: its outputs left, the one chosen right">page ↗</a>`;
@@ -739,6 +752,12 @@ function setFocus(f) {
 }
 function setTab(t) { if (t == tab) return; tab = t; keep("tab", t); sel = null; det = null; closeView(); setFocus("list"); refresh(); }
 function refresh() { state(); }
+function askDays() {                                      // the caches tab: unused after how many days ( ADR 0022 )
+  promptBox({title: "unused after how many days?", text: String(cacheDays)}, t => {
+    const d = Number(t); if (!(d > 0)) return say(`${t}: a number of days, above 0`);
+    cacheDays = d; keep("cacheDays", d); say(`unused: not used for ${d} days`); refresh(); });
+}
+function toggleAll() { cacheAll = !cacheAll; keep("cacheAll", cacheAll); say(cacheAll ? "every entry" : "the dead and unused entries only"); refresh(); }
 const opening = e => e.detail >= 2 || (MAC ? e.metaKey : e.ctrlKey);
 
 document.addEventListener("keydown", e => {
@@ -766,7 +785,11 @@ document.addEventListener("keydown", e => {
   else if (k == "ArrowRight") inList && fold(true);
   else if (k == "ArrowLeft") inList && fold(false);
   else if (k == "Tab") JOB || setFocus(inList ? "detail" : "list");
-  else if ((k == "1" || k == "2") && !JOB) setTab(k == "1" ? "runs" : "machines");
+  else if ((k == "1" || k == "2" || k == "3") && !JOB) setTab({"1": "runs", "2": "machines", "3": "caches"}[k]);
+  else if (tab == "caches" && "iudD".includes(k) && !JOB) act("cache_remove", {how: {i: "dead", u: "unused", d: "flagged", D: "everywhere"}[k]});
+  else if (tab == "caches" && k == "h" && !JOB) act("cache_hold");
+  else if (tab == "caches" && k == "n" && !JOB) askDays();
+  else if (tab == "caches" && k == "v" && !JOB) toggleAll();
   else if (k == "Enter") {
     if (!inList) open(chosenPath(), view && view.dir);
     else { const r = rows.find(r => r.key == sel); if (r && (r.open !== null || r.kind == "more")) toggle(r); else setFocus("detail"); }
@@ -797,7 +820,9 @@ function pathClick(e, el) {
   if (opening(e)) open(path, dir); else show(path, dir);
 }
 $("detail").addEventListener("click", e => {
-  const b = e.target.closest("button[data-act]"); if (b) return act(b.dataset.act);
+  if (e.target.closest("button[data-days]")) return askDays();
+  if (e.target.closest("button[data-all]")) return toggleAll();
+  const b = e.target.closest("button[data-act]"); if (b) return act(b.dataset.act, b.dataset.how ? {how: b.dataset.how} : undefined);
   if (e.target.closest("#more")) { showMore = !showMore; keep("more", showMore); return drawDetail(); }
   const c = e.target.closest(".chip.click");
   if (c && c.dataset.machine) { const key = `["machine", ${JSON.stringify(c.dataset.machine)}, null]`;

@@ -38,8 +38,8 @@ VERBS = {
     "agents": ( "what is kept between commands: errand agents [stop [NAME]]", [ "force" ] ),
     "machines": ( "the machines errand asks what runs there: errand machines [forget NAME...]", [ ] ),
     "download": ( "a file into the project's cache, as errand.download does: errand download URL", [ "sha256" ] ),
-    "caches": ( "the caches of the libraries the runs use here ( $ERRAND_CACHES ), and what they no longer need, removed",
-                [ "dry_run" ] ),
+    "caches": ( "the caches of the libraries the runs use ( $ERRAND_CACHES ), and what they no longer need, removed: "
+                "errand caches [MACHINE...] [--unused DAYS]", [ "dry_run", "unused" ] ),
     "require": ( "inside a run: grow its claim, as errand.require does, then print what to set ( ADR 0014 )",
                  [ "exclusive", "cpus", "ram", "gpus", "gpu_ram" ] ),
 }
@@ -116,6 +116,8 @@ def build_parser( tag_names = ( ) ):
     p.add_argument( "--force", action = "store_true",
                     help = "setup: from scratch; init: replace what is there; agents stop: even with something running" )
     p.add_argument( "--dry-run", action = "store_true", help = "say what setup ( or caches ) would do, and do nothing" )
+    p.add_argument( "--unused", dest = "unused", type = float, default = None, metavar = "DAYS",
+                    help = "caches: also what has not served for DAYS days ( ADR 0022 )" )
     p.add_argument( "--sha256", default = None, help = "download: the hash the file must have ( never required )" )
     p.add_argument( "--all", dest = "all", action = "store_true", help = "status: every project in full, not one line each" )
 

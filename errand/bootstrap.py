@@ -80,10 +80,12 @@ def key() -> str:
 
 
 def _shipped( ):
-    """The files of the package that travel: no caches, no `.sources`."""
+    """The files of the package that travel: no caches, no `.sources`, no `.manifest` ( written beside a copy when it
+    arrives: counted, a shipped copy would not have the key it was shipped under, and a guest's copy is looked for by
+    that key )."""
     for p in sorted( PACKAGE.rglob( "*" ) ):
         rel = p.relative_to( PACKAGE )
-        if "__pycache__" in rel.parts or rel.name == ".sources" or p.is_dir():
+        if "__pycache__" in rel.parts or rel.name in ( ".sources", MANIFEST ) or p.is_dir():
             continue
         yield p, rel
 

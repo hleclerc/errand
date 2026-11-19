@@ -16,12 +16,17 @@ class Vars( Overlay ):
     `values` may be a callable taking the selected tags, which is how a single
     environment covers a whole dimension instead of being split into one per
     value: `Vars( lambda t: { "FTYPE": t.get( "fp", "64" ) } )`.
+
+    `{root}` in a value is the project's root where the command runs: its copy on a machine reached by `Ssh`, its
+    copy in a guest ( `E:\\Projects-rsync` ), itself here -- `Vars( { "PYTHONPATH": "{root}/loom/src" } )`. Nothing
+    else between braces is touched.
     """
     values: dict | object
 
     def wrap( self, cmd: Command, ctx: Context ) -> Command:
         values = self.values( ctx.tags ) if callable( self.values ) else self.values
-        return Command( cmd.argv, { **cmd.env, **{ k: str( v ) for k, v in values.items() } } )
+        root = str( ctx.root )
+        return Command( cmd.argv, { **cmd.env, **{ k: str( v ).replace( "{root}", root ) for k, v in values.items() } } )
 
     def describe( self ):
         return "vars"

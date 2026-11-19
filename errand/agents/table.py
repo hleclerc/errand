@@ -220,11 +220,28 @@ def guest_table( vm: dict, timeout = 40 ) -> dict:
     return _parsed( got ) or { "error": ( got.stderr or got.stdout or "" ).strip()[ -300 : ] or f"exit {got.returncode}" }
 
 
-def _parsed( got ):
+def guest_caches( vm: dict, req: dict, timeout = 120 ) -> dict:
+    """A `caches` op asked of a guest that is up, over its ssh ( `python -m errand.agents caches REQUEST` ), as
+    `guest_table` asks its table ( ADR 0022 )."""
+    from ..vm.common import GUEST_OPTIONS, USER
+    boot = f"C:/errand/src/{bootstrap.sources_key()}/errand/_boot.py"
+    said = json.dumps( req ).replace( '"', '\\"' )
+    argv = [ "ssh", "-p", str( vm[ "port" ] ), "-i", f"{vm[ 'image' ]}/key", *GUEST_OPTIONS, f"{USER}@127.0.0.1",
+             f'if exist "{boot}" ( python "{boot}" -m errand.agents caches "{said}" ) else ( echo errand-none )' ]
+    try:
+        got = subprocess.run( argv, capture_output = True, text = True, timeout = timeout, stdin = subprocess.DEVNULL )
+    except subprocess.TimeoutExpired:
+        return { "error": "the guest did not answer" }
+    if "errand-none" in got.stdout:
+        return { "dirs": [ ], "note": "no errand of these sources in it" }
+    return _parsed( got, "errand-caches " ) or { "error": ( got.stderr or got.stdout or "" ).strip()[ -300 : ] or f"exit {got.returncode}" }
+
+
+def _parsed( got, mark = "errand-table " ):
     for line in reversed( ( got.stdout or "" ).splitlines() ):
-        if line.startswith( "errand-table " ):
+        if line.startswith( mark ):
             try:
-                return json.loads( line[ len( "errand-table " ) : ] )
+                return json.loads( line[ len( mark ) : ] )
             except ValueError:
                 return None
     return None
@@ -356,6 +373,15 @@ def scan( guests = True, only: Path | None = None, resources = True ) -> dict:
              "nodes": nodes, "zygotes": zygotes( dirs ), "resources": _resources() if resources else None }
 
 
+def caches_summary( ) -> dict | None:
+    """The library caches this machine holds, read as they are ( `caches.report`, ADR 0022 ): `errand status`."""
+    try:
+        from .. import caches
+        return caches.report( compacted = False )
+    except Exception as err:
+        return { "error": f"{type( err ).__name__}: {err}" }
+
+
 def _resources( ) -> dict | None:
     """What the machine's resources are doing ( `resources` ): never the table's failure."""
     try:
@@ -368,5 +394,8 @@ def _resources( ) -> dict | None:
 def main() -> int:
     args = sys.argv[ 1 : ]
     only = Path( args[ args.index( "--only" ) + 1 ] ) if "--only" in args[ : -1 ] else None
-    print( "errand-table " + json.dumps( scan( guests = "--no-guests" not in args, only = only ) ), flush = True )
+    got = scan( guests = "--no-guests" not in args, only = only )
+    if "--caches" in args:
+        got[ "caches" ] = caches_summary()
+    print( "errand-table " + json.dumps( got ), flush = True )
     return 0

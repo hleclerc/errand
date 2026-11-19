@@ -167,7 +167,7 @@ def remote_table( rec: dict, timeout = 90 ) -> dict:
     target = rec[ "target" ]
     host, options = target[ "host" ], target.get( "options" ) or [ ]
     cache = bootstrap.ship( host, options, agent = False )
-    then = f'exec "$py" {shlex.quote( f"{cache}/{bootstrap.boot_rel()}" )} -m errand.agents table\n'
+    then = f'exec "$py" {shlex.quote( f"{cache}/{bootstrap.boot_rel()}" )} -m errand.agents table --caches\n'
     line = " ".join( shlex.quote( a ) for a in ( "sh", "-c", bootstrap._script( then, target.get( "python" ) or "python3" ) ) )
     got = subprocess.run( [ "ssh", *ssh_options( options ), host, line ], capture_output = True, text = True,
                           timeout = timeout, stdin = subprocess.DEVNULL )
@@ -184,7 +184,7 @@ def tables( ) -> list:
     import threading
     from ..agents import ledger, table as T
     here = socket.gethostname()
-    out = [ ( ledger.here_name(), T.scan(), None ) ]
+    out = [ ( ledger.here_name(), { **T.scan(), "caches": T.caches_summary() }, None ) ]
     asked = [ ]
 
     def one( rec ):
@@ -316,6 +316,33 @@ def show_running( root: Path, everything = False, got = None ) -> int:
     for machine, error in failed:
         print( warn( f"  {machine}: cannot say" ) + dim( f" ( {error} )" ) )
     return len( work )
+
+
+def show_caches( got ) -> int:
+    """The library caches each machine holds ( ADR 0022 ): entries, size, what is dead, what has not served for
+    30 days. A directory reached from two machines ( NFS ) is said once. -> how many caches."""
+    from .. import caches as C
+    from .caches import cache_line
+    said, seen = [ ], set()
+    for machine, table, _ in got:
+        rep = ( table or { } ).get( "caches" )
+        if not rep:
+            continue
+        if rep.get( "error" ):
+            said.append( warn( f"  {machine}: caches cannot be read ( {rep[ 'error' ]} )" ) )
+            continue
+        for d in rep.get( "dirs", [ ] ):
+            if d.get( "id" ) in seen or not d.get( "caches" ):
+                continue
+            seen.add( d.get( "id" ) )
+            project = Path( d[ "project" ] ).name if d.get( "project" ) else Path( d[ "path" ] ).parent.parent.name
+            for c in d[ "caches" ]:
+                said.append( f"  {machine:<12} {project}/{cache_line( c )}" )
+    if said:
+        print( head( "\ncaches" ) + dim( "   ( errand caches [MACHINE] tidies them; the tui's tab 3 removes by hand )" ) )
+        for line in said:
+            print( line )
+    return len( said )
 
 
 def machines_main( words ) -> int:

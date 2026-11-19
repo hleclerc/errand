@@ -152,9 +152,11 @@ def _meters( win, y, left, at, until, meters, look ) -> int:
 def _colour( row ):
     if row.kind == "dormant":
         return dim()
-    if row.kind == "machine":
+    if row.kind in ( "machine", "cache" ):
         return curses.color_pair( C_TITLE ) | curses.A_BOLD
-    if row.kind in ( "group", "day" ):          # a history, a day: headings, not as loud as what they hold
+    if row.mark == "dead":                      # a cache's entry whose dependencies changed ( ADR 0022 )
+        return curses.color_pair( C_WARN )
+    if row.kind in ( "group", "day", "centries" ):          # a history, a day: headings, not as loud as what they hold
         return dim() | ( curses.A_BOLD if row.kind == "day" else 0 )
     if row.kind == "chead":
         return curses.color_pair( C_TITLE ) | curses.A_BOLD

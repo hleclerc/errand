@@ -165,32 +165,72 @@ Installed with sdot (a console script):
 filters, no pipeline, no readers of other formats: anything derived is computed in Python when the
 frame is written. ParaView stays the way out (`--vtk`).
 
-### 5. A directory view, followed live (errand)
+### 5. A run's page, its outputs, and what opens them (errand)
 
-errand learns two things, neither about frames.
+Settled in the grill's rounds 4 and 5 (`grill/serve/`, 2026-11-19), replacing the declared openers of the
+first version.
 
-**A view can be a directory.** `errand.view( "out/foam.sviz" )`: the journal line is the same
-(`{"t": …, "view": "out/foam.sviz"}`, ADR 0010); the mark carries `"dir": true`, from the run's side,
+**The run's link, said at the start.** The head line of a run in the terminal carries the address of its
+page in `errand web` (the `/job?key=…` page that exists), local or remote run alike: it is the page of
+*my* `errand web`, which reads remote runs through the agents.
+
+    ▸ foam (lmo-torch · gpu 0)  …  ↗ http://127.0.0.1:20501/job?key=…
+
+The link holds no secret: the cookie of `errand web` lasts 30 days, renewed at each visit (today it
+is a session cookie, lost when the browser restarts). `errand run --open` (`-O`) opens the page at the
+start: a tab per run up to 4, beyond that the main page. A user default: `errand.configure( open = True )`.
+
+**The list on the left.** The run's page keeps its layout (list on the left, preview on the right). Views
+(`errand.view`) and outputs merge into one list; the rich outputs (html, a view with an opener, images,
+pdf) come first, in the order they appeared. A `.sviz` is one line, with its state (`331 frames`,
+`running` while its manifest is not `complete`), never the list of its chunks. A click shows it on the
+right, a double-click opens it in a tab of its own.
+
+**A view can be a directory.** `errand.view( "foam.sviz" )`: the journal line is the same
+(`{"t": …, "view": "foam.sviz"}`, ADR 0010); the mark carries `"dir": true`, from the run's side,
 which can see it. On the driving side (`cli/views.py`, `Views`), **naming it again brings what
 changed**: the files missing here, and those whose size or date differ (the manifest), into the
 project here where the run's own coming back would put them. Nothing is deleted here. The latest state
-always comes, never one transfer per call, as for a file. **The manifest comes last**, after the files
-it lists, so that a page never reads a frame it announces that is not here yet (generic rule: the
-files of a directory view in order of date, so the last written last). errand does not watch the
-directory itself: the run says when it changed (`on_frame`).
+always comes, never one transfer per call. **The manifest comes last**, after the files it lists
+(generic rule: the files of a directory view in order of date, the last written last). errand does not
+watch the directory itself: the run says when it changed (`on_frame`).
 
-**Openers: what opens a view, by declared rules.** errand finds the viewer of a view by its name,
-never by something inside it (a run, maybe on another machine, must not pick a command run here):
+**What opens a view: said by its producer.** `errand.view( path, open = … )` takes an opener object
+that says everything; nothing is declared by the user, on any machine:
 
 ```python
-# ~/.config/errand/services.py, or a project file ( ADR 0018 )
-errand.openers[ "*.sviz" ] = "sviz open --url {path}"
+# sdot, when errand is importable ( as `announce` )
+errand.view( store, open = errand.Static( "index.html" ) )
 ```
 
-The command is run on the driving side with the local path; it prints a URL. errand then says that
-URL (`OUTPUT: http://127.0.0.1:…/`) instead of the path, once per view, in the run's block (ADR 0016),
-and `errand web` shows an "open" button for it. A view with no opener is said as a path, as now. sdot's
-documentation gives the line to add; `sviz` can print it (`sviz opener`).
+- **`errand.Static( index )`**: the view is a directory that carries its own page; it is served as it
+  is. Nothing runs on the driving machine, no environment is built, and the page is the one written
+  with the data, so **of the same version** (sdot's editable checkouts raise no question). sdot takes
+  this one.
+- **`errand.Opener( command, env = None, name = None )`**, later, at its first real user: a command
+  (a list, `{path}` = the local copy) that prints a URL and returns, run in an errand environment
+  (`Uv`, `Micromamba`, `Apptainer`…, a `Node` tomorrow) built **in errand's cache** on the driving
+  machine, once per description (its stamp). The object travels in JSON in the journal line. A
+  package installed editable says `source = <its directory>`; errand turns it into the local path
+  when it lies in a tree errand pushes (`~/Projects-rsync/sdot-ffi` on lmo → `~/Projects/sdot-ffi`),
+  and installs that copy editable; otherwise `package==version`. The store's `format` protects the
+  rest: a viewer too old says so.
+- **No confirmation.** One opener: it opens. A list (`open = [ a, b ]`): the first by default, the
+  others from a right-click on the line in the run's page.
+
+**Static views are served by a second server of the host agent**, beside `errand web`: its own fixed
+port, its own token **in the path** (`http://127.0.0.1:<port>/<token>/<id>/`), files only, read-only,
+only under the directories that a `Static` view declared (the run's local copy). Not inside `errand
+web`: its preview is a sandboxed iframe (an opaque origin, which cannot read its neighbour files with
+the cookie), and `allow-same-origin` would let a run's page call `POST /act`. On another origin with the
+token in its path, the page needs no cookie and reaches nothing of errand.
+
+**Where the URL shows.** In the run's page, the preview is an iframe on that URL. In the terminal, the
+view is said `↗ http://127.0.0.1:…/<token>/<id>/` (an `index.html` read as `file://` cannot fetch its
+neighbours), once the first frame has come back. The self-contained page of the end (`foam.html`)
+stays an output said as `file://`, which a ctrl+click opens.
+
+`sviz` stays: for whoever runs without errand (`sviz open`), and for `export`.
 
 ## Considered options
 
@@ -205,7 +245,14 @@ documentation gives the line to add; `sviz` can print it (`sviz opener`).
   a viewer that depends on errand to be reached. Bringing the directory back live is simpler, works
   after the run and offline, and keeps the viewer a local program. Serving from there comes back,
   generically, with `forward` (ADR 0018) and `sviz open --there`.
-- **The directory names its own opener** (a file inside). A run would choose what is executed here.
+- **The directory names its own opener** (a file inside), or **the user declares openers by name**
+  (`errand.openers[ "*.sviz" ] = "sviz open --url {path}"`, the first version). The second needs a
+  line per user and machine, and errand runs in a Python without sdot: the line would also have to name
+  an environment. The producer's object (`errand.Static`, `errand.Opener`) says it all. A run choosing
+  what runs here: `Static` runs nothing here; for `Opener`, it is the user's own code that chose it
+  (rounds 4–5).
+- **Static views served inside `errand web`**: same origin as its actions, and a sandboxed iframe
+  cannot read its neighbours with the cookie.
 - **errand serves any directory with an `index.html`** in `errand web`. It works without sviz, but
   makes `errand web` a second viewer server. Not now.
 - **Rerun, ParaView.** ParaView has the generic data model, filters and remote rendering we do not
@@ -223,6 +270,8 @@ documentation gives the line to add; `sviz` can print it (`sviz opener`).
 - Sharing is an explicit step (`sviz export --html`), no longer the default output.
 - A page opened as `file://` no longer works for a store, only for an export; it says what to run.
 - A user-level file (`~/.config/errand/services.py`) is read by errand for the first time (ADR 0018).
+- A run's address is said at its start, and its page shows its views as they come: the terminal's
+  ctrl+click and the browser lead to the same place.
 
 ## Steps
 
@@ -233,10 +282,13 @@ documentation gives the line to add; `sviz` can print it (`sviz opener`).
    inlined page from the same chunks: the docs' examples must look the same.
 3. **sdot: `sviz`** `open` (detached server, no errand yet), `export --html`, `export --vtk`, `serve`.
 4. **otrec: `Recorder( store = )`**; `exp_2d_real.py` writes `foam.sviz` and passes `on_frame`.
-5. **errand: directory views** (the mark's `dir`, what changed brought back, the manifest last) and
-   **openers** (`errand.openers`, the URL said, the button in `errand web`). Tried for real: a foam
-   run on lmo, watched while it goes.
-6. With ADR 0018: `sviz open` through `errand serve --ensure`; then `sviz open --there` through `forward`.
+5. **errand, in this order** (rounds 4–5): (a) the run's link on its head line, the 30-day cookie,
+   `--open`; (b) the list on the left (rich outputs first, a `.sviz` on one line with its state);
+   (c) directory views (the mark's `dir`, what changed brought back, the manifest last) and otrec's
+   `on_frame`; (d) `errand.Static`, the second server, the URL in the page (iframe) and in the
+   terminal, sdot declaring its opener. Tried for real: a foam run on lmo, watched while it goes.
+6. Later: `errand.Opener` (command, environment, sources) at its first user; with ADR 0018, `sviz open`
+   through `errand serve --ensure`, then `sviz open --there` through `forward`.
 7. Later, if measured worth it: positions as differences to a key frame; frames grouped into files for
    very long runs; `sviz export --gif`; the macOS package.
 
@@ -352,4 +404,9 @@ passed yet: `errand.view` of a directory is step 5.
 
 Tested (`otrec/tests/test_recorder_store.py`, `--env torch`): the frames of a store give back those
 kept in memory (points, ellipses), its curves are the page's, the truth and the image are in the base,
-`write_html` refuses a store. `test_reconstruction.py` still passes. Not tried: a real foam run on lmo.
+`write_html` refuses a store. `test_reconstruction.py` still passes.
+
+The examples keep their page: `Recorder.close( html = )` writes the self-contained page of the store
+too (`sviz export --html`, its `OUTPUT: file://` link said). A real foam run on lmo (2026-11-19,
+`--env lmo-torch -o`, 10 min 11 s): 331 frames, `foam.sviz` 25 MB, `foam.html` 32 MB, brought back at
+the end (342 files); `sviz open` shows it, an uncached frame in 16 ms.

@@ -12,11 +12,11 @@ from .screen import Screen
 from .terminal import C_ACTIVE, C_BAD, C_DIM, C_OK, C_TITLE, C_WARN, dim, get_mouse, OWN_MOUSE, PRESSED, read_key, \
     REPAINT, TRACE, WHEEL, WHEEL_DOWN, WHEEL_UP, without_rep
 
-HINT = "1 runs · 2 machines · ↑↓ choose · →← unfold, fold · tab detail · enter open · e edit · k kill · f forget · r rename · a watch · / filter · ? keys · q quit"
+HINT = "1 runs · 2 machines · 3 caches · ↑↓ choose · →← unfold, fold · tab detail · enter open · e edit · k kill · f forget · r rename · a watch · / filter · ? keys · q quit"
 
 KEYS = [
     ( "↑ ↓  pgup pgdn", "move in the active pane" ),
-    ( "1  2", "the runs tab ( running, waiting, done ), the machines tab" ),
+    ( "1  2  3", "the runs tab ( running, waiting, done ), the machines tab, the caches tab" ),
     ( "→  ←", "unfold, fold: a machine, a day · ← on a row inside: up to what holds it" ),
     ( "tab", "the other pane: the list, or the detail ( its outputs: the one under the cursor is shown )" ),
     ( "enter", "fold, unfold · a row: its detail · an output: opened as this machine opens it ( open, xdg-open )" ),
@@ -29,6 +29,10 @@ KEYS = [
     ( "x", "a shell on its machine, where it works" ),
     ( "/", "filter: machine, project, command, state ( esc clears it )" ),
     ( "p", "the current project only, or every project" ),
+    ( "i  u", "caches: remove the dead entries, those unused for n days -- of a place, or of every place on a cache's row" ),
+    ( "d  D", "caches: the entry under the cursor removed where it is dead or unused, or everywhere it is" ),
+    ( "h", "caches: the machine of the place under the cursor holds its directory ( its agent purges it daily )" ),
+    ( "n  v", "caches: the days after which an entry is unused ( 30 ) · every entry, or the dead and unused only" ),
     ( "R", "ask every machine again now ( they say what changes by themselves )" ),
     ( "click, wheel", "choose a row · scroll what is under the pointer" ),
     ( "q", "leave ( nothing stops: what runs is owned by its agents )" ),
@@ -86,7 +90,7 @@ def _title( win, screen, width ):
     asleep = sum( 1 for m in screen.machines if getattr( m, "dormant", False ) )
     x = 1
     left = [ ( "errand", curses.color_pair( C_TITLE ) | curses.A_BOLD ), ( "  ", 0 ) ]
-    for i, t in enumerate( ( "runs", "machines" ) ):
+    for i, t in enumerate( ( "runs", "machines", "caches" ) ):
         left.append( ( f" {i + 1} {t} ", curses.color_pair( C_ACTIVE ) | curses.A_BOLD | curses.A_REVERSE if t == screen.tab else dim() ) )
         left.append( ( " ", 0 ) )
     for text, attr in left:
@@ -225,8 +229,17 @@ def handle( screen: Screen, key ):
         screen.fold( unfold = False )
     elif key == ord( "e" ):
         screen.edit()
-    elif key in ( ord( "1" ), ord( "2" ) ):
-        screen.select( ( "runs", "machines" )[ key - ord( "1" ) ] )
+    elif key in ( ord( "1" ), ord( "2" ), ord( "3" ) ):
+        screen.select( ( "runs", "machines", "caches" )[ key - ord( "1" ) ] )
+    elif screen.tab == "caches" and key in ( ord( "i" ), ord( "u" ), ord( "d" ), ord( "D" ) ):
+        screen.remove_cached( { "i": "dead", "u": "unused", "d": "flagged", "D": "everywhere" }[ chr( key ) ] )
+    elif screen.tab == "caches" and key == ord( "h" ):
+        screen.hold_cached()
+    elif screen.tab == "caches" and key == ord( "n" ):
+        screen.ask_cache_days()
+    elif screen.tab == "caches" and key == ord( "v" ):
+        screen.cache_every = not screen.cache_every
+        screen.message = "every entry" if screen.cache_every else "the dead and unused entries only"
     elif key in ( 10, 13, curses.KEY_ENTER ):
         screen.enter()
     elif key == ord( "k" ):

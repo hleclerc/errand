@@ -276,6 +276,9 @@ class Agent:
             sweep( self.root )
             from .. import web
             self.web = web.start( self.root )
+            if web.serves( self.root ):
+                # The caches this machine holds, in the bare view: now, then once a day ( ADR 0022 ).
+                threading.Thread( target = _tidy_caches, daemon = True ).start()
 
         def closing():
             # After its runs: the copies of errand's sources nothing needs any more go.
@@ -292,3 +295,15 @@ def _cache( ) -> str:
     """errand's per-user directory on this machine, as `ping` reports it."""
     from .. import bootstrap
     return str( bootstrap.local_cache() )
+
+
+def _tidy_caches( every = 3600.0 ):
+    """The host agent's round over the caches it holds ( `caches.purge_held` ): each is purged at most once a day,
+    asked every hour. Never the agent's failure."""
+    from .. import caches as C
+    while True:
+        try:
+            C.purge_held( say = lambda line: print( f"errand agent: {line}", file = sys.stderr, flush = True ) )
+        except Exception as err:
+            print( f"errand agent: caches not purged ( {type( err ).__name__}: {err} )", file = sys.stderr, flush = True )
+        time.sleep( every )
