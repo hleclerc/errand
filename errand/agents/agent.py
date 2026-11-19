@@ -30,6 +30,7 @@ class Agent:
         self.idle_since = time.monotonic()
         self.lock       = threading.Lock()
         self.web        = None              # the page it serves, a host agent only ( `errand.web` )
+        self._web_lock  = threading.Lock()
         # The agent that started this one's bridge, outside the layers this one entered ( a container ):
         # what this one starts can ask it to start something out there ( the ranks, `errand.mpi` ).
         outer = os.environ.get( "ERRAND_AGENT_DIR" )
@@ -76,10 +77,20 @@ class Agent:
                 self.idle_since = time.monotonic()
             conn.close()
 
+    def _serve_page( self ):
+        """a host agent serves the page: started now if it serves none -- one of older sources may have held it when this
+        one started, and gone since"""
+        from .. import web
+        if ( self.web is None or getattr( self.web, "_httpd", None ) is None ) and web.serves( self.root ):
+            with self._web_lock:
+                if self.web is None or getattr( self.web, "_httpd", None ) is None:
+                    self.web = web.start( self.root )
+
     def open( self, writer, channels, channel, req ):
         op = req.get( "op" )
         try:
             if op == "ping":
+                self._serve_page()                    # ( `errand web` pings: a page another agent held at our start, taken now )
                 writer.send( channel, F.REPLY, { "ok": True, "pid": os.getpid(), "root": str( self.root ),
                                                  "python": sys.executable, "home": os.path.expanduser( "~" ),
                                                  "cache": _cache() } )

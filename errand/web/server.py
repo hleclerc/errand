@@ -687,6 +687,8 @@ def _row( r ) -> dict:
     out = { "key": _key( r ), "label": r.label, "detail": r.detail, "kind": r.kind, "mark": r.mark or "",
             "depth": r.depth, "open": r.open, "fold": fold, "machine": machine,
             "meters": [ [ n, round( f, 3 ) ] for n, f in r.meters ], "hits": list( r.hits ) }
+    if r.kind == "tnode":                               # a folder, a file, an entry: drawn apart ( a folder in colour )
+        out[ "level" ] = what.get( "level" )
     if r.tabled:                                        # a run that is a line of its table: no machine first
         out[ "tabled" ] = True
     if r.kind == "thead":                               # the header of a parameter table: its columns sort ( ADR 0023 )

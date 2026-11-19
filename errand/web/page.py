@@ -101,6 +101,7 @@ body.dragging { user-select: none; }
 .row .label .where { color: var(--dim); }
 .row.thead { color: var(--dim); cursor: default; } .row.thead .th { cursor: pointer; } .row.thead .th:hover { color: var(--acc); }
 .row.tnode .label { color: var(--fg); }
+.row.tnode.l-dir .label { color: var(--acc); font-weight: 600; }      /* a folder: apart from the files and runs */
 .row .right { margin-left: auto; color: var(--dim); overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto;
               max-width: 55%; padding-left: 12px; }
 .row.proc .right, .row.run .right { flex: none; }        /* the time, the step: kept, the name gives way */
@@ -381,7 +382,8 @@ function rowHtml(r) {
   const meters = r.meters.length ? `<span class="meters">${r.meters.map(([n, f]) =>
       `<span class="meter"><span>${esc(n)}</span><span class="bar"><i class="${level(f)}" style="width:${Math.round(100 * f)}%"></i></span><b>${Math.round(100 * f)}%</b></span>`).join("")}</span>` : "";
   const going = r.mark == "going" || greyed.has(r.key) ? " going" : "", many = marked.size > 1 && marked.has(r.key) ? " marked" : "";
-  return `<div class="row ${esc(r.kind)}${r.key == sel ? " sel" : ""}${many}${going}" data-key="${esc(r.key)}" style="padding-left:${14 + 18 * r.depth}px">` +
+  const lv = r.level ? ` l-${esc(r.level)}` : "";
+  return `<div class="row ${esc(r.kind)}${lv}${r.key == sel ? " sel" : ""}${many}${going}" data-key="${esc(r.key)}" style="padding-left:${14 + 18 * r.depth}px">` +
          `<span class="fold">${fold}</span>${sign}<span class="label">${label(r)}</span>${meters}<span class="right">${esc(r.detail)}</span></div>`;
 }
 function drawList() {

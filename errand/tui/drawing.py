@@ -158,6 +158,9 @@ def _colour( row ):
         return dim()
     if row.kind in ( "machine", "cache" ):
         return curses.color_pair( C_TITLE ) | curses.A_BOLD
+    if row.kind == "tnode" and isinstance( row.data, tuple ) and isinstance( row.data[ 1 ], dict ) \
+            and row.data[ 1 ].get( "level" ) == "dir":                   # a folder of the runs' tree: apart from files and runs
+        return curses.color_pair( C_TITLE ) | curses.A_BOLD
     if row.mark == "dead":                      # a cache's entry whose dependencies changed ( ADR 0022 )
         return curses.color_pair( C_WARN )
     if row.kind in ( "group", "day", "centries" ):          # a history, a day: headings, not as loud as what they hold

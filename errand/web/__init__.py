@@ -66,11 +66,14 @@ def start( root: Path ):
         return None
     try:
         from .server import Web
-        web = Web.start( bootstrap.local_cache(), agent = str( Path( root ).resolve() ) )   # ( who serves: in web.json )
+        # The user's ports ( the same every time: a tunnel written once ) are the user's own cache's: an agent of another
+        # cache ( a test's, `ERRAND_CACHE_DIR` ) takes any free one, never the page of its user.
+        own = bootstrap.local_cache().resolve() == ( Path.home() / bootstrap.BASE ).expanduser().resolve()
+        web = Web.start( bootstrap.local_cache(), port = None if own else 0, agent = str( Path( root ).resolve() ) )
         if web is not None:
             try:
                 from . import static
-                web.static = static.start()              # the views opened as they are, beside the page ( ADR 0017 )
+                web.static = static.start( at = None if own else 0 )   # the views opened as they are, beside the page
             except Exception:
                 import traceback
                 traceback.print_exc()
