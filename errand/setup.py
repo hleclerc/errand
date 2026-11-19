@@ -279,9 +279,8 @@ def ensure( root: Path, env, ctx, *, force = False, echo = print, dry_run = Fals
         # all of them are files HERE, and the build happens THERE. Pushing
         # first is what makes `errand setup` over ssh mean the same thing as
         # `errand setup` at home.
-        echo( f"    {L.transfer( env.ssh.transfer )} push -> {env.ssh.host}:{env.ssh.remote_root( ctx )}" )
-        L.push( ctx.root, env.ssh.host, env.ssh.remote_root( ctx ), env.ssh.options, echo = echo,
-                transfer_by = env.ssh.transfer )
+        echo( f"    sync push -> {env.ssh.host}:{env.ssh.remote_root( ctx )}" )
+        L.push( ctx.root, env.ssh.host, env.ssh.remote_root( ctx ), env.ssh.options, echo = echo )
     if dry_run:
         for layer, _, steps, *_ in jobs:
             for step in steps:

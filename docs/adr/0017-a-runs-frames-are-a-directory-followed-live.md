@@ -268,3 +268,88 @@ Tested (`sdot-ffi/tests/test_viz_store.py`): the frames of a store give back the
 radii, ellipses, colours, layers, fields, edges, faces, polytopes, an image, a shared point added late),
 in float32 and in 16 bits; a store holds only the frame being built; `on_frame` is called; the curves.
 `test_Visualizer.py` still passes.
+
+## Step 2 done, 2026-11-19
+
+One template for both pages. `to_html` inlines the data as before; `store_page( title )` (written as
+`index.html` when a store opens) is the same template where each placeholder reads a member of `STORE`
+(`decPos(STORE.POS)` for `decPos("__POS__")`). The page's loader, in a store, reads the manifest, the
+base and the last frame (waiting, with a note, for a run that has written none), joins base and frame
+into the arrays of the self-contained page (the base first, as the shared primitives), and runs the main
+script unchanged in its rendering. What changes with the frame shown is swapped by `useScene`; the frames'
+ranges then say "the shared ones, then the rest" for the frame shown.
+
+- `setFrame` updates the bar and the curve cursors at once, and draws when the chunk is there: at once
+  from the cache, else on arrival. The next three frames and the previous one are fetched ahead. Cache of
+  256 MB, the least recently shown dropped first.
+- Morph and play wait for the next chunk (a tick is skipped); the GIF awaits each frame.
+- The manifest is asked again every second until `complete`: new frames stretch the bar (rows made again
+  only when the set of shown axes changes), the view follows them when it shows the last frame and does
+  not play; a new base empties the cache; curves given again are redrawn where the user left their
+  windows.
+- A field's range "over all the frames" is the union of the frames' [min, max] from the manifest, not the
+  1 %–99 % quantiles of the self-contained page.
+- Images and the bounds come from the first read: an image added later, or bounds that grow, need a
+  reload. The manifest gains `options.bg` (the background resolved per theme).
+
+`write_html` of a store (the self-contained export) is not done: it is `sviz export --html` (step 3).
+A store is read through a server only (`fetch` does not read `file://`).
+
+Checked in a browser (`sdot-ffi/prototypes/viz_store/store_demo.py`): a 2D run (image, layer, shared
+outline, points with two fields, a polytope, a log curve, morph, `compact`) and a 3D cloud draw the same
+as their self-contained pages; frame changes, fields over the frame and over all frames, play with morph
+at the same pace; a run writing a frame every 0.5 s followed live (bar, curve, last frame followed, a
+frame chosen kept). Tests: `test_viz_store.py` (4, with the page of a store: no placeholder left) and
+`test_Visualizer.py` pass.
+
+## Step 3 done, 2026-11-19
+
+`sdot/viz/sviz.py` (new), the console script `sviz = "sdot.viz.sviz:main"` in sdot's `pyproject.toml`:
+
+- `sviz open xyz.sviz [--url] [--idle 10m]`: registers the directory in `~/.cache/sdot/sviz/dirs.json`
+  (id = its name and a hash of its absolute path), ensures the server (under a lock; detached:
+  `start_new_session`, or DETACHED_PROCESS on Windows; log in `server.log`), prints
+  `http://127.0.0.1:<port>/<token>/<id>/` and opens it. The token (`token`, mode 600) and the port
+  (`last-port`, when free) are kept: a URL stays valid from one start to the next.
+- `sviz serve [--port P] [--idle T]`: stdlib `ThreadingHTTPServer` on 127.0.0.1. `index.html` is the
+  installed `store_page`, made at each request; the other files are read from the directory (a path
+  leaving it is a 404), all `no-store`; `/<token>/ping` says `sviz`. `dirs.json` is read at each request,
+  so `open` never talks to the server. It stops after `idle` without a request; a store page asks for
+  its manifest (`HEAD`) every minute, so a tab kept open keeps the server.
+- `sviz stop`: SIGTERM; the server removes its `server.json` as on idle.
+- `sviz export xyz.sviz --html out.html [--every k] [--frames a:b] [--max-mb N]`: `store_page( title,
+  files = )` inlines the manifest (frames chosen, `complete`) and their chunks in base64; the loader
+  reads them there instead of fetching. `--max-mb` keeps one frame out of k, the last always, the page
+  itself counted. A store page opened as `file://` says to use `sviz open`.
+- `sviz export xyz.sviz --vtk out/name`: `write_vtk` unchanged, given an adapter over the store
+  (`frame( i )` joins the base and frame i, `positions` is their pool).
+
+`write_html` of a Visualizer stays the page as before (the docs' examples unchanged); the inlined store
+is the export of a store only.
+
+Not done: `errand serve --ensure` (step 6); a test of the detached start under errand's runner (tried by
+hand on the Mac: open, same URL after `stop` and `open` again).
+
+Tests (`sdot-ffi/tests/test_sviz.py`): export --html (frames chosen, size cap, files inlined, no
+placeholder left); export --vtk (as many points and cells per frame as the Visualizer's own series);
+the server (page, manifest, frame bytes; wrong token, unknown id, `..` and `%2e%2e`: 404; it stops when
+idle and cleans its state). In a browser: an export of 16 frames out of 60 under 1 MB, and a 3D store
+through `sviz open`.
+
+## Step 4 done, 2026-11-19
+
+otrec's `Recorder( store = , page = , on_frame = )`: each frame is drawn in a `Visualizer( store = )` as it
+is recorded, and forgotten; `frames` keeps what the curves need (iteration, stage, sigma, loss, metrics,
+`nb_points`, `median_radius`). `page` holds the options `write_html` took at the end (title, truth,
+images, field, curves, fps), now known at the start; the field shown at the start is set once a frame
+has it. The curves are given again after each frame (`clear_curves`), and by `close()`, which writes
+the last frame (the losses after it included). `write_html` builds the same page as before from the
+same pieces (`_page_viz`, `_draw`, `_curves`), and refuses a recorder with a store.
+
+`experiments/exp_2d_real.py` (foam, pencil, sandstone, bamboo) writes `<name>.sviz` instead of
+`<name>.html`: `sviz open foam.sviz`, or `sviz export foam.sviz --html foam.html`. `on_frame` is not
+passed yet: `errand.view` of a directory is step 5.
+
+Tested (`otrec/tests/test_recorder_store.py`, `--env torch`): the frames of a store give back those
+kept in memory (points, ellipses), its curves are the page's, the truth and the image are in the base,
+`write_html` refuses a store. `test_reconstruction.py` still passes. Not tried: a real foam run on lmo.

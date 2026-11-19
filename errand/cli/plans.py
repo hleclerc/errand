@@ -59,7 +59,7 @@ def plan_of( targets, entries, combos, *, root, out_root ):
     beneath `under`.
 
     Worked out here, once, for everyone who needs it before the fact: the
-    targeted rsync pull, the completion signal, and the screen that wants to
+    targeted pull, the completion signal, and the screen that wants to
     show each case's output as it is written.
     """
     runs = [ ]

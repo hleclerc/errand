@@ -37,7 +37,7 @@ from .launchers import Mpi, Preload, preload_of
 from .interpreters import Conda, fetch_micromamba, Micromamba, MICROMAMBA_URL, Uv, Venv
 from .containers import _BuiltElsewhere, Apptainer, Docker, Podman, relay, replace_line
 from .schedulers import run_on, Slurm, slurm_seconds, watch_dir, watch_job
-from .gateways import _remote, _rsh, back_zones, cache_zones, fetch, fetch_file, own_paths, push, put, RSYNC_EXCLUDES, Ssh, transfer, ssh_options, Unreachable
+from .gateways import _remote, back_zones, cache_zones, fetch, fetch_file, own_paths, push, put, Ssh, ssh_options, Unreachable
 from .hosts import host_of, Over
 from .missing import Missing, missing_of
 from .stacks import chooses_python, container_of, interpreters_of, mpi_of, NODE_LOCAL, ssh_of, vm_of, warnings_for
@@ -82,13 +82,10 @@ __all__ = [
     'Module',
     'Mpi',
     'Slurm',
-    'RSYNC_EXCLUDES',
     'own_paths',
     'back_zones',
     'cache_zones',
-    'transfer',
     'Ssh',
-    '_rsh',
     '_remote',
     'push',
     'fetch',

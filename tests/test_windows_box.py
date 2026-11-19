@@ -244,14 +244,11 @@ if test( "errand started on Windows puts the project on a POSIX machine at a POS
             gateways._HOMES.clear()
 
 
-if test( "errand started on Windows gives MSYS2's rsync MSYS2's ssh, and pulls no links" ):
+if test( "errand started on Windows pulls no links" ):
     from unittest import mock
+    from errand.agents import syncop
     with mock.patch.object( L.base, "WINDOWS", True ), \
-         mock.patch( "errand.vm.box.local_ssh", lambda: Path( "C:/Users/me/.cache/errand/msys2-rsync/k/usr/bin/ssh.exe" ) ), \
-         mock.patch( "errand.vm.box.local_rsync", lambda: Path( "C:/rsync.exe" ) ), \
-         mock.patch.object( gateways.subprocess, "run" ) as run:
-        e = gateways._rsh( [ "-p", "22" ], agent = False )
-        assert e[ 1 ].startswith( "/c/Users/me/.cache/errand/msys2-rsync/k/usr/bin/ssh.exe -p 22" )
-        gateways.fetch( [ "a/b" ], "h", "/home/me/x", Path( tempfile.mkdtemp() ), transfer_by = "rsync" )
-        argv = run.call_args[ 0 ][ 0 ]
-        assert "--no-links" in argv and "h:/home/me/x/a/b/" in argv
+         mock.patch.object( gateways.agents, "open", lambda target: None ), \
+         mock.patch.object( syncop, "pull" ) as pull:
+        gateways.fetch( [ "a/b" ], "h", "/home/me/x", Path( tempfile.mkdtemp() ) )
+        assert pull.call_args.kwargs[ "links" ] is False and pull.call_args[ 0 ][ 3 ] == [ "a/b" ], pull.call_args

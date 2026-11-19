@@ -40,7 +40,7 @@ gains is everything that happens around the run:
 | where it runs | wherever you typed it | any declared environment, several at once |
 | output | scrollback | a directory per run, per place, per date |
 | numbers | printed | `result.yaml`, summarized across dates and machines |
-| on another machine | copy, ssh, remember to fetch | one flag, results rsynced back |
+| on another machine | copy, ssh, remember to fetch | one flag, results brought back |
 
 The Catch2 benchmark in `cpp/test_geometry.cpp` is the clearest case: it already measured something,
 and the measurement went to the terminal and died there. Now:

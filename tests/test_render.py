@@ -28,6 +28,57 @@ def leaf_of( project: Path, name: str ) -> Path:
     return next( p.parent for p in ( project / "errand-outputs" / "runs" ).rglob( "result.yaml" ) if name in str( p ) )
 
 
+if test( "rows: aligned on the rows before, drawn again on a terminal when a column grows, whole under -j" ):
+    import json
+    from errand import rows
+    from errand.cli.render import Renderer
+    os.environ[ "ERRAND_STEPS" ] = "/dev/null"
+    try:
+        lines = [ rows.text( "add_balls", [ "n=1250", "pts=1250", "r=0.005" ] ),
+                  rows.text( "adjust", [ "ctr=1", "pts=1250", "r=0.005" ], [ "loss 35.2", "→ 0.0035" ], [ "3.4 s" ] ),
+                  rows.text( "adjust", [ "ctr=1", "pts=1250", "r=0.00706" ], [ "loss 0.00347", "→ 0.00346" ], [ "2.7 s" ] ),
+                  rows.text( "split_items", [ "div=4", "pts=5000" ] ) ]
+    finally:
+        del os.environ[ "ERRAND_STEPS" ]
+    assert lines[ 0 ].endswith( "\x07add_balls  n=1250 pts=1250 r=0.005" ), repr( lines[ 0 ] )   # what a file shows
+    assert rows.text( "a", "b" ) == "a  b", "outside errand: the line only"
+
+    # off a terminal: aligned on the rows before only; under -j: at the widths of the whole case
+    for blocks, want in ( ( False, [ "add_balls  n=1250 pts=1250 r=0.005",
+                                     "adjust     ctr=1 pts=1250 r=0.005  loss 35.2 → 0.0035  3.4 s",
+                                     "adjust     ctr=1 pts=1250 r=0.00706  loss 0.00347 → 0.00346  2.7 s",
+                                     "split_items  div=4 pts=5000" ] ),
+                          ( True, [ "add_balls    n=1250 pts=1250 r=0.005",
+                                    "adjust       ctr=1 pts=1250 r=0.005    loss 35.2    → 0.0035   3.4 s",
+                                    "adjust       ctr=1 pts=1250 r=0.00706  loss 0.00347 → 0.00346  2.7 s",
+                                    "split_items  div=4 pts=5000" ] ) ):
+        out = io.StringIO()
+        r = Renderer( out, out )
+        r.mode, r.color, r.blocks = "bar", False, blocks
+        r.head( "foam", "f.py:1" )
+        data = ( "\n".join( lines ) + "\nplain\n" ).encode()
+        for i in range( 0, len( data ), 7 ):                   # rows cut anywhere still arrive whole
+            r.write( data[ i : i + 7 ] )
+        r.tail( "PASS", "foam", "f.py:1" )
+        got = out.getvalue().splitlines()[ 1 : -1 ]
+        assert got == [ "  │ " + l for l in want ] + [ "  │ plain" ], "\n".join( got )
+
+    # on a terminal: the rows drawn before, drawn again in place, at the new widths
+    class Tty( io.StringIO ):
+        def isatty( self ):
+            return True
+    out = Tty()
+    r = Renderer( out, out )
+    r.mode, r.color, r._live = "bar", False, lambda: True
+    r._ticking = True                                         # ( no line said under it meanwhile )
+    r.head( "foam", "f.py:1" )
+    for l in lines[ :3 ]:
+        r.write( l + "\n" )
+    said = out.getvalue()
+    assert "\x1b[2A\r\x1b[K  │ adjust     ctr=1 pts=1250 r=0.005    loss 35.2    → 0.0035   3.4 s\x1b[2B\r" in said, repr( said )
+    r.tail( "PASS", "foam", "f.py:1" )
+
+
 if test( "the renderer: a header, the gutter of each stream, an end line; a block held whole under -j" ):
     from errand.cli.render import Renderer
     out, err = io.StringIO(), io.StringIO()
@@ -38,8 +89,8 @@ if test( "the renderer: a header, the gutter of each stream, an end line; a bloc
     r.write( b"o\n" )
     r.write( "oops\n", err = True )
     r.tail( "PASS", "solve", "s.py:3", seconds = 2.1, results = { "residual": 1e-3, "big": [ 1, 2 ] } )
-    assert out.getvalue() == "  ▸ solve  s.py:3 · n=3\n    │ one\n    │ two\n    ╰ PASS solve  2.1 s · residual 0.001\n", repr( out.getvalue() )
-    assert err.getvalue() == "    ┃ oops\n", repr( err.getvalue() )
+    assert out.getvalue() == "  ▸ solve  s.py:3 · n=3\n  │ one\n  │ two\n  ╰ PASS solve  2.1 s · residual 0.001\n", repr( out.getvalue() )
+    assert err.getvalue() == "  ┃ oops\n", repr( err.getvalue() )
 
     # a line left open ends before errand's next one; a bar redrawn in place keeps its gutter
     out = io.StringIO()
@@ -48,8 +99,8 @@ if test( "the renderer: a header, the gutter of each stream, an end line; a bloc
     r.head( "p", "p.py:1" )
     r.write( "\rstep 1\rstep 2" )
     r.tail( "FAIL", "p", "p.py:1", seconds = 0.5, error = "ValueError: no", output = "errand-outputs/x/output.txt" )
-    assert out.getvalue() == ( "  ▸ p  p.py:1\n\r    │ step 1\r    │ step 2\n    ╰ FAIL p  500 ms  ValueError: no\n"
-                               "      ↳ errand-outputs/x/output.txt\n" ), repr( out.getvalue() )
+    assert out.getvalue() == ( "  ▸ p  p.py:1\n\r  │ step 1\r  │ step 2\n  ╰ FAIL p  500 ms  ValueError: no\n"
+                               "    ↳ errand-outputs/x/output.txt\n" ), repr( out.getvalue() )
 
     # `-j`: nothing of a case before its end, then all of it at once
     out = io.StringIO()
@@ -60,10 +111,10 @@ if test( "the renderer: a header, the gutter of each stream, an end line; a bloc
     r.write( "y\n", err = True )
     assert out.getvalue() == "", out.getvalue()
     r.tail( "PASS", "a", "a.py:1" )
-    assert out.getvalue() == "  ▸ a  a.py:1\n    │ x\n    ┃ y\n    ╰ PASS a\n", repr( out.getvalue() )
+    assert out.getvalue() == "  ▸ a  a.py:1\n  │ x\n  ┃ y\n  ╰ PASS a\n", repr( out.getvalue() )
 
     # `spaces`, `off`
-    for mode, want in ( ( "spaces", "      x\n" ), ( "off", "x\n" ) ):
+    for mode, want in ( ( "spaces", "    x\n" ), ( "off", "x\n" ) ):
         out = io.StringIO()
         r = Renderer( out, out )
         r.mode, r.color = mode, False
@@ -78,7 +129,7 @@ if test( "off a terminal, a child's output is behind the gutter too, and output.
         project = write_project( Path( tmp ) / "proj", "", { "test_mixed.py": MIXED } )
         code, output = run_errand( project, "run", "--no-queue", "test_mixed.py::*" )
         assert code == 0, output
-        for line in ( "    │ python out", "    ┃ python err", "    │ child out", "    ┃ child err" ):
+        for line in ( "  │ python out", "  ┃ python err", "  │ child out", "  ┃ child err" ):
             assert line in output.splitlines(), f"{line!r}\n{output}"
         assert any( l.startswith( "  ▸ mixed (default)  test_mixed.py:" ) for l in output.splitlines() ), output
         leaf = leaf_of( project, "mixed" )
@@ -111,7 +162,7 @@ if test( "on a terminal, the run still sees one, and a child's output is behind 
             shown = plain( term.read( 0.3 ) ).replace( "\r", "" )
         finally:
             term.close()
-        for line in ( "    │ python out", "    ┃ python err", "    │ child out", "    ┃ child err", "    │ tty True" ):
+        for line in ( "  │ python out", "  ┃ python err", "  │ child out", "  ┃ child err", "  │ tty True" ):
             assert line in shown.splitlines(), f"{line!r}\n{shown}"
         leaf = leaf_of( project, "mixed" )
         assert "child out" in ( leaf / "output.txt" ).read_text() and "│" not in ( leaf / "output.txt" ).read_text()
@@ -141,9 +192,9 @@ if test( "-j in sessions: each case one block, from its header to its end, whoev
         lines = output.splitlines()
         for name in ( "a", "b" ):
             start = lines.index( next( l for l in lines if l.startswith( f"  ▸ case {name}" ) ) )
-            end = lines.index( next( l for l in lines if l.startswith( f"    ╰ PASS case {name}" ) ) )
+            end = lines.index( next( l for l in lines if l.startswith( f"  ╰ PASS case {name}" ) ) )
             inside = lines[ start + 1 : end ]
-            mine = [ l for l in inside if re.match( rf"^    [│┃] {name} (out|err|child) \d$", l ) ]
+            mine = [ l for l in inside if re.match( rf"^  [│┃] {name} (out|err|child) \d$", l ) ]
             assert len( mine ) == 9 and len( inside ) == 9, f"case {name}:\n" + "\n".join( inside ) + f"\n---\n{output}"
 
 
@@ -293,7 +344,7 @@ if test( "typing for the case in front: its number, the line edited at the botto
     assert r.waiting(), "a question left open, then silence"
     r.typed( b"hugo\n", echoed = True )                    # the terminal showed it, and ended the line
     r.write( "got hugo\n" )
-    assert out.getvalue().endswith( "    │ name?     │ got hugo\n" ) and not r.waiting(), repr( out.getvalue() )
+    assert out.getvalue().endswith( "  │ name?   │ got hugo\n" ) and not r.waiting(), repr( out.getvalue() )
     r.typed( b"x\n", echoed = False )                      # under Focus: in the case's output
     assert out.getvalue().endswith( "  │ x\n" ), repr( out.getvalue() )
 
@@ -464,12 +515,12 @@ if test( "on a terminal, how long a quiet case has run is said under its lines, 
         r.set_step( "iteration 4" )
         time.sleep( 2.2 )
         said = out.getvalue()
-        assert "\r\x1b[K    ┆ " in said and "· iteration 4" in said, repr( said )
+        assert "\r\x1b[K  ┆ " in said and "· iteration 4" in said, repr( said )
         r.write( "more\n" )
         r.tail( "PASS", "slow", "s.py:1", seconds = 2.3 )
         time.sleep( 0.7 )
         after = out.getvalue()[ len( said ) : ]
-        assert re.sub( r"\x1b\[[0-9;]*m", "", after ).startswith( "\r\x1b[K    │ more\n" ), repr( after )   # erased, then the line
+        assert re.sub( r"\x1b\[[0-9;]*m", "", after ).startswith( "\r\x1b[K  │ more\n" ), repr( after )   # erased, then the line
         assert "┆" not in after, "nothing said once the case ended"
     finally:
         if kept is None:

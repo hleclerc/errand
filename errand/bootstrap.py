@@ -117,7 +117,7 @@ def ship( host: str, options = ( ), agent = True ) -> str:
 
     Skipped when what is there says it is these sources already ( `.sources` ), which costs one
     line. Otherwise one tar crosses, on the stdin of that same kind of line, and is unpacked
-    beside the copy before it takes its place ( ADR 0006 ): no rsync is needed over there, and a
+    beside the copy before it takes its place ( ADR 0006 ): nothing but sh and tar is needed over there, and a
     copy is whole or not there. New sources mean a new agent ( `sources_key` ), whose start ships
     them: there is no agent of these sources yet to sync them through."""
     from .layers import _remote

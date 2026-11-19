@@ -1,5 +1,5 @@
-"""The sync by manifest ( ADR 0006 ), between two directories of this machine: what rsync did,
-and the corner cases it had settled -- links, modes, types that change, names, files that change
+"""The sync by manifest ( ADR 0006 ), between two directories of this machine: what a copy must do,
+and the corner cases a copy has to settle -- links, modes, types that change, names, files that change
 while they are read, a copy changed behind errand's back.
 """
 import os
@@ -416,18 +416,6 @@ if test( "a push never deletes the records of runs only the copy has, wherever t
     shutil.rmtree( src / "runs" )
     r, _ = run( src, dst, state )
     assert ( dst / "runs/a/2026-x/result.yaml" ).exists() and not any( k.startswith( "runs/" ) for k in r.deleted ), r
-
-
-if test( "an rsync push is told the same: the run directories over there, protected" ):
-    from errand.layers import gateways as G
-    import subprocess as sp
-    root = tree( { "runs/a/r1/result.yaml": "x", "runs/a/r1/f.png": "p", "deep/x/r2/stderr.txt": "e", ".git/result.yaml": "no" } )
-    found = sp.run( [ "sh", "-c", G._RUNS_LISTING, "_", str( root ), "result.yaml", "stderr.txt" ],
-                    capture_output = True, text = True, check = True ).stdout.split()
-    assert sorted( found ) == [ "./deep/x/r2/stderr.txt", "./runs/a/r1/result.yaml" ], found
-    rules = G.protect_runs( [ "runs/a/r1/result.yaml", "deep/x/r2/stderr.txt" ] )
-    assert "/runs/a/r1/***" in rules and "/deep/x/r2/***" in rules and "/runs/a/summary.yaml" in rules, rules
-    assert "/runs/a/latest" in rules and "/summary.yaml" in rules
 
 
 # -- cache zones ( ADR 0012 ): both sides add, nobody replaces ------------------------

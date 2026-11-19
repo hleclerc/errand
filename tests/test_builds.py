@@ -170,33 +170,32 @@ if test( "a record is read through what a remote shell says first" ):
         assert record == { "built": { "fingerprint": "f" } } and stamp == "12 34", ( record, stamp )
 
 
-if test( "a push by rsync spares the exact paths of every environment, and says what it deleted" ):
+if test( "a push spares the exact paths of every environment: they are build zones of its selection" ):
+    from errand import sync as S
+    from errand.layers import gateways as G
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path( tmp )
-        here, there, bin_ = tmp / "here", tmp / "there", tmp / "bin"
-        for d in ( here, there, bin_ ):
+        here, there, state = tmp / "here", tmp / "there", tmp / "state"
+        for d in ( here, there, state ):
             d.mkdir()
-        ( bin_ / "ssh" ).write_text( '#!/bin/sh\nwhile [ "$1" != h ]; do shift; done\nshift\nexec sh -c "$*"\n' )
-        ( bin_ / "ssh" ).chmod( 0o755 )
         ( here / "source.py" ).write_text( "1\n" )
-        for name in ( "a.sif", "a.sif.new", "b.sif", "manylinux.sif.bak", "stray.sif" ):
+        for name in ( "a.sif", "a.sif.new", "b.sif" ):
             ( there / name ).write_text( "only there\n" )
 
         kept = dict( config.envs )
         config.envs.clear()
         config.envs[ "one" ] = Env( [ L.Apptainer( image = "a.sif" ) ] )
         config.envs[ "two" ] = Env( [ L.Apptainer( image = "b.sif" ) ] )
-        path = os.environ[ "PATH" ]
-        os.environ[ "PATH" ] = f"{bin_}:{path}"
-        said = [ ]
         try:
             assert "/a.sif.new" in L.own_paths() and "/b.sif" in L.own_paths()
-            L.push( here, "h", there, echo = said.append, transfer_by = "rsync" )
+            sel = G.selection( here )
+            assert S.Zone( "/a.sif.new", "build" ) in sel.zones and S.Zone( "/b.sif", "build" ) in sel.zones, sel.zones
+            # a copy errand wrote before ( trusted: empty ): what is not a zone would go
+            ( state / "dst.json" ).write_text( "{}" )
+            S.sync( here, there, sel, src_cache = state / "src.json", trusted = state / "dst.json", say = lambda s: None )
         finally:
-            os.environ[ "PATH" ] = path
             config.envs.clear()
             config.envs.update( kept )
 
         names = { p.name for p in there.iterdir() }
-        assert names == { "a.sif", "a.sif.new", "b.sif", "source.py" }, names
-        assert any( "manylinux.sif.bak" in s for s in said ) and any( "stray.sif" in s for s in said ), said
+        assert { "a.sif", "a.sif.new", "b.sif", "source.py" } <= names, names

@@ -99,7 +99,7 @@ errand run --grid=, -o --env here,there bench/solvers.py::cost --n=100000
 
 ```text
   -> there  ssh:bigbox.lab.example -> venv:.venv/bin/python
-    rsync push -> bigbox.lab.example:/home/me/scratch/proj
+    sync push -> bigbox.lab.example:/home/me/scratch/proj
   ...
 ```
 

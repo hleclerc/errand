@@ -321,7 +321,7 @@ Every argument is a keyword with a default unless shown otherwise.
 | `Apptainer` | `Apptainer( image, recipe = None, flags = [ ], mounts = { }, pip = [ ], fakeroot = False, scratch = None, build_flags = [ ], build_on = None, install = None, run_from = None, exe = "apptainer" )` | [Containers](/guide/layers/containers) |
 | `Docker` | `Docker( image, recipe = None, flags = [ ], mounts = { }, pip = [ ], engine = "docker", user = "caller" )` | [Containers](/guide/layers/containers) |
 | `Podman` | `Docker` with `engine = "podman"`, `user = None` | [Containers](/guide/layers/containers) |
-| `Ssh` | `Ssh( host, root = None, python = "python3", options = [ ], also = [ ], errand_outputs_directory = None, transfer = None, user = None, jump = None )` | [Ssh](/guide/layers/ssh) |
+| `Ssh` | `Ssh( host, root = None, python = "python3", options = [ ], also = [ ], errand_outputs_directory = None, user = None, jump = None )` | [Ssh](/guide/layers/ssh) |
 | `Slurm` | `Slurm( partition = None, nodes = None, cpus = None, gpus = None, time = None, account = None, nodelist = None, qos = None, watch = None, ntasks_per_node = None, mpi = None, extra = [ ], keep_alive = None, allocation = None )` | [Slurm](/guide/layers/slurm) |
 | `Mpi` | `Mpi( launcher = "mpiexec", np = "-n", flags = [ ] )` | [MPI](/guide/layers/mpi) |
 | `Preload` | `Preload( *modules, learn = True )` | [Preload](/guide/layers/preload) |

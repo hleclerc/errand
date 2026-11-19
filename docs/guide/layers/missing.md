@@ -50,4 +50,4 @@ all the layers that run there, before anything is built. A test that fails stops
 ```
 
 `Apptainer` needs its executable; `Docker` and `Podman` their engine, and that it answers. The
-[`Windows`](./windows) layer says what the machine that boots it lacks: QEMU, KVM, rsync.
+[`Windows`](./windows) layer says what the machine that boots it lacks: QEMU, KVM.

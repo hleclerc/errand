@@ -19,7 +19,7 @@ else f kvm absent; fi
 f cache "${ERRAND_CACHE_DIR:-$HOME/.cache/errand}"
 f root "$( pwd )"
 ( . /etc/os-release 2>/dev/null && f os "$ID $ID_LIKE" )
-for t in qemu-system-x86_64 qemu-img ssh scp ssh-keygen tar rsync zstd curl wget; do
+for t in qemu-system-x86_64 qemu-img ssh scp ssh-keygen tar zstd curl wget; do
     command -v "$t" >/dev/null 2>&1 && f tool "$t"
 done
 true
@@ -78,7 +78,7 @@ def qemu_hint( facts: Facts ) -> str:
 
 
 def package_hint( facts: Facts, names ) -> str:
-    """For tools whose package has their name everywhere: rsync, zstd."""
+    """For tools whose package has their name everywhere: zstd, curl."""
     names = " ".join( names )
     if facts.system == "Darwin":
         return f"brew install {names}"

@@ -1,4 +1,4 @@
-"""Bringing a tree in line with another, by manifest ( ADR 0006 ): what the agents do instead of rsync.
+"""Bringing a tree in line with another, by manifest ( ADR 0006 ): how files cross between machines, through the agents.
 
 Each step works on one side, so that over the protocol each agent does its own:
 
@@ -60,7 +60,7 @@ class Entry( NamedTuple ):
     target  : str = ""           # what a link points to
 
     def same( self, other: "Entry" ) -> bool:
-        """Equal without reading either: rsync's quick check, size and mtime."""
+        """Equal without reading either: a quick check, size and mtime."""
         if self.kind != other.kind:
             return False
         if self.kind == "f":
@@ -87,7 +87,7 @@ class Manifest( dict ):
 
 
 class Patterns:
-    """Paths as rsync reads them: a name pattern matched against every component ( `__pycache__`,
+    """Path patterns: a name pattern matched against every component ( `__pycache__`,
     `*.pyc` ), a path anchored at the root ( `/torch.sif` ), or an inner path ( `pkg/build` ), which
     matches at any depth."""
 
@@ -619,6 +619,30 @@ def refused( sel: Selection, key: str, directory: Path, prior: dict, written: Ma
     written.theirs[ key ] = str( held ) if held is not None else ""
     return None if key in prior or held is None else str( held )
 
+
+RUN_HELD = "a run's records"
+
+
+def runs_kept( keys, path, prior: dict, written: Manifest ) -> list:
+    """The records of runs only the destination has ( `Plan.kept_runs` ), that a push leaves there. One no longer on
+    the disk ( removed by hand ) leaves the copy's manifest, `written`, which the destination had been taken for; the
+    directory of one still there is theirs. -> the records of the runs to say: those not said by an earlier push."""
+    from .results import RESULT, RUN_MARKS
+    marks = { RESULT, *RUN_MARKS }
+    out = [ ]
+    for key in keys:
+        if not os.path.lexists( path( key ) ):
+            written.pop( key, None )
+            written.real.pop( key, None )
+            written.theirs.pop( key, None )
+            continue
+        run, _, name = key.rpartition( "/" )
+        if name in marks and run:
+            written.theirs[ run ] = RUN_HELD
+            if run not in prior:
+                out.append( key )
+    return out
+
 @dataclass
 class Report:
     sent    : list = field( default_factory = list )
@@ -737,7 +761,6 @@ def sync( src_root, dst_root, sel: Selection, *, src_cache = None, trusted = Non
             return ""
 
     p = plan( src, dst, theirs, sel )
-    report.kept_runs = p.kept_runs
     report.conflicts = list( p.conflicts )
     prior = dict( known.theirs ) if known is not None else { }
     refusals = [ ]
@@ -758,6 +781,11 @@ def sync( src_root, dst_root, sel: Selection, *, src_cache = None, trusted = Non
     for key in [ k for k in report.kept if k not in src ]:   # still there: not something to find next time
         written[ key ] = dst[ key ]
     written.theirs = { k: v for k, v in prior.items() if k in dst and k not in src }
+    for key in p.kept_runs:                        # left there, and known as there
+        written[ key ] = dst[ key ]
+        if key in dst.real:
+            written.real[ key ] = dst.real[ key ]
+    report.kept_runs = runs_kept( p.kept_runs, w.path, prior, written )
     for key in refusals:
         said = refused( sel, key, w.path( key ), prior, written )
         if said:

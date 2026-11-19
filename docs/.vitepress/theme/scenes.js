@@ -63,7 +63,7 @@ function stack() {
     { r: 5, c: 7, h: 3, w: 50, title: 'apptainer · cuda.sif' },
   ]
   const log = [
-    [ 'push', 'rsync the project to gpu-box' ],
+    [ 'push', 'sync the project to gpu-box' ],
     [ 'wait', 'sbatch --partition gpu     job 48213' ],
     [ 'run',  'apptainer exec cuda.sif   (rebuilt only if the .def changed)' ],
   ]
@@ -81,7 +81,7 @@ function stack() {
     for ( let i = 0; i < logged; i++ ) {
       g.put( 12 + i, 2, '→', 'run' ).put( 12 + i, 4, log[ i ][ 1 ], 'dim' )
     }
-    if ( back >= 1 ) g.put( 15, 2, '←', 'ok' ).put( 15, 4, 'rsync runs/train.py/train/…/ back to your laptop', 'dim' )
+    if ( back >= 1 ) g.put( 15, 2, '←', 'ok' ).put( 15, 4, 'sync runs/train.py/train/…/ back to your laptop', 'dim' )
     if ( done ) g.put( 17, 2, 'PASS', 'ok' ).put( 17, 7, 'train  cluster@gpu-box  42.1s  runs/train.py/train/latest/', '' )
     return g.html()
   }
@@ -167,12 +167,12 @@ function tui() {
     '-> cluster',
     '   ssh:gpu-box -> slurm:gpu',
     '   -> apptainer:cuda.sif',
-    'rsync  project -> gpu-box',
+    'sync   project -> gpu-box',
     'sbatch job 48213 .. pending',
     'job 48213 running on node042',
     'iteration 41   residual 3.1e-07',
     'iteration 42   residual 1.9e-07',
-    'rsync  results <- gpu-box',
+    'sync   results <- gpu-box',
   ]
   const runsPage = ( status, sel, cl ) => {
     // status: [local, gpu, cluster] each '..' or 'ok' ; cl: how many lines of the cluster log

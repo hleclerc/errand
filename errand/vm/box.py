@@ -22,12 +22,7 @@ Installing is `errand setup`'s, never a run's: a run on a box not set up stops a
 from __future__ import annotations
 
 import contextlib
-import io
-import shutil
 import subprocess
-import sys
-import tarfile
-import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -36,7 +31,6 @@ from .common import _backslashed, VmError
 from .datadisk import powershell
 from .guest import VCVARS
 from .talk import Talk
-from .transfer import MSYS2_PACKAGES, MSYS2_REPO, RSYNC_FILES, SSH_FILES, SSH_PACKAGES
 
 
 ERRAND  = r"C:\errand"
@@ -197,69 +191,6 @@ class Box( Talk ):
 
 
 # -- setting a box up ---------------------------------------------------------------
-
-def _rsync_files( echo, ssh = False ) -> Path:
-    """MSYS2's rsync and the DLLs it loads, unpacked here from the pinned packages ( kept in errand's cache ).
-    `ssh`: its ssh as well, for errand started on Windows."""
-    from .. import bootstrap
-    packages, files = MSYS2_PACKAGES, RSYNC_FILES
-    if ssh:
-        packages, files = [ *MSYS2_PACKAGES, *SSH_PACKAGES ], [ *RSYNC_FILES, *SSH_FILES ]
-    root = bootstrap.local_cache() / "msys2-rsync" / L.fingerprint( packages )
-    into = root / "usr" / "bin"
-    if all( ( into / f ).is_file() for f in files ):
-        return into
-    echo( f"    downloading {'rsync and ssh' if ssh else 'rsync'} for windows from msys2" )
-    into.mkdir( parents = True, exist_ok = True )
-    for p in packages:
-        with urllib.request.urlopen( f"{MSYS2_REPO}/{p}-x86_64.pkg.tar.zst", timeout = 120 ) as r:
-            packed = r.read()
-        with tarfile.open( fileobj = io.BytesIO( _unzstd( packed ) ) ) as t:
-            for m in t.getmembers():
-                name = m.name.rsplit( "/", 1 )[ -1 ]
-                if m.isfile() and m.name.startswith( "usr/bin/" ) and name in files:
-                    ( into / name ).write_bytes( t.extractfile( m ).read() )
-    missing = [ f for f in files if not ( into / f ).is_file() ]
-    if missing:
-        raise VmError( f"msys2's packages lack {', '.join( missing )}" )
-    # read by msys2's runtime from <root>/etc: `/c/...` is `C:\\...`, and no POSIX permission is mapped onto ACLs
-    ( root / "etc" ).mkdir( exist_ok = True )
-    ( root / "etc" / "fstab" ).write_text( "none / cygdrive binary,posix=0,noacl,user 0 0\n" )
-    # `~` is the Windows profile: ssh reads the same `.ssh/config`, keys and known hosts as Windows' own
-    ( root / "etc" / "nsswitch.conf" ).write_text( "db_home: windows\n" )
-    return into
-
-
-def local_rsync( echo = None ) -> Path:
-    """rsync for errand started on Windows: MSYS2's, as a box gets it."""
-    return _local( echo ) / "rsync.exe"
-
-
-def local_ssh( echo = None ) -> Path:
-    """The ssh that rsync, started on Windows, reaches the other machine with: MSYS2's."""
-    return _local( echo ) / "ssh.exe"
-
-
-def _local( echo ):
-    import sys as _sys
-    return _rsync_files( echo or ( lambda s: print( s, file = _sys.stderr, flush = True ) ), ssh = True )
-
-
-def _unzstd( data: bytes ) -> bytes:
-    try:
-        from compression import zstd            # Python 3.14
-        return zstd.decompress( data )
-    except ImportError:
-        pass
-    if shutil.which( "zstd" ) is not None:
-        return subprocess.run( [ "zstd", "-dqc" ], input = data, stdout = subprocess.PIPE, check = True ).stdout
-    if L.WINDOWS or sys.platform == "darwin":
-        # bsdtar ( Windows' own tar.exe, macOS' ) reads zstd: `@-` copies the archive's entries into a plain tar
-        got = subprocess.run( [ "tar", "-cf", "-", "@-" ], input = data, stdout = subprocess.PIPE, stderr = subprocess.PIPE )
-        if got.returncode == 0:
-            return got.stdout
-    raise VmError( "neither Python 3.14 nor a `zstd` here, to open msys2's packages with ( brew / apt install zstd )" )
-
 
 def _ps( script: str ) -> str:
     return powershell( "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'\n" + script )

@@ -69,11 +69,9 @@ errand also runs *on* Windows, with these layers:
 - an `Ssh` to a POSIX machine, followed by any layers that run there.
 
 Its own local steps (records, a build's output, the agent) are done in Python, since there is no
-`sh` to read them. It copies files with MSYS2's rsync and ssh (pinned, unpacked into its cache on
-first use, by Windows' own `tar`). Windows' `ssh.exe` cannot carry MSYS2's rsync, but it does
-everything else, so a key in Windows' ssh-agent works for commands but not for copies: give the
-`Ssh` an `-i` key file, or keep the key in `~/.ssh`. Both ssh programs read the same
-`~/.ssh/config` and known hosts.
+`sh` to read them. Files cross through the agent over there, as from any other machine, and
+Windows' own `ssh.exe` starts it: a key in Windows' ssh-agent, `~/.ssh/config` and the known hosts
+all work as they do for `ssh` at the prompt.
 
 The project goes to a POSIX path over there: `root`, or the project's place under the home folder,
 kept under the remote one (`C:\Users\me\Projects\x` → `~/Projects/x`), else `~/errand-work/<name>`.

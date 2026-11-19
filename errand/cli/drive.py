@@ -69,14 +69,13 @@ def arrive( env, tags, root, project = True, phase = "run" ):
         with working( f"↑ errand → {ssh.host}" ):
             cache = bootstrap.ship( ssh.host, ssh.options )
     elif ssh is not None:
-        how = L.transfer( ssh.transfer )
         for src, dst in ( ( root, there ), *( ( Path( os.path.normpath( root / other ) ),
                                                  L.remote_path( posixpath.normpath( L.remote_path( there ) / other ) ) )
                                                for other in ssh.also ) ):
-            with working( f"↑ {how} push → {ssh.host}:{dst}", kind = "push" ) as w:
-                got = L.push( src, ssh.host, dst, ssh.options, echo = say, transfer_by = ssh.transfer,
+            with working( f"↑ sync push → {ssh.host}:{dst}", kind = "push" ) as w:
+                got = L.push( src, ssh.host, dst, ssh.options, echo = say,
                               outputs = ssh.errand_outputs_directory if src == root else None )
-                w.numbers = { "to": f"{ssh.host}:{dst}", "by": how, **_counted( got ) }
+                w.numbers = { "to": f"{ssh.host}:{dst}", **_counted( got ) }
             transfers.append( w.record )
         with working( f"↑ errand → {ssh.host}" ):
             cache = bootstrap.ship( ssh.host, ssh.options )
@@ -85,7 +84,7 @@ def arrive( env, tags, root, project = True, phase = "run" ):
 
 
 def _counted( report ) -> dict:
-    """What a sync came to ( `sync.Report` ), for a journal; nothing from rsync, which says nothing."""
+    """What a sync came to ( `sync.Report` ), for a journal."""
     if report is None or not hasattr( report, "sent" ):
         return { }
     return { "files": len( report.sent ), "bytes": int( report.bytes ), "touched": len( report.touched ),
@@ -206,11 +205,10 @@ def _carry( env, src, dst, root ):
         if src.ssh is not None:
             if dst.ssh is not None:
                 staging = config.state( root ) / "carry" / R.slug( env.name )
-            L.fetch( [ rel ], src.ssh.host, src.there, staging, src.ssh.options, transfer_by = src.ssh.transfer )
+            L.fetch( [ rel ], src.ssh.host, src.there, staging, src.ssh.options )
         local = staging / rel
         if dst.ssh is not None and local.is_dir():
-            L.put( local, dst.ssh.host, L.remote_path( posixpath.join( str( dst.there ), rel ) ), dst.ssh.options,
-                   transfer_by = dst.ssh.transfer, echo = say )
+            L.put( local, dst.ssh.host, L.remote_path( posixpath.join( str( dst.there ), rel ) ), dst.ssh.options, echo = say )
 
 
 def _prepare_for_run( env, tags, verb, known, where, report, box ):
@@ -399,8 +397,7 @@ def _views( where, root ) -> Views:
     ssh = where.ssh
     if ssh is None:
         return Views( root )
-    return Views( root, lambda rel: L.fetch_file( rel, ssh.host, where.there, root, ssh.options,
-                                                  transfer_by = getattr( ssh, "transfer", None ), say = say ),
+    return Views( root, lambda rel: L.fetch_file( rel, ssh.host, where.there, root, ssh.options, say = say ),
                   ssh.host )
 
 
@@ -424,8 +421,7 @@ def _remember( root, env, reach, sessions, where, pull ):
     live.parent.mkdir( parents = True, exist_ok = True )
     live.write_text( json.dumps( { "id": ident, "env": env.name, "target": reach.target, "procs": pids,
                                    "ssh": None if where.ssh is None else
-                                   { "host": where.ssh.host, "options": list( where.ssh.options ),
-                                     "transfer": getattr( where.ssh, "transfer", None ) },
+                                   { "host": where.ssh.host, "options": list( where.ssh.options ) },
                                    "there": str( where.there ), "store": store_of( where ),
                                    "pull": list( pull ) }, indent = 1 ) )
     return live
@@ -439,11 +435,10 @@ def _bring_back( where, env_name, box, pull ):
 
     def fetch( paths, runs = False, keep = False ):
         if paths:
-            how = L.transfer( ssh.transfer )
-            with working( f"↓ {how} pull ← {ssh.host} [{', '.join( paths )}]", kind = "pull" ) as w:
-                got = L.fetch( paths, ssh.host, where.there, where.root, ssh.options, transfer_by = ssh.transfer,
+            with working( f"↓ sync pull ← {ssh.host} [{', '.join( paths )}]", kind = "pull" ) as w:
+                got = L.fetch( paths, ssh.host, where.there, where.root, ssh.options,
                                finished_only = runs, keep = keep )
-                w.numbers = { "from": f"{ssh.host}:{where.there}", "by": how, "paths": list( paths ), **_counted( got ) }
+                w.numbers = { "from": f"{ssh.host}:{where.there}", "paths": list( paths ), **_counted( got ) }
             pulled.append( w.record )
 
     from .place import Place
@@ -499,7 +494,7 @@ def attach( root, ident = None, *, report ) -> int:
             boxes = [ { } for _ in rec[ "procs" ] ]
             ssh = rec.get( "ssh" )
             over = SimpleNamespace( root = root, there = L.remote_path( rec[ "there" ] ) if ssh else Path( rec[ "there" ] ),
-                                    ssh = SimpleNamespace( **{ "transfer": None, **ssh } ) if ssh else None )
+                                    ssh = SimpleNamespace( **ssh ) if ssh else None )
             shown = _views( over, root )
             rcs = follow_all( [ Session( conn, pid, rec.get( "store" ) ) for pid in rec[ "procs" ] ], report, boxes,
                               relay = _relay( SimpleNamespace( host = ssh[ "host" ], options = ssh[ "options" ] )
@@ -511,7 +506,7 @@ def attach( root, ident = None, *, report ) -> int:
             rc |= max( rcs ) if rcs else 0
             if any( b.get( "lost" ) for b in boxes ):
                 continue
-        ssh = SimpleNamespace( **{ "transfer": None, **rec[ "ssh" ] } ) if rec.get( "ssh" ) else None   # older records lack it
+        ssh = SimpleNamespace( **rec[ "ssh" ] ) if rec.get( "ssh" ) else None
         _bring_back( SimpleNamespace( root = root, ssh = ssh, there = L.remote_path( rec[ "there" ] ) if ssh else Path( rec[ "there" ] ) ), rec[ "env" ], { },
                      rec.get( "pull", [ ] ) )
         path.unlink( missing_ok = True )

@@ -84,7 +84,7 @@ any environment exists.
 ## When something breaks
 
 `-v` prints every process errand starts, on stderr, before it starts: the probe that checks an
-environment exists, the rsync, the ssh line, the image build, the scheduler submission, the errand
+environment exists, the ssh line, the image build, the scheduler submission, the errand
 that runs over there. Each comes with its directory, when it is not the current one, and the
 variables it is handed beyond errand's own. A command that fails says its exit code and how long it
 took.

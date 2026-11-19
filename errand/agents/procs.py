@@ -145,8 +145,8 @@ class Proc:
 
     def detach( self, writer, channel = None ):
         """A client is gone -- or, with `channel`, closed that channel only ( through a hub, the stream
-        stays ). A process that may not outlive it goes with it: left running, an `rsync --server`
-        whose client went would wait for its input forever, and keep its agent from ever going."""
+        stays ). A process that may not outlive it goes with it: left running, a command started through
+        `rsh` whose client went would wait for its input forever, and keep its agent from ever going."""
         with self.lock:
             self.listeners = [ l for l in self.listeners
                                if not ( l[ 0 ] is writer and ( channel is None or l[ 1 ] == channel ) ) ]

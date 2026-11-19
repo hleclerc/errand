@@ -1,10 +1,10 @@
-"""`python -m errand.agents rsh <target> [ssh options] host command…`: a remote shell for rsync.
+"""`python -m errand.agents rsh <target> [ssh options] host command…`: a remote shell through the agent.
 
-rsync starts its other end through a remote shell ( `-e` ), as `<shell> host
-rsync --server …`. Given this one, the other end is started by the agent, over
-the stream the hub already holds: no new ssh, no new login. stdin and stdout
-are rsync's own protocol, relayed as they are; what the other end says on
-stderr comes out on ours, and its exit code is ours.
+Called as ssh would be, `<shell> host command…`: the command is started by the
+agent, over the stream the hub already holds -- no new ssh, no new login. What
+runs errand over there ( an environment agent, a guest, a node of an allocation )
+goes through it. stdin and stdout are relayed as they are; what the other end
+says on stderr comes out on ours, and its exit code is ours.
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from . import frames as F
 
 
 def command_of( args ) -> str:
-    """rsync's arguments to its remote shell: options ( `-l user`, `-p port` ), the host, then the command."""
+    """A remote shell's arguments, as ssh's: options ( `-l user`, `-p port` ), the host, then the command."""
     i = 0
     while i < len( args ) and args[ i ].startswith( "-" ):
         i += 2 if args[ i ] in ( "-l", "-p", "-o", "-i", "-F" ) else 1
@@ -33,7 +33,7 @@ def main( code: str, args ) -> int:
     conn = open_agent( target )
     call = conn.open( { "op": "spawn", "argv": [ "sh", "-c", command_of( args ) ], "keep": False } )
     call.reply()
-    # rsync hands its remote shell one non-blocking socket as stdin and stdout.
+    # A caller may hand its remote shell one non-blocking socket as stdin and stdout.
     for fd in ( 0, 1 ):
         os.set_blocking( fd, True )
 

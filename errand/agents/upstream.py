@@ -53,7 +53,7 @@ def name( target: dict ) -> str:
 
 
 def of_host( host: str, options = ( ) ) -> dict:
-    """The target of `host`, for what knows only the host and its options ( rsync )."""
+    """The target of `host`, for what knows only the host and its options ( a push, a pull )."""
     return { "kind": "ssh", "host": host, "options": list( options ), "python": "python3", "keep_alive": KEEP_ALIVE }
 
 
@@ -79,11 +79,6 @@ def rsh_argv_to( target: dict, via = None ) -> list:
     import base64, json
     code = base64.urlsafe_b64encode( json.dumps( _via( target, via ) ).encode() ).decode()
     return [ sys.executable, str( bootstrap.PACKAGE / "_boot.py" ), "-m", "errand.agents", "rsh", code ]
-
-
-def rsh( host: str, options = ( ) ) -> str:
-    """rsync's `-e`: the same, as one string."""
-    return " ".join( shlex.quote( a ) for a in rsh_argv( host, options ) )
 
 
 def name_of( target: dict, machine: str | None = None ) -> str:
@@ -124,7 +119,7 @@ def env_of( target: dict ) -> dict:
 
 def prepare( target: dict ):
     if target[ "kind" ] == "ssh":
-        # Before there is an agent to go through: plain ssh and rsync.
+        # Before there is an agent to go through: plain ssh, errand's sources as a tar on its stdin.
         bootstrap.ship( target[ "host" ], target.get( "options", [ ] ), agent = False )
 
 

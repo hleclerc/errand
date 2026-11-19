@@ -18,7 +18,7 @@ REBUILD_AFTER  = 170         # days: rebuilt a little before the 180 run out and
 
 # Bumped whenever what an image is made of changes in this file: the recipe is
 # part of the declaration, and an edit to it must be noticed like any other.
-RECIPE = 3                   # 3: no rsync in the image ( ADR 0006 )
+RECIPE = 3                   # 3: files cross through the guest's agent ( ADR 0006 )
 
 # The Python every guest has ( ADR 0008 ): errand runs in it, through its agent. A python.org release.
 PYTHON = "3.13.16"

@@ -15,7 +15,7 @@ import { withBase } from 'vitepress'
 const moved = {
   "the-paths-are-computed-before-the-run-happens": "/guide/layers/ssh#the-paths-are-computed-before-the-run-happens",
   "through-an-interactive-shell": "/guide/layers/ssh#through-an-interactive-shell",
-  "options-go-to-ssh-and-to-rsync": "/guide/layers/ssh#options-go-to-ssh-and-to-rsync",
+  "options-go-to-ssh": "/guide/layers/ssh#options-go-to-ssh",
   "what-gets-pushed": "/guide/layers/ssh#what-gets-pushed",
   "building-over-there": "/guide/layers/ssh#building-over-there",
   "adding-an-allocation": "/guide/layers/ssh#adding-an-allocation",

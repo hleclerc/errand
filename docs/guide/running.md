@@ -92,7 +92,7 @@ Every option, for every verb: [Command line](/reference/cli).
 errand -v run --env cluster python train.py
 ```
 
-`-v` prints, on stderr, every process errand starts before it starts: the rsync, the ssh line, the
+`-v` prints, on stderr, every process errand starts before it starts: the ssh line, the
 image build, the `sbatch`, the errand over there. Nothing errand does to reach the place is hidden.
 → [When something breaks](./upkeep#when-something-breaks)
 

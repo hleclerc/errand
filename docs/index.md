@@ -56,7 +56,7 @@ features:
 <div class="side-label">By hand</div>
 
 ```bash
-rsync -az --exclude .git ./ gpu-box:~/proj/
+scp -r ./ gpu-box:~/proj/
 ssh gpu-box
   cd ~/proj
   salloc -p gpu --gres=gpu:1 -t 2:00:00
@@ -64,7 +64,7 @@ ssh gpu-box
     python train.py --lr 1e-3
   # ...the laptop sleeps, the ssh drops: is it still running?
 exit
-rsync -az gpu-box:~/proj/out/ ./out/
+scp -r gpu-box:~/proj/out/ ./out/
 # a week later: what did I leave running on gpu-box?
 ssh gpu-box 'ps -u $USER; squeue -u $USER'
 ```

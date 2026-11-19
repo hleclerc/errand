@@ -10,7 +10,7 @@ QEMU, then here.
 
 The project crosses by manifest ( ADR 0006 ), from here straight into the guest and back, through an
 agent of the guest that no layer starts ( `host_target` ): the copy on the machine that runs QEMU
-plays no part, and the guest needs no rsync. errand's sources go first, as a tar on the stdin of one
+plays no part, and the guest needs nothing but errand's agent. errand's sources go first, as a tar on the stdin of one
 cmd.exe line.
 
 The stream to the guest agent goes through the host agent of the machine that

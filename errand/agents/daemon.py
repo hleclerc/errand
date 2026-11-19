@@ -55,8 +55,8 @@ def start( root: Path, keep_alive: float, what = "agent" ):
 
 def _stdio_to( log_path: Path, keep = None ):
     """Stdin from nothing, stdout and stderr to `log_path`, and no other descriptor of whoever started
-    it: a pipe it kept open would never close for them -- rsync, whose remote shell started the hub,
-    waits for its end of the stream forever."""
+    it: a pipe it kept open would never close for them -- whoever started the hub through a remote
+    shell would wait for its end of the stream forever."""
     log = os.open( str( log_path ), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600 )
     null = os.open( os.devnull, os.O_RDONLY )
     os.dup2( null, 0 )

@@ -60,7 +60,7 @@ recipe over the same `Machine`.
 
 The package's surface for the rest of errand. One file per concern: the layer ( `windows` ),
 where things live ( `places` ), what the QEMU host is ( `facts` ), the QEMU command line ( `qemu` ),
-copying in and out ( `transfer` ), the booted machine ( `machine` ), installing an image
+the booted machine ( `machine` ), installing an image
 ( `install` ), what the guest is given ( `guest` ) and the keeper process ( `__main__` ).
 """
 from __future__ import annotations
@@ -71,7 +71,6 @@ from .common import _seconds, VmError
 from .places import images_dir
 from .facts import accel, Facts, need, package_hint, qemu_hint
 from .qemu import qemu_argv
-from .transfer import MSYS2_PACKAGES, msys_path, RSYNC_FILES
 from .datadisk import DATA_SCRIPT, powershell
 from .machine import Machine, running, stop_all
 from .install import install
@@ -90,9 +89,6 @@ __all__ = [
     'need',
     'accel',
     'qemu_argv',
-    'MSYS2_PACKAGES',
-    'RSYNC_FILES',
-    'msys_path',
     'DATA_SCRIPT',
     'powershell',
     'Machine',

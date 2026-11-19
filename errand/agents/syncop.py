@@ -176,7 +176,7 @@ class Session( _Channel ):
             dst, findings = _seen( root, sel, known, check = first or bool( self.req.get( "check" ) ) )
             self.say( { "dst": { k: list( e ) for k, e in dst.items() },
                         "findings": [ list( f ) for f in findings ], "ci": S.case_insensitive( root ) } )
-            # A copy errand never wrote ( a first sync, an rsync's copy ): nothing in it is known to be errand's, so
+            # A copy errand never wrote ( a first sync, a copy made by hand ): nothing in it is known to be errand's, so
             # whatever the push removes or replaces with other contents is kept.
             w = S.Writer( root, dst, trusted = known if known is not None else S.Manifest(), spare_in = S.spare_dir() )
             written = S.Manifest( dst )
@@ -219,7 +219,8 @@ class Session( _Channel ):
                     for key, target in a[ "links" ]:
                         w.link( key, target )
                         written[ key ] = S.Entry( "l", target = target )
-                    self.say( { "deleted": deleted, "kept": kept } )
+                    runs = S.runs_kept( a.get( "runs", [ ] ), w.path, prior, written )
+                    self.say( { "deleted": deleted, "kept": kept, "runs": runs } )
                 elif "file" in msg:
                     key = msg[ "file" ]
                     handle = w.begin( key )
@@ -501,11 +502,11 @@ def push( conn, local_root, remote_root, sel: S.Selection, *, src_cache = None, 
             c.send( { "hash": ask } )
             digests = c.get()[ "digests" ]
         p = S.plan( src, dst, lambda k: digests.get( k, "" ), sel )
-        report.kept_runs = p.kept_runs
         report.conflicts = list( p.conflicts )
-        c.send( { "apply": { "delete": p.delete, "dirs": p.dirs,
+        c.send( { "apply": { "delete": p.delete, "dirs": p.dirs, "runs": p.kept_runs,
                              "links": [ [ k, src[ k ].target ] for k in p.links ] } } )
         applied = c.get()
+        report.kept_runs = applied.get( "runs", p.kept_runs )      # an agent of before: each of them, each time
         report.deleted = [ k for k in applied[ "deleted" ] if k not in src ]
         report.kept = [ k for k, _ in applied[ "kept" ] ]
         for key, zone in applied[ "kept" ]:

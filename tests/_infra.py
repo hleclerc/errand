@@ -1,7 +1,7 @@
 """Reaching a second machine, without needing a second machine.
 
 `ssh localhost` IS another machine as far as every part of errand that matters
-is concerned: it is a real ssh, a real rsync, a real remote shell, a real
+is concerned: it is a real ssh, a real agent, a real remote shell, a real
 round trip through a directory that is not the project's. Only the hardware is
 shared, and the hardware is not what is being tested.
 
@@ -27,7 +27,7 @@ LOCALHOST_OPTIONS = [ "-o", "BatchMode=yes",
 
 
 def _reaches( host, options ):
-    if shutil.which( "ssh" ) is None or shutil.which( "rsync" ) is None:
+    if shutil.which( "ssh" ) is None:
         return False
     try:
         return subprocess.run( [ "ssh", *options, host, "true" ],
@@ -61,7 +61,7 @@ def _tmp_root( ):
     """A directory over there that is not the project's, and is ours to delete.
 
     Deliberately a real path under the system temp rather than a fixed one:
-    the push does `rsync --delete`, and nothing that answers to that should
+    the push deletes what it did not send, and nothing that answers to that should
     ever be somewhere a person keeps things.
     """
     return tempfile.mkdtemp( prefix = "errand-remote-", dir = _remote_tmp() )
@@ -124,7 +124,7 @@ def write_project( directory: Path, config: str, files: dict, vendor = False ):
     """A whole little project on disk, for an end-to-end run.
 
     `vendor` puts a copy of errand itself inside the project, under `_lib`.
-    That is how the remote side gets one: the push rsyncs the project, so
+    That is how the remote side gets one: the push sends the project, so
     errand travels with it and the test needs nothing installed over there --
     which is the difference between a test that runs on any machine and one
     that runs on a machine somebody prepared.

@@ -2,12 +2,12 @@
 
 ```python
 Ssh( host, root = None, python = "python3", options = [ ], also = [ ],
-     errand_outputs_directory = None, transfer = None, user = None, jump = None )
+     errand_outputs_directory = None, user = None, jump = None )
 ```
 
 Everything after it runs on `host`. The project is pushed there before the command, and what the
 command wrote is brought back after it. Both go through errand's agent over there, so that
-machine needs ssh and a Python, and no rsync.
+machine needs ssh and a Python, nothing else.
 
 ```python
 # errand-envs.py
@@ -39,12 +39,11 @@ It **must be the first layer**: `errand.Env()` refuses a stack where it is not.
 | `host` | what ssh reaches: a name from your `~/.ssh/config`, or `user@host` |
 | `root` | where the project goes over there. Default: the same path as here |
 | `python` | the interpreter to try first over there, when no later layer chooses one ( [below](#nothing-to-install-over-there) ) |
-| `options` | passed to ssh ( and to rsync, with `transfer = "rsync"` ): a port, an identity |
+| `options` | passed to ssh: a port, an identity |
 | `user` | the login over there, when `host` does not say it ( `User` in `~/.ssh/config` ) |
 | `jump` | a gateway to go through, or a list of them in order ( `ProxyJump` in `~/.ssh/config` ): `"me@gate.example.org"`. See [below](#a-gateway-on-the-way) |
 | `also` | sibling checkouts the work needs ( `[ "../loom" ]` ), pushed to the same relative place over there |
 | `errand_outputs_directory` | where errand writes for the project over there: runs, builds, state. Say `/scratch/me/proj-out`; the project's copy then holds a symlink `errand-outputs` to it. See [Where errand writes](../storage) |
-| `transfer` | how the project crosses: `"sync"` ( the default ), by manifest through the agent, or `"rsync"`. `ERRAND_TRANSFER` overrides it for one command. See [below](#sync-or-rsync) |
 
 ## Nothing to install over there
 
@@ -110,8 +109,8 @@ Ssh( host = "gpu-box", root = "/home/me/proj",
      options = [ "-p", "2222", "-i", "~/.ssh/bench", "-J", "jump.example" ] )
 ```
 
-A port, a jump host, a `StrictHostKeyChecking` you have decided about. With `transfer = "rsync"`,
-rsync gets the same list, or it would reach a different machine.
+A port, a jump host, a `StrictHostKeyChecking` you have decided about. They reach the agent over
+there, which every push and pull goes through: nothing else logs in.
 
 ## A gateway on the way
 
@@ -168,15 +167,14 @@ A run finds it with `errand.cache_dir( "/data-cache" )`, which it passes to what
 memoizes. For a file at a URL, `errand.download( url )` does it all, in `errand-cache`, a cache zone
 every project has: the file under its hash, and, on a node with no internet, asked of the host over
 there, then of this side, which sends it. For a result too long to compute twice, `@errand.memo` keeps
-it there by its inputs: computed on one machine, it reaches the others. With `transfer = "rsync"`, the same rules hold, by `--ignore-existing`, but conflicts are
-not said. The why: ADR 0012.
+it there by its inputs: computed on one machine, it reaches the others. The why: ADR 0012.
 
 `errand-outputs` is excluded both ways on purpose: each side's records, plans and builds are its
 own. The only runs you get back are the ones you just asked for.
 
-## sync or rsync
+## How the project crosses
 
-By default the push is a **sync**. Each side keeps a manifest of its files ( size, mtime, hash ).
+The push is a **sync**, by manifest. Each side keeps a manifest of its files ( size, mtime, hash ).
 The local side sends its own, the agent over there answers with what it lacks, and whole files
 cross, compressed. The manifest of the copy is kept in the copy ( `.errand-copy` ). So two hosts
 that share a file system ( a cluster's login and compute nodes ) share it too, with nothing to
@@ -184,14 +182,14 @@ declare. The agent walks the copy when it starts and when it goes, and trusts th
 between. A change made over there outside a zone is reported, with when it was first seen, before
 it is overwritten.
 
-`transfer = "rsync"` keeps rsync, which then has to be on both machines. Its delta wins for a large
-file that changes a little ( a checkpoint, a dataset appended to ). A sync sends such a file whole.
+A changed file crosses whole: a large file that changes a little ( a checkpoint, a dataset appended
+to ) is sent again in full. Keep such files in a zone ( `back`, `cache` ) or out of the project.
 
-| on lmo, from a Mac | rsync | sync |
-|---|---:|---:|
-| 2597 files, 407 MB, cold | 73.6 s | 20.9 s |
-| the same, nothing changed | 1.33 s | 0.73 s |
-| one file changed | 1.27 s | 0.78 s |
+| on lmo, from a Mac | sync |
+|---|---:|
+| 2597 files, 407 MB, cold | 20.9 s |
+| the same, nothing changed | 0.73 s |
+| one file changed | 0.78 s |
 
 ## Building over there
 

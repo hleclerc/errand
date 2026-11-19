@@ -3,7 +3,7 @@
     connect   the bridge: start the agent of <dir> if none answers, then relay stdio to it
               ( `connect <dir> <keep_alive> attached`: an agent of its own, a child that goes with it )
     serve     the agent itself, in the foreground ( tests, debugging )
-    rsh       rsync's remote shell, through the agent ( `rsh.py` )
+    rsh       a remote shell, through the agent ( `rsh.py` )
     table     what runs on this machine on errand's behalf, read from disk, as JSON ( `table.py` )
 """
 from __future__ import annotations

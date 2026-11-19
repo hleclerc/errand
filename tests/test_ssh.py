@@ -1,6 +1,6 @@
 """Going to another machine, and coming back with the results.
 
-`ssh localhost` stands in for a second machine: a real ssh, a real rsync, a
+`ssh localhost` stands in for a second machine: a real ssh, a real agent, a
 real remote shell, a real round trip through a directory that is not the
 project's. Only the hardware is shared, and the hardware is not what is being
 tested. Name a real host in `errand-envs.py` to use that instead:
@@ -54,15 +54,6 @@ if test( "a stack is folded against the REMOTE root", tags = [ "ssh" ] ):
     line = L.compose( inner, L.Command( [ "python3", "-m", "errand" ] ), remote_ctx ).shell()
     assert "/remote/proj/c/cuda.sif" in line
     assert "/local/proj" not in line
-
-
-if test( "rsync is given the same options as ssh", tags = [ "ssh" ] ):
-    # Reaching a different machine than ssh does would be a very quiet bug.
-    from errand.layers.gateways import ssh_options
-    assert L._rsh( [ ] ) == [ "-e", "ssh " + " ".join( ssh_options( [ ] ) ) ]
-    flag, command = L._rsh( [ "-p", "2222" ] )
-    assert flag == "-e" and command == "ssh " + " ".join( ssh_options( [ "-p", "2222" ] ) )
-    assert command.startswith( "ssh -p 2222 -o ConnectTimeout=" )
 
 
 if test( "user and jump say what ~/.ssh/config would, and survive a trip through spec" ):

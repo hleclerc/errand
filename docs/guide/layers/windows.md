@@ -52,7 +52,7 @@ What it costs, and when:
   it holds its cores and memory, so it holds them **in the queue**, and shows in `errand queue`.
 - **A command** costs a sync of the project in: what changed since the last command, onto `E:`
   (all of it with `data = None`). Then `fetch` comes back. Both go straight between here and an
-  errand agent in the guest, as for an `Ssh` with `transfer = "sync"`. The machine that runs QEMU
+  errand agent in the guest, as for an `Ssh`. The machine that runs QEMU
   holds no copy of the project. A file removed from the project is removed over there too, except
   in a zone (`build`, errand's outputs, the project's own). Commands on one machine take turns.
 

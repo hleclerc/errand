@@ -11,7 +11,7 @@ from pathlib import Path
 
 from .base import _quiet, Command, Context, file_stamp, sh, under
 from .families import Artefact, Container
-from .gateways import push, Ssh, ssh_options, transfer
+from .gateways import push, Ssh, ssh_options
 from .hosts import Over
 
 
@@ -159,8 +159,8 @@ class _BuiltElsewhere:
         b, image = self.builder, self.layer.image
         # The recipe is a file of the project HERE, which the builder builds
         # from its own copy: pushed first, as `Ssh` does before a run.
-        echo( f"    {transfer( b.ssh.transfer )} push -> {b.ssh.host}:{b.root}" )
-        push( self.ctx.origin, b.ssh.host, b.root, b.ssh.options, echo = echo, transfer_by = b.ssh.transfer )
+        echo( f"    sync push -> {b.ssh.host}:{b.root}" )
+        push( self.ctx.origin, b.ssh.host, b.root, b.ssh.options, echo = echo )
         for step in self.steps:
             echo( f"    $ {step}    ( on {b.describe()} )" )
             if b.shell( step, tty = True ).returncode != 0:

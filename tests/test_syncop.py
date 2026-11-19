@@ -244,22 +244,6 @@ if test( "a pull of run trees brings a run back once finished, and never deletes
         assert os.readlink( here / runs / "latest" ) == "going"
 
 
-if test( "rsync is told the same: a listing over there, the unfinished runs excluded" ):
-    import subprocess
-    from errand import results as R
-    from errand.layers import gateways as G
-    with scratch() as d:
-        there = tree( d / "runs", { "a/done/result.yaml": "x", "a/going/output.txt": "o", "a/done/f/x.png": "p" } )
-        ( there / "a" / "fresh" ).mkdir()
-        os.symlink( "going", there / "a" / "latest" )
-        listing = subprocess.run( [ "sh", "-c", G._RUN_LISTING, "_", str( there ), R.RESULT, *R.RUN_MARKS ],
-                                  capture_output = True, text = True, check = True ).stdout
-        assert G.unfinished_excludes( listing ) == [ "/a/fresh/", "/a/going/", "/a/latest" ], listing
-        listing = subprocess.run( [ "sh", "-c", G._RUN_LISTING, "_", str( d / "nothing" ), R.RESULT ],
-                                  capture_output = True, text = True ).stdout
-        assert G.unfinished_excludes( listing ) == [ ]
-
-
 if test( "a cache through the agent ( ADR 0012 ): pushed when missing there, kept there, never replaced" ):
     with scratch() as d:
         sel = S.Selection( [ "__pycache__" ], zones = [ S.Zone( "/data", "cache" ) ] )
@@ -334,3 +318,22 @@ if test( "through the agent: a run's directory is said once; a tagged one never 
         conn = agent( d / "ag2" )              # a new agent walks the copy: still nothing to say
         r, said = push( conn, src, dst, sel )
         assert not said and ( dst / "cat/y.so" ).exists() and ( dst / "kern/x.so" ).exists(), said
+
+
+if test( "through the agent: runs made there are told once; removed there by hand, they leave the manifest" ):
+    with scratch() as d:
+        sel = S.Selection( [ "__pycache__" ] )
+        src = tree( d / "src", { "a.py": "a" } )
+        dst = d / "copy"
+        conn = agent( d / "ag" )
+        push( conn, src, dst, sel )
+        tree( dst, { "runs/p/2026-y/result.yaml": "status: PASS\n", "runs/p/2026-y/stdout.txt": "o" } )
+        r, _ = push( conn, src, dst, sel, check = True )
+        assert r.kept_runs == [ "runs/p/2026-y/result.yaml", "runs/p/2026-y/stdout.txt" ], r
+        r, _ = push( conn, src, dst, sel )
+        assert r.kept_runs == [ ] and ( dst / "runs/p/2026-y/result.yaml" ).exists(), "said once"
+        shutil.rmtree( dst / "runs" )          # by hand, while the agent takes its manifest for the disk
+        r, _ = push( conn, src, dst, sel )
+        assert r.kept_runs == [ ], r
+        known = S.load( dst / S.COPY_STATE )
+        assert not any( k.startswith( "runs/p/2026-y" ) for k in known ) and "runs/p/2026-y" not in known.theirs, known

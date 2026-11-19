@@ -1,5 +1,5 @@
-"""Gateways: `Ssh`, which leads to another machine, and the rsync that sends the project there and
-brings results back.
+"""Gateways: `Ssh`, which leads to another machine, and the sync by manifest, through the agent over there
+( ADR 0006 ), that sends the project there and brings results back.
 """
 from __future__ import annotations
 
@@ -17,11 +17,7 @@ from .schedulers import run_on
 from .hosts import Over
 
 
-RSYNC_EXCLUDES = [
-    ".git", "build", "dist", "__pycache__", "*.pyc", "*.so", "*.o",
-    "node_modules", "target", ".venv", "*.egg-info", ".mypy_cache", ".pytest_cache",
-]
-# The same, as a sync reads them ( ADR 0006 ): what is no part of a copy, and what is built over there.
+# What is no part of a copy, and what is built over there, as a sync reads them ( ADR 0006 ).
 NOT_COPIED  = [ ".git", "__pycache__", "*.pyc", ".mypy_cache", ".pytest_cache", ".errand-work" ]
 DOWNLOADS   = "errand-cache"      # `errand.download`'s cache zone, every project's ( ADR 0013 )
 BUILT_THERE = [ "build", "dist", "target", "node_modules", ".venv", "*.egg-info", "*.so", "*.o" ]
@@ -30,9 +26,9 @@ BUILT_THERE = [ "build", "dist", "target", "node_modules", ".venv", "*.egg-info"
 def own_paths() -> list:
     """What the layers of ALL the project's environments build into the project.
 
-    Exact paths, anchored at the root, for rsync to leave alone: an image is not
-    a source to copy, and over there `--delete` would take it for a file that
-    was removed. All of them, not the ones of the environment being pushed:
+    Exact paths, anchored at the root, for a push to leave alone: an image is not
+    a source to copy, and over there a push would take it for a file that was
+    removed. All of them, not the ones of the environment being pushed:
     environments share a remote root.
     """
     from .. import config
@@ -62,9 +58,8 @@ def selection( local_root: Path, follow_links = False ):
 class Ssh( Gateway ):
     """Must be the first layer. Everything after it runs on `host`.
 
-    `options` are passed to both ssh and rsync -- a port, an identity file, a
-    `StrictHostKeyChecking` you have decided about. rsync has to get the same
-    ones or it reaches a different machine than ssh does.
+    `options` are passed to ssh -- a port, an identity file, a `StrictHostKeyChecking` you have
+    decided about. The project crosses by manifest, through the agent errand starts there ( ADR 0006 ).
 
     `user` and `jump` say what a `~/.ssh/config` entry would ( `User`, `ProxyJump` ), so that an
     environment file works for whoever has none: `jump` is a host or a list of them, gone through in
@@ -78,9 +73,6 @@ class Ssh( Gateway ):
     # Where errand writes for the project over there ( runs, builds, state ): a scratch disk, say.
     # The project's copy then holds a link to it, by its usual name ( `errand-outputs` ).
     errand_outputs_directory: str | None = None
-    # How the project crosses: by manifest through the host's agent ( "sync", the default, ADR 0006 ), or
-    # "rsync", whose delta wins for a large file that changes a little. `ERRAND_TRANSFER` overrides it.
-    transfer: str | None = None
     user   : str | None = None
     jump   : str | list | None = None
 
@@ -114,14 +106,13 @@ class Ssh( Gateway ):
                               origin = ctx.origin, interactive = ctx.interactive,
                               needs = ctx.needs, batch = ctx.batch, phase = ctx.phase )
 
-        echo( f"  {transfer( self.transfer )} push -> {self.host}:{remote_ctx.root}" )
+        echo( f"  sync push -> {self.host}:{remote_ctx.root}" )
         push( ctx.root, self.host, remote_ctx.root, self.options, echo = echo,
-              outputs = self.errand_outputs_directory, transfer_by = self.transfer )
+              outputs = self.errand_outputs_directory )
         for other in self.also:
             # `../loom` lands at `<remote root>/../loom`: the same layout as here
             push( Path( os.path.normpath( ctx.root / other ) ), self.host,
-                  type( remote_ctx.root )( posixpath.normpath( remote_ctx.root / other ) ), self.options, echo = echo,
-                  transfer_by = self.transfer )
+                  type( remote_ctx.root )( posixpath.normpath( remote_ctx.root / other ) ), self.options, echo = echo )
 
         if inner and isinstance( inner[ 0 ], Gateway ):
             # A machine to boot over there: errand runs in it through its agent ( `cli.guest` ), never here.
@@ -138,12 +129,12 @@ class Ssh( Gateway ):
 
         pull = [ *( pull or [ ] ), *back_zones() ]
         if pull:
-            echo( f"  {transfer( self.transfer )} pull  <- {self.host}:{remote_ctx.root} [{', '.join( pull )}]" )
-            fetch( pull, self.host, remote_ctx.root, ctx.root, self.options, transfer_by = self.transfer )
+            echo( f"  sync pull  <- {self.host}:{remote_ctx.root} [{', '.join( pull )}]" )
+            fetch( pull, self.host, remote_ctx.root, ctx.root, self.options )
         caches = cache_zones()
         if caches:
-            echo( f"  {transfer( self.transfer )} pull  <- {self.host}:{remote_ctx.root} [{', '.join( caches )}] ( cache )" )
-            fetch( caches, self.host, remote_ctx.root, ctx.root, self.options, transfer_by = self.transfer, keep = True )
+            echo( f"  sync pull  <- {self.host}:{remote_ctx.root} [{', '.join( caches )}] ( cache )" )
+            fetch( caches, self.host, remote_ctx.root, ctx.root, self.options, keep = True )
         return code
 
 
@@ -221,41 +212,6 @@ def ssh_options( options ) -> list:
     return options
 
 
-def rsync( ) -> list:
-    """rsync on this machine: the one on the PATH, or, errand started on Windows, MSYS2's ( pinned, unpacked into
-    errand's cache on first use ), which reads `/c/...` for `C:\\...`."""
-    from .base import WINDOWS
-    if not WINDOWS:
-        return [ "rsync" ]
-    from ..vm.box import local_rsync
-    return [ str( local_rsync() ) ]
-
-
-def here( path ) -> str:
-    """A path of this machine, as `rsync()` reads it."""
-    from .base import WINDOWS
-    if not WINDOWS:
-        return str( path )
-    from ..vm.transfer import msys_path
-    tail = "/" if str( path ).endswith( ( "/", "\\" ) ) else ""
-    return msys_path( str( path ) ) + tail
-
-
-def _rsh( options, host = None, agent = True ):
-    """rsync must reach the machine ssh reaches, so it gets the same options -- or, with a
-    hub to go through, the agent over there is its remote shell, and nothing logs in again."""
-    if host and agent and agents.mode() == "hub":
-        return [ "-e", agents.upstream.rsh( host, options ) ]
-    from .base import WINDOWS
-    ssh = "ssh"
-    if WINDOWS:
-        # MSYS2's rsync talks to MSYS2's ssh only: Windows' ssh.exe reads its pipes as closed
-        from ..vm.box import local_ssh
-        from ..vm.transfer import msys_path
-        ssh = msys_path( str( local_ssh() ) )
-    return [ "-e", ssh + " " + " ".join( shlex.quote( o ) for o in ssh_options( options ) ) ]
-
-
 def _remote( host, options, line: str, agent = True, interactive = False, input: bytes | None = None ):
     """A shell line on `host`: through its agent when there is a hub, else one ssh. `interactive`:
     in the user's interactive shell, as the agent's own is, for a line that needs what the
@@ -286,16 +242,7 @@ ln -sfn "$d" "$o"
 """
 
 
-def transfer( chosen = None ) -> str:
-    """How a push crosses: `ERRAND_TRANSFER`, else the `Ssh`'s `transfer`, else a sync ( ADR 0006 )."""
-    got = ( os.environ.get( "ERRAND_TRANSFER" ) or chosen or "sync" ).strip().lower()
-    if got not in ( "rsync", "sync" ):
-        raise ValueError( f"transfer {got!r}: rsync or sync" )
-    return got
-
-
-def push( local_root: Path, host: str, remote_root: Path, options = ( ), echo = print, outputs = None,
-          transfer_by = None ):
+def push( local_root: Path, host: str, remote_root: Path, options = ( ), echo = print, outputs = None ):
     """The project to its copy over there, which errand's outputs there are not part of. On the way,
     `outputs` ( `Ssh( errand_outputs_directory )` ) linked in, and a `.errand` of before moved."""
     from .. import config
@@ -315,35 +262,9 @@ def push( local_root: Path, host: str, remote_root: Path, options = ( ), echo = 
     for said in ( made.stderr or "" ).splitlines():
         if said.startswith( "errand:" ):
             echo( f"  {said}" )
-    # errand's outputs are each side's: the records of the runs made over
-    # there, its plans, what it built. Excluded, so `--delete` leaves them be,
-    # as the project's zones ( `configure( zones = ... )` ) are.
-    if transfer( transfer_by ) == "sync":
-        return _push_sync( local_root, host, remote_root, options, echo )
-    # The copy's manifest for the sync ( ADR 0006 ) too: switching between the two keeps it.
-    own = [ f"/{rel}", f"/{config.LEGACY}", "/.errand-copy*" ]
-    # The records of runs made over there that are not here ( a `--out` tree in the project ): never deleted.
-    kept = runs_over_there( host, options, remote_root )
-    _say_kept_runs( kept, host, echo )
-    done = subprocess.run( [ *rsync(), "-a", "--delete", "-i", *_rsh( options, host ),
-                             *[ f"--filter=P {k}" for k in protect_runs( kept ) ],
-                             *[ f"--exclude={e}" for e in RSYNC_EXCLUDES + own + own_paths()
-                                                          + list( config.zones() ) ],
-                             here( f"{local_root}/" ), f"{host}:{remote_root}/" ],
-                           check = True, stdout = subprocess.PIPE, text = True, errors = "replace" )
-    # Whatever is only over there goes, and it may be the one copy of something
-    # somebody put there by hand: at least it does not go silently.
-    gone = [ line.split( None, 1 )[ 1 ] for line in done.stdout.splitlines() if line.startswith( "*deleting" ) ]
-    for name in gone[ : 20 ]:
-        echo( f"    deleted there: {name}" )
-    if len( gone ) > 20:
-        echo( f"    ...and {len( gone ) - 20} more" )
-    # The caches ( ADR 0012 ): what the copy lacks, nothing replaced, nothing deleted.
-    for p in cache_zones():
-        if ( local_root / p ).is_dir():
-            subprocess.run( [ *rsync(), "-a", "--ignore-existing", "--exclude=.errand-work", *_rsh( options, host ),
-                              f"--rsync-path=mkdir -p {shlex.quote( f'{remote_root}/{p}' )} && rsync",
-                              here( f"{local_root}/{p}/" ), f"{host}:{remote_root}/{p}/" ], check = True )
+    # errand's outputs are each side's: the records of the runs made over there, its plans, what it
+    # built. Left by the push, as the project's zones ( `configure( zones = ... )` ) are.
+    return _push_sync( local_root, host, remote_root, options, echo )
 
 
 def _say_kept_runs( kept, host, echo ):
@@ -352,37 +273,7 @@ def _say_kept_runs( kept, host, echo ):
     runs = sorted( { k.rpartition( "/" )[ 0 ] for k in kept if "/" in k and k.rpartition( "/" )[ 2 ] in marks } )
     if runs:
         echo( f"    {len( runs )} run director{'y' if len( runs ) == 1 else 'ies'} made there, kept, "
-              f"not in the project here ( {runs[ 0 ]}{', …' if len( runs ) > 1 else ''} )" )
-
-
-# The run directories of a copy, for an rsync push to leave: the directories holding a run's files.
-_RUNS_LISTING = r"""cd "$1" 2>/dev/null || exit 0; shift
-for n in "$@"; do find . -name .git -prune -o -type f -name "$n" -print; done
-"""
-
-
-def runs_over_there( host, options, remote_root ) -> list:
-    """The files of the copy over there that say a run's directory ( `results.RUN_MARKS` ): relative paths."""
-    from .. import results as R
-    line = "sh -c " + shlex.quote( _RUNS_LISTING ) + " _ " + " ".join(
-        shlex.quote( x ) for x in ( str( remote_root ), R.RESULT, *R.RUN_MARKS ) )
-    got = _remote( host, options, line )
-    return sorted( l[ 2 : ] if l.startswith( "./" ) else l for l in ( got.stdout or "" ).splitlines() if l.strip() )
-
-
-def protect_runs( marks ) -> list:
-    """rsync `P` rules for the runs whose files `marks` names: each run's directory and all in it, and the
-    `summary.yaml` and `latest` above it."""
-    from .. import results as R
-    runs = sorted( { m.rpartition( "/" )[ 0 ] for m in marks if "/" in m } )
-    out = set()
-    for r in runs:
-        out.add( f"/{r}/***" )
-        parts = r.split( "/" )
-        for i in range( len( parts ) ):
-            d = "/".join( parts[ : i ] )
-            out.update( f"/{d}/{n}" if d else f"/{n}" for n in ( R.SUMMARY, R.LATEST ) )
-    return sorted( out )
+              f"not in the project here ( {runs[ 0 ]}{', …' if len( runs ) > 1 else ''} ). Said once" )
 
 
 def _push_sync( local_root: Path, host: str, remote_root, options, echo ):
@@ -427,105 +318,34 @@ def _fetch_sync( paths, host: str, remote_root, local_root: Path, options, finis
                         where = host, links = not WINDOWS, finished_only = finished_only, keep = keep )
 
 
-# What a run tree holds over there, for rsync to leave the unfinished runs: its directories, the
-# empty ones, the files that tell a run ( `results.unfinished_runs` ), and where its links lead.
-# One line each: a kind, then a path.
-_RUN_LISTING = r"""cd "$1" 2>/dev/null || exit 0; shift
-find . -type d | sed 's/^/d /'
-find . -type d -empty | sed 's/^/e /'
-for n in "$@"; do find . -type f -name "$n" | sed 's/^/f /'; done
-find . -type l | while IFS= read -r l; do printf 't %s %s\n' "$l" "$(readlink "$l")"; done
-"""
-
-
-def _listing_paths( text: str ):
-    kinds = { "d": set(), "e": set(), "f": set() }
-    targets = { }
-    strip = lambda p: p[ 2 : ] if p.startswith( "./" ) else ( "" if p == "." else p )
-    for line in text.splitlines():
-        kind, _, rest = line.partition( " " )
-        if kind in kinds:
-            kinds[ kind ].add( strip( rest ) )
-        elif kind == "t":
-            path, _, target = rest.partition( " " )
-            targets[ strip( path ) ] = target
-    return kinds, targets
-
-
-def unfinished_excludes( text: str ) -> list:
-    """From a `_RUN_LISTING`: the rsync excludes, anchored at the tree, of the runs not to come back yet
-    and of the links that lead into them ( a `latest` )."""
-    import posixpath
-    from .. import results as R
-    kinds, targets = _listing_paths( text )
-    skip = R.unfinished_runs( kinds[ "d" ], kinds[ "f" ], kinds[ "e" ] )
-    links = [ k for k, t in targets.items()
-              if R.under_any( posixpath.normpath( posixpath.join( posixpath.dirname( k ), t ) ), skip ) ]
-    return sorted( f"/{d}/" for d in skip ) + sorted( f"/{k}" for k in links )
-
-
-def unfinished_over_there( host, options, top: str ) -> list:
-    from .. import results as R
-    line = "sh -c " + shlex.quote( _RUN_LISTING ) + " _ " + " ".join(
-        shlex.quote( x ) for x in ( top, R.RESULT, *R.RUN_MARKS ) )
-    return unfinished_excludes( _remote( host, options, line ).stdout or "" )
-
-
-def put( local_dir: Path, host: str, remote_dir, options = ( ), transfer_by = None, echo = print ):
+def put( local_dir: Path, host: str, remote_dir, options = ( ), echo = print ):
     """`remote_dir` over there made the same as `local_dir` here, and nothing else touched: what a
     preparation built, carried to the copy that runs it ( ADR 0011 ). Dates are kept, so a build tool
     there finds it up to date."""
-    if transfer( transfer_by ) == "sync":
-        from .. import sync as S
-        from ..agents import syncop, upstream
-        conn = agents.open( upstream.of_host( host, options ) )
-        return syncop.push( conn, local_dir, remote_dir, S.Selection( [ ], False, [ ] ), where = host, say = echo )
-    remote = str( remote_dir )
-    subprocess.run( [ *rsync(), "-a", "--delete", *_rsh( options, host ),
-                      f"--rsync-path=mkdir -p {shlex.quote( remote )} && rsync",
-                      here( f"{local_dir}/" ), f"{host}:{remote}/" ], check = True )
+    from .. import sync as S
+    from ..agents import syncop, upstream
+    conn = agents.open( upstream.of_host( host, options ) )
+    return syncop.push( conn, local_dir, remote_dir, S.Selection( [ ], False, [ ] ), where = host, say = echo )
 
 
-def fetch_file( path: str, host: str, remote_root, local_root: Path, options = ( ), transfer_by = None, say = print ):
+def fetch_file( path: str, host: str, remote_root, local_root: Path, options = ( ), say = print ):
     """One file of the copy, `path` from its root, brought back at once ( a view, `cli.views` ), its date kept:
     the run's own coming back finds it as it is and leaves it. Raises when it could not come."""
     path = Path( path ).as_posix()
     target = Path( local_root ) / path
     target.parent.mkdir( parents = True, exist_ok = True )
-    if transfer( transfer_by ) == "sync":
-        from ..agents import syncop, upstream
-        conn = agents.open( upstream.of_host( host, options ) )
-        for _ in range( 3 ):                    # rewritten while read, twice: read again, the run is still at it
-            if not syncop.pull( conn, remote_root, local_root, [ path ], where = host, say = say ).unstable:
-                break
-        if not target.is_file():
-            raise FileNotFoundError( f"{host}:{remote_root}/{path}" )
-        return
-    got = subprocess.run( [ *rsync(), "-a", *_rsh( options, host ), f"{host}:{remote_root}/{path}", here( target ) ],
-                          capture_output = True, text = True )
-    if got.returncode:
-        raise OSError( ( ( got.stderr or "" ).strip().splitlines() or [ f"rsync: {got.returncode}" ] )[ -1 ] )
+    from ..agents import syncop, upstream
+    conn = agents.open( upstream.of_host( host, options ) )
+    for _ in range( 3 ):                    # rewritten while read, twice: read again, the run is still at it
+        if not syncop.pull( conn, remote_root, local_root, [ path ], where = host, say = say ).unstable:
+            break
+    if not target.is_file():
+        raise FileNotFoundError( f"{host}:{remote_root}/{path}" )
 
 
-def fetch( paths, host: str, remote_root: Path, local_root: Path, options = ( ), transfer_by = None,
-           finished_only = False, keep = False ):
+def fetch( paths, host: str, remote_root: Path, local_root: Path, options = ( ), finished_only = False, keep = False ):
     """Best effort: a path the remote run never created is nothing to bring back. Nothing here is
     deleted. `finished_only`: the paths are run trees, and a run comes back only once it has written
     its `result.yaml` ( `results.unfinished_runs` ): never half of one. `keep`: the paths are caches
     ( ADR 0012 ), and a file already here is not replaced."""
-    if transfer( transfer_by ) == "sync":
-        return _fetch_sync( paths, host, remote_root, local_root, options, finished_only = finished_only, keep = keep )
-    for p in paths:
-        target = local_root / p
-        p = Path( p ).as_posix()        # a path over there: `a/b`, though this is a Windows
-        target.mkdir( parents = True, exist_ok = True )
-        # A trailing slash on BOTH sides: without it rsync nests the remote
-        # directory INSIDE the local one whenever the latter already exists.
-        from .base import WINDOWS
-        # a link ( a run's `latest` ) is not made on a Windows without its developer mode: left over there
-        excludes = [ ]
-        if finished_only:
-            excludes = [ f"--exclude={x}" for x in unfinished_over_there( host, options, f"{remote_root}/{p}" ) ]
-        # No `--delete`, ever: what is here and no longer over there stays.
-        subprocess.run( [ *rsync(), "-a", *( [ "--no-links" ] if WINDOWS else [ ] ), *_rsh( options, host ),
-                          *( [ "--ignore-existing", "--exclude=.errand-work" ] if keep else [ ] ), *excludes, f"{host}:{remote_root}/{p}/", here( f"{target}/" ) ] )
+    return _fetch_sync( paths, host, remote_root, local_root, options, finished_only = finished_only, keep = keep )

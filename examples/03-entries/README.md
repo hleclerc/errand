@@ -51,7 +51,7 @@ without `-o`.
 
 Nothing here is a special directory that `errand` knew about in advance. Every component is computed
 from the entry, its parameters, where it ran and when — which is also how the same path can be
-predicted before a run happens on another machine, and rsynced back afterwards. That is the next
+predicted before a run happens on another machine, and brought back afterwards. That is the next
 example.
 
 ## The same thing, on a screen

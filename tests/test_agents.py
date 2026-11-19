@@ -145,9 +145,9 @@ if test( "nor its channel: through a hub the stream stays, and a closed channel 
         marker = Path( d ) / "still-here"
         call = conn.open( { "op": "spawn", "argv": [ "sh", "-c", f"sleep 2; touch {marker}" ], "keep": False } )
         call.reply()
-        call.close()                    # the connection stays: as rsync's remote shell, through the hub
+        call.close()                    # the connection stays: as a remote shell's, through the hub
         time.sleep( 4 )
-        assert not marker.exists(), "an rsync --server whose client went would wait forever"
+        assert not marker.exists(), "a command whose client went would wait forever"
         assert conn.ping()[ "ok" ]
         conn.close()
 
@@ -437,10 +437,10 @@ if test( "errand agents lists what the hub keeps, and stop takes it all down, th
         assert "no hub running" in errand( "agents" ).stdout
 
 
-if test( "rsync's remote shell is told apart from its options" ):
+if test( "a remote shell's command is told apart from its options" ):
     from errand.agents.rsh import command_of
-    assert command_of( [ "lmo", "rsync", "--server", "-a", "." ] ) == "rsync --server -a ."
-    assert command_of( [ "-l", "me", "-p", "22", "lmo", "rsync", "--server" ] ) == "rsync --server"
+    assert command_of( [ "lmo", "sh", "-c", "true" ] ) == "sh -c true"
+    assert command_of( [ "-l", "me", "-p", "22", "lmo", "python3", "-V" ] ) == "python3 -V"
 
 
 if test( "a session's marks are read out of its output, however the output was cut" ):

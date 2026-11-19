@@ -13,7 +13,7 @@ was a hash of the parameters could not be read at all.
 
 Every component is computed from the run rather than declared by it, which is
 what lets the same path be worked out on another machine -- before the run
-happens -- and rsynced back afterwards.
+happens -- and brought back afterwards.
 
 Summaries are recomputed by re-reading the tree, never from a ledger kept in
 memory: they are then correct however many separate invocations contributed to

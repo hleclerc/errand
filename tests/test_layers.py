@@ -362,7 +362,7 @@ if test( "over ssh, `is it there` is asked of the machine it would be built on" 
         return shell
 
     kept, pushed = L.Over.shell, L.push
-    L.push = lambda *a, **kw: None          # no rsync to a host that does not exist
+    L.push = lambda *a, **kw: None          # no push to a host that does not exist
     try:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path( tmp )

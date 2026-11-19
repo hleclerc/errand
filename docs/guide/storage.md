@@ -88,8 +88,7 @@ Each layer that builds something says where it goes:
 The sources are small. The Python errand may make for itself is tens of MB, once. The rest is live
 and goes away by itself: an agent with nothing to do stops, a warm allocation is released, a
 machine nobody used for a day leaves nothing here, and a machine not reached for two weeks is no
-longer asked. Setting up a [`WindowsBox`](./layers/windows-box) also leaves an `msys2-rsync/`: the rsync
-it installs on the Windows machine, downloaded once.
+longer asked.
 
 By default it is in the home directory, on purpose: on a cluster, the home is what the login node
 and the compute nodes share, so what errand finds or makes on the login node is what a job uses on

@@ -395,9 +395,7 @@ if test( "what goes into a guest leaves out what an Ssh push would, errand's out
         assert names == { "src", "src/a.cpp", "src/results", "src/results/kept.txt", "sub" }, names
 
 
-if test( "no rsync in the image: files cross through the guest's agent" ):
+if test( "nothing to copy files with in the image: they cross through the guest's agent" ):
     script = vm.setup_script()
-    assert "rsync" not in script and "msys" not in script.lower()
+    assert "msys" not in script.lower()
     assert vm.package_hint( facts(), [ "zstd" ] ) == "sudo apt install zstd"
-    assert vm.msys_path( "E:/proj" ) == "/e/proj" and vm.msys_path( "C:\\errand\\p y\\" ) == "/c/errand/p y"
-    assert "rsync.exe" in vm.RSYNC_FILES and any( p.startswith( "rsync-" ) for p in vm.MSYS2_PACKAGES )

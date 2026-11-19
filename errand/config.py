@@ -236,7 +236,7 @@ class Settings:
     builds_directory : str | None = None
     # Where a run writes in the project's copy over there ( ADR 0006 ). Elsewhere the copy holds only
     # what errand sends, and a change is said, then put back. `{ "results": "back" }`: path patterns
-    # as rsync reads them ( `results`, a name anywhere; `/results`, at the root ), each a kind:
+    # as a sync reads them ( `results`, a name anywhere; `/results`, at the root ), each a kind:
     #     back    written over there, brought back here
     #     build   built over there ( what a layer builds, `kept()`, is one already )
     #     cache   added to on both sides, never replaced nor deleted ( ADR 0012 ): downloaded data,

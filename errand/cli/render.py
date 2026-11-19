@@ -2,9 +2,10 @@
 one line -- here, on the side that drives, whatever ran the case.
 
     ▸ solve  exp_demo.py:5 · n=3
-      │ it 0 residual 1.0e+00                 stdout, behind a dim bar
-      ┃ warning: slow convergence             stderr, behind an amber one
-    PASS solve  2.1 s · residual 0.001
+    │ it 0 residual 1.0e+00                 stdout, behind a dim bar, under the case's `▸`
+    ┃ warning: slow convergence             stderr, behind an amber one
+    │ adjust      it=230 loss 0.0035        a row ( `errand.row`, `rows` ): its pieces aligned with the rows before
+    ╰ PASS solve  2.1 s · residual 0.001
 
 The gutter is colored, never the text: the program's own colors are kept, and carried over the gutter
 when a line starts inside one. Three modes ( `mode()` ): `bar` ( the default ), `spaces`, `off`;
@@ -24,12 +25,15 @@ import sys
 import threading
 import time
 
+from .. import rows
+
 MODES = ( "bar", "spaces", "off", "plain" )
 ENV   = "ERRAND_OUTPUT"
 
 BOLD, DIM, GREEN, RED, YELLOW, CYAN, RESET = (
     "\033[1m", "\033[2m", "\033[32m", "\033[31m", "\033[33m", "\033[36m", "\033[0m" )
 MAGENTA = "\033[35m"
+ROW = "\033[38;5;75m"          # the head of a row ( `errand.row` ): the step, in a sky blue
 PLACE = BOLD + MAGENTA          # where the cases run ( `place` ): not the cases' colour
 INSET = "  "                    # a case under its place
 
@@ -121,6 +125,7 @@ class _Stream:
         self.decoder = codecs.getincrementaldecoder( "utf-8" )( errors = "replace" )
         self.at_start = True
         self.sgr     = ""                    # the program's last color, carried over the gutter
+        self.rowbuf  = ""                    # a row ( `rows` ) begun and not ended in what came so far
 
     def write( self, text: str ):
         try:
@@ -153,6 +158,11 @@ class Renderer:
         self.blocks = False
         self.last_write = 0.0
         self._held: list = [ ]             # ( stream, text ) of the case under way, in the order they came
+        # The rows of the case ( `errand.row` ): their columns, and those on the terminal, at which line
+        # of it, to draw them again when a column grows. Lines counted as the terminal shows them.
+        self.table = rows.Table()
+        self.drawn: list = [ ]             # ( line, head, groups, gutter )
+        self.line, self.col = 0, 0
 
     # -- pieces --------------------------------------------------------------
 
@@ -163,10 +173,10 @@ class Renderer:
         if self.mode in ( "off", "plain" ):
             return ""
         if self.mode == "spaces":
-            return INSET + "    "
+            return INSET + "  "
         color = colors_on( ( self.err_ if err else self.out_ ).stream )
         bar = "┃" if err else "│"
-        return f"{INSET}  {YELLOW if err else DIM}{bar}{RESET} " if color else f"{INSET}  {bar} "
+        return f"{INSET}{YELLOW if err else DIM}{bar}{RESET} " if color else f"{INSET}{bar} "
 
     def _put( self, s: _Stream, text: str ):
         """`text` to `s`, or held with the case's block."""
@@ -175,6 +185,34 @@ class Renderer:
         else:
             self._unshow()
             s.write( text )
+            self._count( text )
+
+    def _count( self, text: str ):
+        """The lines of the terminal `text` takes, a long line wrapped: where the rows drawn are."""
+        width = shutil.get_terminal_size( ( 100, 24 ) ).columns
+        for i, seg in enumerate( text.split( "\n" ) ):
+            if i:
+                self.line += 1 + max( 0, self.col - 1 ) // width
+                self.col = 0
+            if "\r" in seg:
+                self.col = max( self.col, rows.visible( seg.rpartition( "\r" )[ 2 ] ) )
+            else:
+                self.col += rows.visible( seg )
+
+    def _row( self, head: str, groups, gutter: str ) -> str:
+        return gutter + self.table.draw( head, groups, ROW if self.color else "" )
+
+    def _redraw( self ):
+        """The rows of the case drawn before, at the widths known now, where they are on the terminal --
+        those it still shows, on one line each."""
+        if not ( self.out_.at_start and self.err_.at_start ):
+            return
+        size = shutil.get_terminal_size( ( 100, 24 ) )
+        self._unshow()
+        for line, head, groups, gutter in self.drawn:
+            up, text = self.line - line, self._row( head, groups, gutter )
+            if 0 < up < size.lines and rows.visible( text ) < size.columns:
+                self.out_.write( f"\x1b[{up}A\r\x1b[K{text}\x1b[{up}B\r" )
 
     # -- how long it has run, under it -----------------------------------------
 
@@ -196,7 +234,7 @@ class Renderer:
         bits = [ f"{took} s" if took < 60 else f"{took // 60} min {took % 60:02d} s" ]
         if self.step:
             bits.append( self.step )
-        return f"{INSET}  ┆ " + " · ".join( bits )
+        return f"{INSET}┆ " + " · ".join( bits )
 
     def set_step( self, text: str | None ):
         """The case's step now ( `steps`, ADR 0010 ), said under it with its time."""
@@ -224,8 +262,8 @@ class Renderer:
         if self.mode in ( "off", "plain" ):
             return ""
         if self.mode == "spaces" or blank:
-            return INSET + "    "
-        return f"{INSET}  {DIM}╰{RESET} " if self.color else f"{INSET}  ╰ "
+            return INSET + "  "
+        return f"{INSET}{DIM}╰{RESET} " if self.color else f"{INSET}╰ "
 
     def _line( self, text: str ):
         """A line of errand's, on stdout, on a line of its own."""
@@ -255,7 +293,7 @@ class Renderer:
         """The last `n` lines of the block held ( `-j` ), as they will be drawn: what Focus shows live
         ( `bottom` ). A bar redrawn in place shows its last state."""
         with _lock:
-            text = "".join( t for _, t in self._held )
+            text = "".join( self._row( *t ) if isinstance( t, tuple ) else t for _, t in self._held )
         return recent_lines( text, n )
 
     def _release( self ):
@@ -264,7 +302,10 @@ class Renderer:
             self._unshow()
             held, self._held = self._held, [ ]
             for s, text in held:
+                if isinstance( text, tuple ):                  # a row: at the widths of the whole case
+                    text = self._row( *text )
                 s.write( text )
+                self._count( text )
 
     # -- what a case's source says -------------------------------------------
 
@@ -293,6 +334,7 @@ class Renderer:
             where.append( f"gpu{'s' if len( gpus ) > 1 else ''} {','.join( str( g ) for g in gpus )}" )
         env = f" ({' · '.join( where )})" if where else ""
         self.since, self.step = time.time(), None
+        self.table, self.drawn = rows.Table(), [ ]
         if self._live() and not self._ticking:
             self._ticking = True
             threading.Thread( target = self._tick, daemon = True ).start()
@@ -302,6 +344,10 @@ class Renderer:
     def tail( self, status: str, name: str, site: str = "", *, error = None, seconds = None, results = None,
               output = None ):
         """`PASS solve  2.1 s · residual 0.001`, `FAIL broken  0.1 s  ValueError: …` and where its output is."""
+        for s in ( self.out_, self.err_ ):                    # a row the case did not end
+            if s.rowbuf:
+                rest, s.rowbuf = s.rowbuf, ""
+                self._text( s, rest, final = True )
         word = { "PASS": self._c( GREEN, "PASS" ), "SKIP": self._c( YELLOW, "SKIP" ) }.get( status, self._c( RED, status ) )
         where = f"  {self._c( DIM, site )}" if site and not self.head_seen else ""
         facts = " · ".join( b for b in ( duration( seconds ), results_line( results ) if status == "PASS" else "" ) if b )
@@ -346,16 +392,32 @@ class Renderer:
         """Bytes or text the case wrote: behind the gutter inside a case, as they are outside one."""
         s = self.err_ if err else self.out_
         text = s.decoder.decode( data ) if isinstance( data, ( bytes, bytearray ) ) else data
-        if not text:
-            return
+        if text:
+            self._text( s, text )
+
+    def _text( self, s: _Stream, text: str, final = False ):
+        err = s.err
         self.last_write = time.time()
         with _lock:
+            text, s.rowbuf = s.rowbuf + text, ""
+            if not final:                                      # a row is drawn whole: wait for its line's end
+                begun = text.rfind( rows.MARK )
+                if begun >= 0 and "\n" not in text[ begun : ]:
+                    text, s.rowbuf = text[ : begun ], text[ begun : ]
+                else:
+                    for k in range( len( rows.MARK ) - 1, 0, -1 ):
+                        if text.endswith( rows.MARK[ : k ] ):
+                            text, s.rowbuf = text[ : -k ], text[ -k : ]
+                            break
+                if not text:
+                    return
             if not self.in_case or self.mode in ( "off", "plain" ):
+                text = self._plain_rows( text )
                 self._put( s, text )
                 s.at_start = text.endswith( ( "\n", "\r" ) )
                 return
             g = self.gutter( err )
-            out = [ ]
+            out, grew = [ ], False
             for piece in re.split( r"(\r\n|\n|\r)", text ):
                 if not piece:
                     continue
@@ -367,6 +429,19 @@ class Renderer:
                     s.at_start = True
                     continue
                 self.eol = False
+                if s.at_start and ( got := rows.parse( piece ) ):
+                    head, groups = got
+                    grew = self.table.add( head, groups ) or grew
+                    if out:
+                        self._put( s, "".join( out ) )
+                        out = [ ]
+                    if self.blocks:
+                        self._put( s, ( head, groups, g + s.sgr ) )
+                    else:
+                        self.drawn.append( ( self.line, head, groups, g + s.sgr ) )
+                        self._put( s, self._row( head, groups, g + s.sgr ) )
+                    s.at_start = False
+                    continue
                 if s.at_start:
                     out.append( g + s.sgr )
                     s.at_start = False
@@ -375,7 +450,25 @@ class Renderer:
                 out.append( piece )
                 for m in _SGR.finditer( piece ):
                     s.sgr = "" if m.group() in ( "\x1b[0m", "\x1b[m" ) else s.sgr + m.group()
-            self._put( s, "".join( out ) )
+            if out:
+                self._put( s, "".join( out ) )
+            if grew and self._live():
+                self._redraw()
+
+    def _plain_rows( self, text: str ) -> str:
+        """The rows of `text` aligned on those before, without colour, never drawn again: off a case, or
+        when nothing is drawn around the output ( `off`, `plain` )."""
+        if rows.MARK not in text:
+            return text
+        lines = text.split( "\n" )
+        for i, l in enumerate( lines ):
+            if got := rows.parse( l ):
+                if self.in_case:
+                    self.table.add( *got )
+                    lines[ i ] = self.table.draw( *got )
+                else:
+                    lines[ i ] = l.partition( rows.END )[ 2 ]
+        return "\n".join( lines )
 
     def mark( self, m: dict ) -> bool:
         """An event of a session, drawn. -> whether it was one to draw."""
