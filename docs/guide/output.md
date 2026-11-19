@@ -12,6 +12,61 @@ printed. With `-o`, it also gets a directory of its own for the files it writes,
 wherever it ran. Everything is plain files under `errand-outputs/`: no database, nothing to query
 but the tree.
 
+## On the terminal
+
+```text
+lmo · 2 entries  lmo@node12
+▸ solve  exp_demo.py:5 · n=3
+  │ it 2 residual 1.0e-02                 what the case wrote on stdout
+  ┃ warning: slow convergence             on stderr
+  ╰ PASS solve  903 ms · residual 0.001
+▸ broken  exp_demo.py:15
+  ┃ ValueError: the matrix is singular
+  ╰ FAIL broken  8 ms  ValueError: the matrix is singular
+    ↳ errand-outputs/runs/exp_demo.py/broken/2026-11-18_14h04m33-lmo@node12/output.txt
+```
+
+Each case has a header, at the left edge, its output behind a gutter, and an end line that closes the
+gutter ( `╰` ), in the column of its output: its status, how long it took,
+its results when they are short numbers or words, and, when it failed, where its whole output is.
+A failure's traceback shows the case's frames and its libraries', not errand's nor the import
+machinery's; `-v` shows them all. A case run elsewhere colors its output as it would on this terminal:
+errand sets `FORCE_COLOR` and `CLICOLOR_FORCE` for it when this terminal shows colors, unless
+`NO_COLOR` is set or they already have a value. The gutter is drawn on this terminal, never written into the record: copy from `output.txt` to get
+the lines as they were. What errand does to get there — the push, errand's sources sent, the pull —
+is said on the line at the bottom while it lasts, never in the history: its numbers ( files, bytes,
+seconds ) are written in the journal of each run concerned, `steps.jsonl`, as
+`{"transfer": "push", "s": 2.05, "files": 8, "bytes": 117108, …}`.
+
+With `-j`, each case is drawn as one block when it ends, everything it wrote in it, whoever wrote it.
+While they run, the bottom has a line for each, with its step:
+
+```text
+1 ▸ case a · iteration 41 · ▕████▏ 41 % · 2 min left
+2 ▸ case b · 12 s
+lmo: ssh:lmo -> vars
+1-9 / tab: a case in front · esc: back
+```
+
+A digit ( the case's number, which stays with it ) or Tab puts a case in front: its last lines scroll
+live above the lines, its block still drawn whole at its end. Esc goes back.
+
+### A case that asks
+
+A case reads the keyboard here, wherever it runs, when the keyboard and the screen are a terminal's:
+
+- one case running: type as you would to it, the terminal echoes and edits the line, Enter sends it,
+  Ctrl-D ends its input;
+- under `-j`: put it in front, then type: the line is edited at the bottom ( `› 12▏` ), Enter sends it,
+  and it goes in the case's output as a terminal would have shown it. Ctrl-D ends its input, Esc goes
+  back.
+
+A case that wrote a line without its end, then nothing for two seconds, says so on its line:
+`⌨ waits for input?` -- a hint, errand cannot know. Off a terminal ( a pipe, a CI log, `--batch` ), a
+case run elsewhere gets EOF at once: nothing waits for an answer that cannot come. Run here, it reads
+the input errand was given ( `echo 12 | errand run …` ). `--plain` drops the gutter and the colors; `$ERRAND_OUTPUT` ( `bar`, `spaces`,
+`off`, `plain` ) or `errand.configure( output = … )` chooses for a machine or a project.
+
 ## Its own directory: `-o`
 
 ```bash
@@ -114,19 +169,20 @@ On a filesystem without symlinks it is simply missing.
 ```text
 2026-09-25_18h04m11-gpu@gpu-box/
   result.yaml      always: what ran, where, how it ended -- written last
-  output.txt       what it printed, when it printed anything
+  output.txt       everything it printed, both streams interleaved, a child's included
   stdout.txt       the process's standard output, as written to it
   stderr.txt       its standard error, apart
   model.pt         what it wrote there, with -o
 ```
 
 **`stdout.txt` and `stderr.txt` are the raw streams**: what the process wrote to its descriptors,
-the C library's writes, a child's, and a fault handler's included. `output.txt` is what was shown,
-both interleaved. On Linux and macOS a small process of its own copies them, and outlives the run:
-a segfault or an abort leaves in `stderr.txt` everything written up to the end -- with Python's word
-on where it crashed -- and that process writes the run's `result.yaml` for it ( `status: FAIL`,
-`error: the process ended during the run…`, no `duration_s` ). A stream that is a terminal is left
-alone ( colors, progress bars ): what Python writes to it is copied instead, and so on Windows.
+the C library's writes, a child's, and a fault handler's included. `output.txt` is both, interleaved as
+they came. On Linux and macOS a small process of its own copies them, and outlives the run: a segfault
+or an abort leaves in `stderr.txt` everything written up to the end -- with Python's word on where it
+crashed -- and that process writes the run's `result.yaml` for it ( `status: FAIL`, `error: the process
+ended during the run…`, no `duration_s` ). On a terminal, it takes the streams through two
+pseudo-terminals: what runs still sees a terminal ( colors, progress bars ), and what it shows here goes
+behind the gutter. On Windows, what Python writes is copied instead, and a child's output is only shown.
 
 **A process that fails says the last of its stderr.** When a run ends by a nonzero exit status or a
 signal ( `exit 3`, `signal SIGSEGV` ), the last lines of `stderr.txt` follow the reason, in the

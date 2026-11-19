@@ -11,8 +11,12 @@ machines are let go of 30 s after the last request.
 
     address     127.0.0.1 only; port 20000 + uid % 10000, any free one when taken. From elsewhere:
                 `ssh -L PORT:localhost:PORT host`, then `errand web` there gives the URL
-    access      a token drawn when the agent starts, in the URL, then a cookie; `Host` checked.
-                It is in `web.json` ( mode 0600 ) beside the lock, for `errand web` to read
+    access      the port is open to every user of the machine: a page is served only to who holds
+                the token, drawn when the agent starts ( 384 bits ), kept in `web.json` ( mode 0600 ).
+                `errand web` opens the page with a code used once ( `web-once/`, two minutes ): a URL
+                seen in `ps` or a history is already spent. Otherwise the page asks for the token
+                ( `errand web token` prints it ). Then a cookie; `Host` checked; an action from another
+                page refused ( `Origin` ); a run's files served in a sandbox, apart from the page
     life        a page that asks keeps its agent: a request counts as use
 
 Stdlib only ( `http.server` ): errand still installs with nothing.
@@ -28,6 +32,8 @@ from .. import bootstrap
 
 LOCK  = "web.lock"
 SAID  = "web.json"
+ONCE  = "web-once"            # codes used once, that `errand web` puts in the URL it opens
+ONCE_FOR = 120.0
 WAIT  = 20.0                # seconds `errand web` waits for the agent to say where its page is
 
 
@@ -79,11 +85,49 @@ def said( ) -> dict | None:
     if free is not None:              # nobody holds the lock: what the file says is a leftover
         free.close()
         return None
-    return { **rec, "url": f"http://127.0.0.1:{rec[ 'port' ]}/?t={rec[ 'token' ]}" }
+    return { **rec, "url": f"http://127.0.0.1:{rec[ 'port' ]}/" }
 
 
-def main( echo = print, browse = True ) -> int:
-    """`errand web`: the host agent here started if need be, then its page opened."""
+def once( ) -> str:
+    """A code that opens the page once, within `ONCE_FOR` seconds ( `server._Handler` spends it )."""
+    import secrets
+    d = bootstrap.local_cache() / ONCE
+    d.mkdir( mode = 0o700, parents = True, exist_ok = True )
+    os.chmod( d, 0o700 )
+    code = secrets.token_urlsafe( 32 )
+    fd = os.open( str( d / code ), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600 )
+    os.close( fd )
+    return code
+
+
+def spend( code: str ) -> bool:
+    """Whether `code` opens the page: it exists, is fresh, and is used now, so never again."""
+    if not code or "/" in code or "\\" in code or code.startswith( "." ):
+        return False
+    path = bootstrap.local_cache() / ONCE / code
+    try:
+        fresh = time.time() - path.stat().st_mtime < ONCE_FOR
+        path.unlink()
+    except OSError:
+        return False
+    for old in ( bootstrap.local_cache() / ONCE ).glob( "*" ):          # what was never used
+        try:
+            if time.time() - old.stat().st_mtime > ONCE_FOR:
+                old.unlink()
+        except OSError:
+            pass
+    return fresh
+
+
+def main( words = ( ), echo = print, browse = True ) -> int:
+    """`errand web`: the host agent here started if need be, then its page opened, with a code used once.
+    `errand web token`: the token, to paste in a page that asks for it ( through a tunnel, another browser )."""
+    if list( words ) == [ "dev" ]:
+        return dev( echo = echo, browse = browse )
+    if list( words ) not in ( [ ], [ "token" ] ):
+        echo( "errand web: `errand web` opens the page, `errand web token` prints its token, "
+              "`errand web dev` serves it from these sources" )
+        return 2
     got = said()
     if got is None:
         from ..agents import upstream as U
@@ -102,11 +146,45 @@ def main( echo = print, browse = True ) -> int:
         echo( f"errand web: the agent in {host_agent_dir()} serves no page ( started by an older errand? "
               "`errand agents stop`, then again; its log says more )" )
         return 1
-    echo( got[ "url" ] )
+    if list( words ) == [ "token" ]:
+        echo( got[ "token" ] )
+        return 0
+    url = f"{got[ 'url' ]}?o={once()}"
+    echo( f"{url}   ( once, within {ONCE_FOR / 60:.0f} min; then `errand web token` for the page that asks )" )
     if browse:
         import webbrowser
         try:
-            webbrowser.open( got[ "url" ] )
+            webbrowser.open( url )
         except Exception:
             pass
+    return 0
+
+
+def dev( echo = print, browse = True, port = None ) -> int:
+    """`errand web dev`: the page served by this process, from the sources as they are now, beside the
+    agent's ( which goes on, and what it follows with it ): to work on the page without stopping what runs.
+    The page is read again at each load ( `page.py`: reload the tab ); the server's code, at each start
+    ( Ctrl-C, again ). Its own lock and token, the same codes used once."""
+    from .server import Web
+    web = Web.start( bootstrap.local_cache() / "web-dev", port = port_of_user() + 1 if port is None else port,
+                     reload_page = True )
+    if web is None:
+        echo( "errand web dev: another one serves already ( its lock: "
+              f"{bootstrap.local_cache() / 'web-dev' / LOCK} )" )
+        return 1
+    url = f"http://127.0.0.1:{web.port}/?o={once()}"
+    echo( f"{url}   ( this process, these sources: page.py read at each load; Ctrl-C ends it )" )
+    if browse:
+        import webbrowser
+        try:
+            webbrowser.open( url )
+        except Exception:
+            pass
+    try:
+        while True:
+            time.sleep( 3600 )
+    except KeyboardInterrupt:
+        pass
+    finally:
+        web.stop()
     return 0

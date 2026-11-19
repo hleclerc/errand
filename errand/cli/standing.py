@@ -8,6 +8,8 @@ with its agent: the job ends.
 """
 from __future__ import annotations
 
+import time
+
 import json
 from pathlib import Path
 
@@ -121,7 +123,7 @@ def show_live( root: Path, ask = True, got = None ) -> int:
 def processes( rec ) -> list:
     """What the agent says of the sessions a live record names: one dict each, None for one whose
     output is gone over there. Raises when the agent cannot be asked."""
-    conn = agents.open( rec[ "target" ] )
+    conn = agents.open( rec[ "target" ], noted = False )      # asking is no work sent there
     call = conn.open( { "op": "list", "store": rec.get( "store" ), "ids": [ str( p ) for p in rec[ "procs" ] ] } )
     try:
         procs = { str( p[ "id" ] ): p for p in call.reply( 20 ).get( "procs", [ ] ) }
@@ -182,7 +184,7 @@ def tables( ) -> list:
     import threading
     from ..agents import ledger, table as T
     here = socket.gethostname()
-    out = [ ( here.split( "." )[ 0 ], T.scan(), None ) ]
+    out = [ ( ledger.here_name(), T.scan(), None ) ]
     asked = [ ]
 
     def one( rec ):
@@ -193,7 +195,10 @@ def tables( ) -> list:
         except Exception as err:
             asked.append( ( rec[ "name" ], None, str( err ).strip().splitlines()[ -1 ] if str( err ).strip() else type( err ).__name__ ) )
 
-    threads = [ threading.Thread( target = one, args = ( rec, ), daemon = True ) for rec in ledger.machines() ]
+    # A machine no work was sent to for a day is not contacted ( `ledger.dormant` ): no agent of errand's
+    # started for nothing on a machine others share.
+    threads = [ threading.Thread( target = one, args = ( rec, ), daemon = True ) for rec in ledger.groups()
+                if ledger.watched( rec ) ]                # each machine once, whatever names reach it
     for t in threads:
         t.start()
     for t in threads:
@@ -271,6 +276,11 @@ def show_running( root: Path, everything = False, got = None ) -> int:
 
     print( head( "\nrunning" ) + dim( f"   ( on {', '.join( m for m, _, _ in got )}: this machine"
                                        + ( ", and every machine work was sent to from it )" if got[ 1 : ] else " )" ) ) )
+    from ..agents import ledger
+    asleep = [ r[ "name" ] + ( " ( off )" if r.get( "watch" ) is False else "" ) for r in ledger.groups() if not ledger.watched( r ) ]
+    if asleep:
+        print( dim( f"  not asked: {', '.join( asleep )} ( no work sent there lately, or switched off: `a` in errand tui,"
+                    " `errand machines watch NAME on` )" ) )
     if not work and not machines:
         print( dim( "  nothing" ) )
     current = sorted( ( n for n in projects if n in mine ) )
@@ -306,3 +316,61 @@ def show_running( root: Path, everything = False, got = None ) -> int:
     for machine, error in failed:
         print( warn( f"  {machine}: cannot say" ) + dim( f" ( {error} )" ) )
     return len( work )
+
+
+def machines_main( words ) -> int:
+    """`errand machines`: the machines errand asks what runs there ( the ledger, ADR 0008 ), each once
+    whatever names it is reached by, most recently used first. `errand machines forget NAME...`: not asked
+    any more, until work is sent there again; `errand machines rename NAME LABEL`: shown as LABEL."""
+    from ..agents import ledger
+    from .style import bad, dim
+    if not words:
+        rows = ledger.groups()
+        if not rows:
+            print( dim( "  no machine: work was never sent elsewhere from here ( or not for two weeks )" ) )
+            return 0
+        width = max( len( r[ "name" ] ) for r in rows )
+        for r in rows:
+            also = [ n for n in r[ "names" ] if n != r[ "name" ] ]
+            state = "" if ledger.watched( r ) else "  off" if r.get( "watch" ) is False else "  dormant: not asked"
+            print( f"  {r[ 'name' ]:{width}}  {dim( _ago( time.time() - r[ 'last' ] ) + ' ago' )}" + dim( state )
+                   + ( dim( f"  also {', '.join( also )}" ) if also else "" ) )
+        print( dim( "  errand machines forget NAME · rename NAME LABEL · watch NAME on|off|auto" ) )
+        return 0
+    if words[ 0 ] == "watch" and len( words ) == 3 and words[ 2 ] in ( "on", "off", "auto" ):
+        names = ledger.set_watch( words[ 1 ], { "on": True, "off": False, "auto": None }[ words[ 2 ] ] )
+        if not names:
+            print( bad( f"  {words[ 1 ]}: no such machine" ) )
+            return 1
+        print( f"  {', '.join( names )}: " + { "on": "watched", "off": "not watched", "auto": "watched while work is sent there" }[ words[ 2 ] ] )
+        return 0
+    if words[ 0 ] == "rename" and len( words ) == 3:
+        names = ledger.rename( words[ 1 ], words[ 2 ] )
+        if not names:
+            print( bad( f"  {words[ 1 ]}: no such machine" ) )
+            return 1
+        print( f"  {', '.join( names )}: shown as {words[ 2 ]}" )
+        return 0
+    if words[ 0 ] != "forget" or len( words ) < 2:
+        print( bad( "errand machines: `errand machines`, `errand machines forget NAME...`, `errand machines rename NAME LABEL`" ) )
+        return 2
+    rc = 0
+    for name in words[ 1 : ]:
+        gone = ledger.forget( name )
+        if gone:
+            print( f"  {', '.join( gone )}: forgotten" )
+        else:
+            known = sorted( { n for g in ledger.groups() for n in g[ "names" ] } )
+            print( bad( f"  {name}: no such machine" ) + dim( f" ( known: {', '.join( known ) or 'none'} )" ) )
+            rc = 1
+    return rc
+
+
+def _ago( s: float ) -> str:
+    if s < 120:
+        return f"{s:.0f} s"
+    if s < 7200:
+        return f"{s / 60:.0f} min"
+    if s < 172800:
+        return f"{s / 3600:.0f} h"
+    return f"{s / 86400:.0f} days"

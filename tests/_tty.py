@@ -30,12 +30,20 @@ DOWN, UP, END, HOME = "\x1bOB", "\x1bOA", "\x1bOF", "\x1bOH"
 
 
 class Term:
-    def __init__( self, argv, cwd: Path, rows = ROWS, cols = COLS, env = None ):
+    def __init__( self, argv, cwd: Path, rows = ROWS, cols = COLS, env = None, controlling = False ):
+        """`controlling`: the terminal is the program's own, as a real one is ( a session of its own, and
+        this terminal its controlling one ): what reads the keyboard line by line needs it."""
         self.master, slave = pty.openpty()
         fcntl.ioctl( slave, termios.TIOCSWINSZ, struct.pack( "HHHH", rows, cols, 0, 0 ) )
         self.rows, self.cols = rows, cols
+
+        def own():
+            os.setsid()
+            fcntl.ioctl( 0, termios.TIOCSCTTY, 0 )
+
         self.child = subprocess.Popen( argv, cwd = str( cwd ), stdin = slave, stdout = slave,
-                                       stderr = slave, close_fds = True, env = env )
+                                       stderr = slave, close_fds = True, env = env,
+                                       preexec_fn = own if controlling else None )
         os.close( slave )
         self.buf  = ""
         self.seen = ""        # everything ever read, so `text()` can clear `buf`

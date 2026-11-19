@@ -32,6 +32,19 @@ from typing import NamedTuple
 CHUNK = 1 << 20
 COPY_STATE = ".errand-copy"      # at a copy's root: its trusted manifest ( `agents/syncop.py` ), never part of a sync
 SPARED = COPY_STATE + "-kept"    # beside it: what a sync would have lost, one directory per sync that kept something
+# A directory that says it is a cache ( https://bford.info/cachedir/ ): a zone wherever it is, each side keeps its own
+# ( ADR 0019 ). pytest, cargo, ruff write it; loom too, in its catalogue and its caches.
+CACHEDIR_TAG = "CACHEDIR.TAG"
+CACHEDIR_SIGNATURE = b"Signature: 8a477f597d28d172789f06886806bc55"
+
+
+def cache_tagged( directory ) -> bool:
+    """`directory` holds a CACHEDIR.TAG that starts with the standard signature."""
+    try:
+        with open( os.path.join( directory, CACHEDIR_TAG ), "rb" ) as f:
+            return f.read( len( CACHEDIR_SIGNATURE ) ) == CACHEDIR_SIGNATURE
+    except OSError:
+        return False
 
 
 class SyncError( Exception ):
@@ -65,6 +78,8 @@ class Manifest( dict ):
         super().__init__( *args, **kw )
         self.real : dict = { }
         self.found: list = [ ]       # [ ( Finding, Entry on disk or None ) ]: a check's, not yet said by a sync
+        self.theirs: dict = { }      # directory -> what it holds: not removed, a run's files are in it ( ADR 0019 )
+        self.tagged: set = set()     # a walk's: the directories it left out, tagged as caches ( not kept )
         self.generation = ""         # changes each time a sync writes it
 
     def on_disk( self, key: str ) -> str:
@@ -195,36 +210,42 @@ def scan( root, sel: Selection, cache: dict | None = None, hashing = True ) -> M
         except ( FileNotFoundError, NotADirectoryError ):
             return
         with it:
-            for e in sorted( it, key = lambda e: e.name ):
-                name = unicodedata.normalize( "NFC", e.name )
-                key, real = key_dir + name, real_dir + e.name
-                if sel.skips( key, name ) or ( not key_dir and name.startswith( COPY_STATE ) ):
-                    continue
-                if key in out:
-                    raise SyncError( f"{real_dir + e.name!r} and {out.on_disk( key )!r} are one name once "
-                                     f"normalized: rename one of them" )
-                try:
-                    st = os.stat( e.path ) if sel.follow_links else e.stat( follow_symlinks = False )
-                except FileNotFoundError:
-                    continue                     # gone since listed, or a link to nothing that is followed
-                if real != key:
-                    out.real[ key ] = real
-                if stat.S_ISLNK( st.st_mode ):
-                    out[ key ] = Entry( "l", target = os.readlink( e.path ) )
-                elif stat.S_ISDIR( st.st_mode ):
-                    out[ key ] = Entry( "d" )
-                    walk( e.path, key + "/", real + "/" )
-                elif stat.S_ISREG( st.st_mode ):
-                    exe = bool( st.st_mode & stat.S_IXUSR )
-                    prev = old.get( key )
-                    if os.name == "nt" and prev is not None and prev.kind == "f":
-                        exe = prev.exe           # Windows has no such bit ( it reads the extension ): as written
-                    digest = prev.digest if prev is not None and prev.kind == "f" and \
-                             ( prev.size, prev.mtime_ns ) == ( st.st_size, st.st_mtime_ns ) else ""
-                    if hashing and not digest:
-                        digest = hash_file( e.path )
-                    out[ key ] = Entry( "f", st.st_size, st.st_mtime_ns, exe, digest )
-                # sockets, fifos, devices: not part of a project
+            listed = sorted( it, key = lambda e: e.name )
+        if key_dir and any( e.name == CACHEDIR_TAG for e in listed ) and cache_tagged( directory ):
+            out.pop( key_dir[ : -1 ], None )        # a cache's directory ( ADR 0019 ): the side's own, as a build zone
+            out.tagged.add( key_dir[ : -1 ] )
+            out.real.pop( key_dir[ : -1 ], None )
+            return
+        for e in listed:
+            name = unicodedata.normalize( "NFC", e.name )
+            key, real = key_dir + name, real_dir + e.name
+            if sel.skips( key, name ) or ( not key_dir and name.startswith( COPY_STATE ) ):
+                continue
+            if key in out:
+                raise SyncError( f"{real_dir + e.name!r} and {out.on_disk( key )!r} are one name once "
+                                 f"normalized: rename one of them" )
+            try:
+                st = os.stat( e.path ) if sel.follow_links else e.stat( follow_symlinks = False )
+            except FileNotFoundError:
+                continue                     # gone since listed, or a link to nothing that is followed
+            if real != key:
+                out.real[ key ] = real
+            if stat.S_ISLNK( st.st_mode ):
+                out[ key ] = Entry( "l", target = os.readlink( e.path ) )
+            elif stat.S_ISDIR( st.st_mode ):
+                out[ key ] = Entry( "d" )
+                walk( e.path, key + "/", real + "/" )
+            elif stat.S_ISREG( st.st_mode ):
+                exe = bool( st.st_mode & stat.S_IXUSR )
+                prev = old.get( key )
+                if os.name == "nt" and prev is not None and prev.kind == "f":
+                    exe = prev.exe           # Windows has no such bit ( it reads the extension ): as written
+                digest = prev.digest if prev is not None and prev.kind == "f" and \
+                         ( prev.size, prev.mtime_ns ) == ( st.st_size, st.st_mtime_ns ) else ""
+                if hashing and not digest:
+                    digest = hash_file( e.path )
+                out[ key ] = Entry( "f", st.st_size, st.st_mtime_ns, exe, digest )
+            # sockets, fifos, devices: not part of a project
 
     walk( str( root ), "", "" )
     return out
@@ -240,6 +261,7 @@ def load( path ) -> Manifest | None:
     out.real = raw.get( "real", { } )
     out.found = [ ( Finding( *f ), Entry( *e ) if e else None ) for f, e in raw.get( "found", [ ] ) ]
     out.generation = raw.get( "generation", "" )
+    out.theirs = raw.get( "theirs", { } )
     return out
 
 
@@ -249,6 +271,7 @@ def save( path, manifest: Manifest ):
     part = path.with_name( path.name + ".part" )
     part.write_text( json.dumps( { "entries": { k: list( v ) for k, v in manifest.items() },
                                    "real": manifest.real, "generation": getattr( manifest, "generation", "" ),
+                                   "theirs": getattr( manifest, "theirs", { } ),
                                    "found": [ [ list( f ), list( e ) if e else None ]
                                               for f, e in getattr( manifest, "found", [ ] ) ] } ) )
     os.replace( part, path )
@@ -272,7 +295,14 @@ def compare( trusted: Manifest, found: Manifest, sel: Selection | None = None ) 
             out.append( Finding( key, "added", e.mtime_ns ) )
         elif not t.same( e ) and not ( t.kind == "f" and t.digest and t.digest == e.digest and t.exe == e.exe ):
             out.append( Finding( key, "changed", e.mtime_ns ) )
-    out += [ Finding( key, "removed" ) for key in trusted if key not in found ]
+    tagged = getattr( found, "tagged", ( ) )
+    def in_tagged( k ):                      # tagged as a cache since: left out of the walk, not removed
+        while k:
+            if k in tagged:
+                return True
+            k = k.rpartition( "/" )[ 0 ]
+        return False
+    out += [ Finding( key, "removed" ) for key in trusted if key not in found and not ( tagged and in_tagged( key ) ) ]
     if sel is not None and sel._cache is not None:
         out = [ f for f in out if sel.cached( f.key ) is None ]
     return sorted( out )
@@ -562,7 +592,32 @@ def _held( sel: Selection, key: str, directory: Path ) -> Zone | None:
         z = sel.zone( f"{key}/{unicodedata.normalize( 'NFC', name )}", unicodedata.normalize( "NFC", name ) )
         if z is not None:
             return z
+    for name in names:
+        if cache_tagged( os.path.join( directory, name ) ):
+            return Zone( f"{unicodedata.normalize( 'NFC', name )}/{CACHEDIR_TAG}", "build" )
     return None
+
+
+def say_kept( key: str, held, where: str, say ):
+    """A directory the project no longer has, that a push did not remove: a run's files are in it ( ADR 0019 ).
+    Said once: the copy's manifest then counts it as theirs."""
+    say( f"  {key}: no longer in the project, kept on {where}: a run made what it holds, {held}. Said once -- "
+         f"if the whole directory is a run's, tag it ( {CACHEDIR_TAG} ) or declare it a zone" )
+
+
+def refused( sel: Selection, key: str, directory: Path, prior: dict, written: Manifest ) -> str | None:
+    """A directory a push could not remove: what to say of it, if anything, and what the copy's manifest keeps of it
+    ( `written` ). One that is a cache ( tagged ) goes out of the manifest: the next walk does not see it. One that
+    holds a run's files is theirs from now on: said the first time only."""
+    if cache_tagged( directory ):
+        written.pop( key, None )
+        written.theirs.pop( key, None )
+        return None
+    held = _held( sel, key, directory )
+    if held is not None and held.kind == "errand":
+        return None
+    written.theirs[ key ] = str( held ) if held is not None else ""
+    return None if key in prior or held is None else str( held )
 
 @dataclass
 class Report:
@@ -684,15 +739,15 @@ def sync( src_root, dst_root, sel: Selection, *, src_cache = None, trusted = Non
     p = plan( src, dst, theirs, sel )
     report.kept_runs = p.kept_runs
     report.conflicts = list( p.conflicts )
+    prior = dict( known.theirs ) if known is not None else { }
+    refusals = [ ]
     for key in p.delete:
         if w.delete( key ):
             report.deleted.append( key )
         else:
             report.kept.append( key )
             if key not in src:
-                held = _held( sel, key, w.path( key ) )
-                if held is not None and held.kind != "errand":
-                    say( f"  {key}: left on {where}, it holds {held}" )
+                refusals.append( key )
     report.deleted = [ k for k in report.deleted if k not in src ]       # a key whose kind changed was replaced
     for key in p.dirs:
         w.mkdir( key )
@@ -702,6 +757,11 @@ def sync( src_root, dst_root, sel: Selection, *, src_cache = None, trusted = Non
     written.real = { k: v for k, v in dst.real.items() if k in src }
     for key in [ k for k in report.kept if k not in src ]:   # still there: not something to find next time
         written[ key ] = dst[ key ]
+    written.theirs = { k: v for k, v in prior.items() if k in dst and k not in src }
+    for key in refusals:
+        said = refused( sel, key, w.path( key ), prior, written )
+        if said:
+            say_kept( key, said, where, say )
     for key, e in dst.items():                     # a cache's: the destination's own, and kept
         if key not in written and sel.cached( key ) is not None:
             written[ key ] = e

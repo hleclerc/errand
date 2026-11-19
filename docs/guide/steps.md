@@ -75,7 +75,9 @@ That path is on **the machine that drives the run**, not the one that runs it. A
 names the file; errand brings that one file back **at once**, to where the run's own coming back
 would put it, and says its path here. Named again while it is on its way, it comes once more after:
 the last state always arrives, never one transfer per call. Its date is kept, so at the run's end the
-file is not sent again unless it changed.
+file is not sent again unless it changed. A file rewritten while it is read is read again: still, a
+process that rewrites a view in place, rather than replacing it ( above ), can have half of it shown
+here until the next state arrives.
 
 A run nobody drives ( `--batch` ) says the path where it is. A file outside the project over there
 cannot be brought back: it is said as `host:path`.

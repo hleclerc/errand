@@ -12,19 +12,24 @@ from .screen import Screen
 from .terminal import C_ACTIVE, C_BAD, C_DIM, C_OK, C_TITLE, C_WARN, dim, get_mouse, OWN_MOUSE, PRESSED, read_key, \
     REPAINT, TRACE, WHEEL, WHEEL_DOWN, WHEEL_UP, without_rep
 
-HINT = "↑↓ choose · ←→ fold · enter detail · s stop · o output · x shell · / filter · p project · r again · ? keys · q quit"
+HINT = "1 runs · 2 machines · ↑↓ choose · →← unfold, fold · tab detail · enter open · e edit · k kill · f forget · r rename · a watch · / filter · ? keys · q quit"
 
 KEYS = [
     ( "↑ ↓  pgup pgdn", "move in the active pane" ),
-    ( "← →", "fold, unfold a machine or a history" ),
-    ( "tab", "the other pane: the list, or the detail ( its files and output )" ),
-    ( "enter", "list: go to the detail · detail: open the file under the cursor" ),
-    ( "s", "stop the process ( INT, TERM, KILL ) or the vm under the cursor, once confirmed" ),
-    ( "o", "the whole output, or the file under the cursor, in $PAGER" ),
+    ( "1  2", "the runs tab ( running, waiting, done ), the machines tab" ),
+    ( "→  ←", "unfold, fold: a machine, a day · ← on a row inside: up to what holds it" ),
+    ( "tab", "the other pane: the list, or the detail ( its outputs: the one under the cursor is shown )" ),
+    ( "enter", "fold, unfold · a row: its detail · an output: opened as this machine opens it ( open, xdg-open )" ),
+    ( "e", "the output under the cursor in $VISUAL / $EDITOR ( a copy, when it is on another machine )" ),
+    ( "k", "kill what is under the cursor, once confirmed: a process, a vm, or all errand runs on a machine" ),
+    ( "f", "forget the machine under the cursor: not asked any more, until work is sent there ( errand machines )" ),
+    ( "a", "watch the machine under the cursor, or not: saved, errand status follows it; a greyed one is not contacted" ),
+    ( "r", "name the machine under the cursor: every name it is reached by shows as one" ),
+    ( "o", "the whole console, or the output under the cursor, in $PAGER" ),
     ( "x", "a shell on its machine, where it works" ),
     ( "/", "filter: machine, project, command, state ( esc clears it )" ),
     ( "p", "the current project only, or every project" ),
-    ( "r", "ask every machine again now" ),
+    ( "R", "ask every machine again now ( they say what changes by themselves )" ),
     ( "click, wheel", "choose a row · scroll what is under the pointer" ),
     ( "q", "leave ( nothing stops: what runs is owned by its agents )" ),
 ]
@@ -44,12 +49,13 @@ def draw( win, screen: Screen ):
     layout( screen, height, width )
     for index, pane in enumerate( screen.panes ):
         draw_pane( win, pane, index == screen.active )
-    title = "errand · what runs where"
-    put( win, 0, 1, title, width - 2, curses.color_pair( C_TITLE ) | curses.A_BOLD )
+    _title( win, screen, width )
     if screen.typing:
         line, attr = f"/{screen.query}▏  enter keeps it · esc clears it", curses.A_BOLD
     elif screen.confirm:
-        line, attr = screen.confirm[ 0 ], curses.color_pair( C_WARN ) | curses.A_BOLD
+        line, attr = f"enter: {screen.confirm.verb} · esc: nothing", curses.color_pair( C_WARN ) | curses.A_BOLD
+    elif screen.prompt:
+        line, attr = "enter: keep it · esc: nothing", curses.color_pair( C_WARN ) | curses.A_BOLD
     elif screen.message:
         line, attr = screen.message, curses.color_pair( C_WARN )
     else:
@@ -58,8 +64,87 @@ def draw( win, screen: Screen ):
     curses.curs_set( 0 )
     if screen.help:
         _help( win, height, width )
+    if screen.confirm:
+        _confirm( win, screen.confirm, height, width )
+    if screen.prompt:
+        _prompt( win, screen.prompt, height, width )
     win.noutrefresh()
     curses.doupdate()
+
+
+def _title( win, screen, width ):
+    """`errand  ● 3 running  ◌ 1 waiting  · 5 machines`: the whole picture, before any row."""
+    running = waiting = 0
+    for m in screen.machines:
+        for p in ( m.table or { } ).get( "procs", [ ] ):
+            if p.get( "vm" ) or p.get( "kind" ) == "agent":
+                continue
+            if p.get( "waiting" ):
+                waiting += 1
+            else:
+                running += 1
+    asleep = sum( 1 for m in screen.machines if getattr( m, "dormant", False ) )
+    x = 1
+    left = [ ( "errand", curses.color_pair( C_TITLE ) | curses.A_BOLD ), ( "  ", 0 ) ]
+    for i, t in enumerate( ( "runs", "machines" ) ):
+        left.append( ( f" {i + 1} {t} ", curses.color_pair( C_ACTIVE ) | curses.A_BOLD | curses.A_REVERSE if t == screen.tab else dim() ) )
+        left.append( ( " ", 0 ) )
+    for text, attr in left:
+        put( win, 0, x, text, width - x - 1, attr )
+        x += len( text )
+    # the counts on the right: apart from the tabs
+    right = [ ( f"● {running} running", curses.color_pair( C_OK ) | curses.A_BOLD if running else dim() ),
+              ( "   ", 0 ),
+              ( f"◌ {waiting} waiting", curses.color_pair( C_WARN ) | curses.A_BOLD if waiting else dim() ),
+              ( "   ", 0 ),
+              ( f"{len( screen.machines )} machines" + ( f", {asleep} not watched" if asleep else "" ), dim() ) ]
+    size = sum( len( t ) for t, _ in right )
+    x = max( x + 2, width - 2 - size )
+    for text, attr in right:
+        put( win, 0, x, text, width - x - 1, attr )
+        x += len( text )
+
+
+def _confirm( win, asked, height, width ):
+    """What waits for a yes, as a window in the middle: what it is, what it touches, and the two keys."""
+    from .drawing import draw_box
+    inner = max( [ len( asked.title ), *( len( l ) + 2 for l in asked.lines ), 34 ] )
+    w = min( width - 4, inner + 6 )
+    h = min( height - 2, len( asked.lines ) + 6 )
+    y0, x0 = max( 0, ( height - h ) // 2 ), max( 0, ( width - w ) // 2 )
+    tone = curses.color_pair( C_BAD if asked.danger else C_WARN )
+    for i in range( h ):
+        put( win, y0 + i, x0, " " * w, w, 0 )
+    draw_box( win, ( y0, x0, h, w ), asked.verb, False )
+    for i in range( h ):                                        # the frame in the action's tone
+        put( win, y0 + i, x0, "│" if 0 < i < h - 1 else ( "╭" if i == 0 else "╰" ), 1, tone | curses.A_BOLD )
+        put( win, y0 + i, x0 + w - 1, "│" if 0 < i < h - 1 else ( "╮" if i == 0 else "╯" ), 1, tone | curses.A_BOLD )
+    put( win, y0, x0 + 1, "─" * ( w - 2 ), w - 2, tone | curses.A_BOLD )
+    put( win, y0 + h - 1, x0 + 1, "─" * ( w - 2 ), w - 2, tone | curses.A_BOLD )
+    put( win, y0, x0 + 2, f" {asked.verb} ", w - 4, tone | curses.A_BOLD )
+    put( win, y0 + 1, x0 + 3, asked.title, w - 6, curses.A_BOLD )
+    for i, line in enumerate( asked.lines[ : h - 5 ] ):
+        put( win, y0 + 3 + i, x0 + 3, f"· {line}", w - 6, 0 )
+    keys = f"enter: {asked.verb}   ·   esc: nothing"
+    put( win, y0 + h - 2, x0 + w - 3 - len( keys ), keys, len( keys ), tone | curses.A_BOLD )
+
+
+def _prompt( win, asked, height, width ):
+    """A line to type, as a window in the middle."""
+    from .drawing import draw_box
+    w = min( width - 4, max( 50, len( asked.title ) + 8, len( asked.text ) + 10 ) )
+    h = 6
+    y0, x0 = max( 0, ( height - h ) // 2 ), max( 0, ( width - w ) // 2 )
+    for i in range( h ):
+        put( win, y0 + i, x0, " " * w, w, 0 )
+    draw_box( win, ( y0, x0, h, w ), "name", True )
+    put( win, y0 + 1, x0 + 3, asked.title, w - 6, curses.A_BOLD )
+    put( win, y0 + 3, x0 + 3, "› ", 2, curses.color_pair( C_ACTIVE ) | curses.A_BOLD )
+    # the current name, selected: what is typed replaces it
+    put( win, y0 + 3, x0 + 5, asked.text, w - 8, ( curses.A_REVERSE if asked.fresh else curses.A_BOLD ) | curses.color_pair( C_ACTIVE ) )
+    put( win, y0 + 3, x0 + 5 + len( asked.text ), "▏", 1, curses.color_pair( C_ACTIVE ) )
+    keys = "enter: keep it   ·   esc: nothing"
+    put( win, y0 + h - 1 - 0, x0 + w - 3 - len( keys ), keys, len( keys ), dim() )
 
 
 def _help( win, height, width ):
@@ -80,13 +165,24 @@ def handle( screen: Screen, key ):
     if screen.help:
         screen.help = False
         return None
+    if screen.prompt:
+        asked = screen.prompt
+        if key == 27:
+            screen.prompt, screen.message = None, "nothing done"
+        elif key in ( 10, 13, curses.KEY_ENTER ):
+            screen.prompt = None
+            asked.go( asked.text )
+        elif key in ( curses.KEY_BACKSPACE, 127, 8 ):
+            screen.prompt = asked._replace( text = "" if asked.fresh else asked.text[ : -1 ], fresh = False )
+        elif 32 <= key < 127:
+            screen.prompt = asked._replace( text = ( "" if asked.fresh else asked.text ) + chr( key ), fresh = False )
+        return None
     if screen.confirm:
-        _, then = screen.confirm
-        screen.confirm = None
-        if key in ( ord( "y" ), ord( "Y" ) ):
-            then()
+        asked, screen.confirm = screen.confirm, None
+        if key in ( ord( "y" ), ord( "Y" ), 10, 13, curses.KEY_ENTER ):
+            asked.go()
         else:
-            screen.message = "not stopped"
+            screen.message = "nothing done"
         return None
     if screen.typing:
         if key == 27:
@@ -107,9 +203,9 @@ def handle( screen: Screen, key ):
         except curses.error:
             return None
         _mouse( screen, y, x, state )
-    elif key in ( curses.KEY_DOWN, ord( "j" ) ):
+    elif key == curses.KEY_DOWN:
         pane.move( 1 )
-    elif key in ( curses.KEY_UP, ord( "k" ) ):
+    elif key == curses.KEY_UP:                      # `k` kills: no vi keys to move
         pane.move( -1 )
     elif key == curses.KEY_NPAGE:
         pane.move( max( 1, pane.inner[ 2 ] - 1 ) )
@@ -123,16 +219,22 @@ def handle( screen: Screen, key ):
         pane.reveal()
     elif key in ( 9, curses.KEY_BTAB ):
         screen.active = 1 - screen.active
-    elif key in ( curses.KEY_RIGHT, curses.KEY_LEFT ):
-        row = screen.list.current()
-        if row is not None and row.open is not None and row.open == ( key == curses.KEY_LEFT ):
-            screen.toggle( row )
-        elif key == curses.KEY_LEFT and screen.active == 1:
-            screen.active = 0
+    elif key == curses.KEY_RIGHT:
+        screen.fold( unfold = True )
+    elif key == curses.KEY_LEFT:
+        screen.fold( unfold = False )
+    elif key == ord( "e" ):
+        screen.edit()
+    elif key in ( ord( "1" ), ord( "2" ) ):
+        screen.select( ( "runs", "machines" )[ key - ord( "1" ) ] )
     elif key in ( 10, 13, curses.KEY_ENTER ):
         screen.enter()
-    elif key == ord( "s" ):
-        screen.stop()
+    elif key == ord( "k" ):
+        screen.kill()
+    elif key == ord( "f" ):
+        screen.forget()
+    elif key == ord( "a" ):
+        screen.activate()
     elif key == ord( "o" ):
         screen.whole()
     elif key == ord( "x" ):
@@ -147,6 +249,8 @@ def handle( screen: Screen, key ):
         else:
             screen.message = "not in a project: every project is shown"
     elif key == ord( "r" ):
+        screen.rename()
+    elif key == ord( "R" ):
         screen.refresh()
     elif key == ord( "?" ):
         screen.help = True
@@ -184,6 +288,8 @@ def _colours():
             curses.init_pair( pair, colour, -1 )
         except curses.error:
             pass
+    from .terminal import tint_ready
+    tint_ready()                                # the row chosen: tinted, its colours kept
 
 
 def _mouse_on( on: bool ):

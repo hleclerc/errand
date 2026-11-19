@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sys
 import threading
@@ -19,13 +20,32 @@ from .. import steps
 POLL = 0.25               # seconds between two looks at a journal
 
 
+_SGR = re.compile( r"\x1b\[[0-9;]*m" )
+
+
+def fit( text: str, cols: int ) -> str:
+    """`text` cut to `cols` visible columns, its colors kept and closed."""
+    out, seen, i = [ ], 0, 0
+    while i < len( text ) and seen < cols:
+        m = _SGR.match( text, i )
+        if m:
+            out.append( m.group() )
+            i = m.end()
+            continue
+        out.append( text[ i ] )
+        seen += 1
+        i += 1
+    return "".join( out ) + ( "\033[0m" if _SGR.search( text ) else "" )
+
+
 class Footer:
-    """One line at the bottom of a terminal. The rows above it are a scroll region: whatever writes
-    to the terminal, this process or a child, scrolls there and leaves the line alone."""
+    """Lines at the bottom of a terminal. The rows above them are a scroll region: whatever writes
+    to the terminal, this process or a child, scrolls there and leaves the lines alone."""
 
     def __init__( self, stream = None ):
         self.stream = stream or sys.__stdout__
         self.rows   = None                  # the terminal's height when the region was set
+        self.n      = 0                     # how many lines the region leaves below it
         self.lock   = threading.Lock()
 
     @staticmethod
@@ -37,29 +57,41 @@ class Footer:
             return False
 
     def show( self, text: str | None ):
-        if not text:
+        self.show_lines( [ text ] if text else [ ] )
+
+    def show_lines( self, lines: list ):
+        """These lines at the bottom, the region above made to leave room for exactly them."""
+        if not lines:
             return self.clear()
         with self.lock:
             cols, rows = shutil.get_terminal_size()
+            n = max( 1, min( len( lines ), rows - 2 ) )
             w = self.stream
-            if self.rows != rows:
-                if self.rows is None:
-                    w.write( "\n" )                                # a row for the line
+            if self.rows != rows or self.n != n:
+                grow = n if self.rows is None or self.rows != rows else max( 0, n - self.n )
+                if self.rows == rows and n < self.n:
+                    for r in range( rows - self.n + 1, rows - n + 1 ):      # rows given back to the output
+                        w.write( f"\0337\033[{r};1H\033[2K\0338" )
+                if grow:
+                    w.write( "\n" * grow )                                 # rows for the lines
                 # Setting the region moves the cursor: it is saved and put back around it.
-                w.write( f"\0337\033[1;{rows - 1}r\0338" )
-                if self.rows is None:
-                    w.write( "\033[1A" )
-                self.rows = rows
-            w.write( f"\0337\033[{rows};1H\033[2K{text[ : cols - 1 ]}\0338" )
+                w.write( f"\0337\033[1;{rows - n}r\0338" )
+                if grow:
+                    w.write( f"\033[{grow}A" )
+                self.rows, self.n = rows, n
+            for i, line in enumerate( lines[ -n : ] ):
+                w.write( f"\0337\033[{rows - n + 1 + i};1H\033[2K{fit( line, cols - 1 )}\0338" )
             w.flush()
 
     def clear( self ):
         with self.lock:
             if self.rows is None:
                 return
-            self.stream.write( f"\0337\033[{self.rows};1H\033[2K\033[r\0338" )
+            for r in range( self.rows - self.n + 1, self.rows + 1 ):
+                self.stream.write( f"\0337\033[{r};1H\033[2K\0338" )
+            self.stream.write( "\0337\033[r\0338" )
             self.stream.flush()
-            self.rows = None
+            self.rows, self.n = None, 0
 
 
 def mark( text: str | None ):

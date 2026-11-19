@@ -5,6 +5,8 @@ the right -- what it is, the files of its run, the end of its output, read again
 """
 from __future__ import annotations
 
+from typing import NamedTuple
+
 import shlex
 import tempfile
 import threading
@@ -19,6 +21,26 @@ DETAIL = 2.0              # seconds between readings of the detail
 TAIL   = 16384            # bytes of output shown
 WHOLE  = 64 << 20         # at most this much is fetched for the pager
 BROWSED = ( ".html", ".htm", ".svg" )     # opened in the browser rather than the pager
+IMAGES  = ( ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff", ".pdf", ".svg" )
+
+
+class Confirm( NamedTuple ):
+    """What waits for a yes, drawn as a window ( `loop._confirm` ): `title`, the `lines` of what it touches,
+    `verb` the action ( enter does it ), `go` what does it, `danger` whether it ends work."""
+    title  : str
+    lines  : list
+    verb   : str
+    go     : object
+    danger : bool = False
+
+
+class Prompt( NamedTuple ):
+    """A line to type, in a window ( `loop._prompt` ): `title`, the `text` so far, `go( text )` on enter.
+    `fresh`: the text is the current value, as if selected: the first letter typed replaces it."""
+    title : str
+    text  : str
+    go    : object
+    fresh : bool = True
 
 
 class Screen:
@@ -31,14 +53,18 @@ class Screen:
         self.active   = 0
         self.folded   : set = set()                 # machines whose rows are hidden
         self.opened   : set = set()                 # machines whose history is shown
-        self.shown    = 50                          # runs of a history shown
+        self.shown    = 50                          # runs of the history shown
+        self.tab      = "runs"                      # or "machines": 1, 2
         self.only     = False                       # `p`: the current project only
         self.query    = ""
         self.typing   = False                       # `/` was pressed: keys go to the filter
         self.message  = ""
-        self.confirm  = None                        # ( question, what to do on `y` )
+        self.confirm  = None
+        self.prompt   = None                        # a line typed in a window ( `rename` )                        # ( question, what to do on `y` )
         self.help     = False
         self.seen     : dict = { }                  # row key -> { "at", "files", "out", "error" }
+        self.chosen   : dict = { }                  # row key -> the output looked at in the detail ( None: the console )
+        self.peeked   : dict = { }                  # ( machine, path ) -> { "at", "text", "size", "error" }
         self.fetching : set = set()
         self.run_outside = None                     # set by the loop: runs argv with curses suspended
 
@@ -49,10 +75,21 @@ class Screen:
 
     def build( self ):
         rows = R.build( self.machines, folded = self.folded, opened = self.opened, query = self.query,
-                        only = self.mine if self.only else None, mine = self.mine, shown = self.shown )
+                        only = self.mine if self.only else None, mine = self.mine, shown = self.shown, tab = self.tab )
         self.list.keep( rows, R.key )
-        self.list.title = "machines" + ( f"  ·  {', '.join( sorted( self.mine ) )} only" if self.only else "" ) \
+        self.list.title = ( "running, waiting, done" if self.tab == "runs" else "machines" ) \
+                          + ( f"  ·  {', '.join( sorted( self.mine ) )} only" if self.only else "" ) \
                           + ( f"  ·  /{self.query}" if self.query else "" )
+        detail = self._detail()
+        self.detail.keep( detail, _detail_key )
+        here = self.detail.current()
+        row = self.list.current()
+        if self.active == 1 and here is not None and here.kind == "output" and row is not None \
+                and self.chosen.get( R.key( row ) ) != here.data[ 1 ]:
+            self.chosen[ R.key( row ) ] = here.data[ 1 ]            # the cursor on an output: it is shown below
+            self.detail.keep( self._detail(), _detail_key )
+
+    def _detail( self ):
         detail = self.describe( self.list.current() )
         if self.active == 0:
             # Looked at from the list, the detail shows the END of the output: the oldest lines go
@@ -62,48 +99,59 @@ class Screen:
                 outs = [ i for i, r in enumerate( detail ) if r.kind == "out" ]
                 cut = set( outs[ : extra ] )
                 detail = [ r for i, r in enumerate( detail ) if i not in cut ]
-        self.detail.keep( detail, lambda r: ( r.kind, r.label if r.kind == "file" else None ) )
+        return _number( detail )
 
     # ── the detail ───────────────────────────────────────────────────────────
 
     def describe( self, row ) -> list:
-        """The rows of the detail pane, for the row under the cursor."""
+        """The rows of the detail pane, for the row under the cursor ( `detail_rows` ), its files and
+        output read again in a thread ( `fetch` )."""
         if row is None:
             return [ Row( "nothing here", kind = "note" ) ]
         machine, what = row.data if isinstance( row.data, tuple ) else ( None, None )
         m = self.machine( machine ) if machine else None
-        out = [ Row( f"{k:<9} {v}" ) for k, v in R.facts( row, m ) ]
-        if row.kind not in ( "proc", "run" ):
-            return out
-        self.fetch( row, m )
-        got = self.seen.get( R.key( row ) )
+        got = None
+        if row.kind in ( "proc", "run" ):
+            self.fetch( row, m )
+            got = self.seen.get( R.key( row ) )
+        chosen = self.chosen.get( R.key( row ) ) if self.active == 1 else None
+        return detail_rows( row, m, got, self.preview( m, chosen ) if chosen is not None else None )
+
+    def preview( self, m, path ) -> list:
+        """The beginning of a file of the run, read through its agent ( again every `DETAIL` s )."""
+        k = ( m.name, path )
+        got = self.peeked.get( k )
+        if k not in self.fetching and ( got is None or time.time() - got[ "at" ] >= DETAIL ):
+            self.fetching.add( k )
+
+            def read():
+                try:
+                    r = m.ask( { "op": "tail", "path": path, "offset": 0, "size": TAIL } )
+                    self.peeked[ k ] = { "at": time.time(), "text": r.get( "data" ) or "", "size": r.get( "size", 0 ),
+                                         "end": r.get( "end", 0 ), "missing": r.get( "missing" ) }
+                except Exception as err:
+                    self.peeked[ k ] = { "at": time.time(), "error": str( err ).strip().splitlines()[ -1 ] if str( err ).strip() else type( err ).__name__ }
+                finally:
+                    self.fetching.discard( k )
+
+            threading.Thread( target = read, daemon = True ).start()
+        name = path.rsplit( "/", 1 )[ -1 ]
+        out = [ Row( f"▸ {name}", kind = "chead" ) ]
         if got is None:
-            out.append( Row( "reading…", kind = "note" ) )
-            return out
-        if got.get( "error" ):
-            out.append( Row( f"cannot read: {got[ 'error' ]}", kind = "broken" ) )
-        step = what.get( "step" ) if row.kind == "proc" else got.get( "step" )
-        if row.kind == "run":
-            out += [ Row( f"{k:<9} {v}" ) for k, v in R.step_facts( step, m.now() ) ]
-        views = ( step or { } ).get( "views" ) or [ ]
-        if views and what.get( "leaf" ):
-            # What the run designated to be looked at as it evolves ( ADR 0010 ), before the files.
-            out.append( Row( "", kind = "note" ) )
-            out.append( Row( "views  ( enter opens one )", kind = "head" ) )
-            for v in views:
-                path = v[ "view" ] if v[ "view" ].startswith( "/" ) else f"{what[ 'leaf' ]}/{v[ 'view' ]}"
-                out.append( Row( v.get( "title" ) or v[ "view" ], v[ "view" ] if v.get( "title" ) else "", kind = "file",
-                                 data = ( m.name, path ) ) )
-        if got.get( "files" ):
-            out.append( Row( "", kind = "note" ) )
-            out.append( Row( "files  ( enter opens one )", kind = "head" ) )
-            for f in got[ "files" ]:
-                out.append( Row( f[ "name" ], f"{_size( f[ 'size' ] )}  {R.ago( m.now() - f[ 'mtime' ] )}", kind = "file",
-                                 data = ( m.name, f[ "path" ] ) ) )
-        out.append( Row( "", kind = "note" ) )
-        out.append( Row( f"output  {got.get( 'source' ) or ''}", kind = "head" ) )
-        for text in ( got.get( "out" ) or "( nothing yet )" ).splitlines()[ -400 : ]:
-            out.append( Row( text.replace( "\t", "    " ), kind = "out" ) )
+            return out + [ Row( "  reading…", kind = "note" ) ]
+        if got.get( "error" ) or got.get( "missing" ):
+            return out + [ Row( f"  cannot read: {got.get( 'error' ) or 'gone'}", kind = "broken" ) ]
+        text = got[ "text" ]
+        if name.lower().endswith( IMAGES ):
+            return out + [ Row( f"  an image, {_size( got[ 'size' ] )}: enter opens it", kind = "note" ) ]
+        if "\x00" in text or text.count( "\ufffd" ) > max( 8, len( text ) // 50 ):
+            return out + [ Row( f"  binary, {_size( got[ 'size' ] )}: enter opens it", kind = "note" ) ]
+        lines = text.replace( "\t", "    " ).splitlines()
+        if got[ "end" ] < got[ "size" ] and len( lines ) > 1:
+            lines = lines[ : -1 ]                               # a line cut in two is not shown
+        out += [ Row( f"  │ {line}", kind = "out", data = i ) for i, line in enumerate( lines ) ] or [ Row( "  │ ( empty )", kind = "out", data = 0 ) ]
+        if got[ "end" ] < got[ "size" ]:
+            out.append( Row( f"  ┆ … {_size( got[ 'size' ] - got[ 'end' ] )} more ( enter, o, e: all of it )", kind = "note" ) )
         return out
 
     def fetch( self, row, m ):
@@ -130,14 +178,42 @@ class Screen:
     def pane( self ):
         return self.panes[ self.active ]
 
+    def select( self, tab: str ):
+        """`1`, `2`: a tab ( runs, machines ), the cursor at its top."""
+        if tab != self.tab:
+            self.tab = tab
+            self.list.cursor = self.list.top = 0
+        self.active = 0
+
     def toggle( self, row ):
         machine, what = row.data
         if row.kind in ( "machine", "broken" ):
             self.folded.symmetric_difference_update( { machine } )
         elif row.kind == "group":
             self.opened.symmetric_difference_update( { machine } )
+        elif row.kind == "day":
+            self.folded.symmetric_difference_update( { ( "day", what ) } )
         elif row.kind == "more":
             self.shown += 50
+
+    def fold( self, unfold: bool ):
+        """`→` unfolds the row under the cursor, `←` folds it -- or, on a row inside, goes up to what holds it."""
+        pane = self.pane()
+        row = pane.current()
+        if row is None or pane is not self.list:
+            return
+        if row.open is not None and row.open != unfold:
+            self.toggle( row )
+        elif not unfold and row.open is None:
+            i = pane.cursor
+            while i > 0:                                    # the heading above: a machine, a day
+                i -= 1
+                if pane.rows[ i ].open is not None and ( pane.rows[ i ].depth < row.depth or row.depth == 0 ):
+                    pane.cursor = i
+                    pane.reveal()
+                    break
+        elif unfold and row.open:
+            pane.move( 1 )
 
     def enter( self ):
         row = self.pane().current()
@@ -145,18 +221,75 @@ class Screen:
             return
         if row.open is not None or row.kind == "more":
             self.toggle( row )
-        elif row.kind == "file":
-            self.page( row.data[ 0 ], row.data[ 1 ] )
+        elif row.kind == "output":
+            self.open_output( *row.data )
         elif self.pane() is self.list:
             self.active = 1
         else:
             self.whole()
 
+    def _local( self, machine, path ):
+        """`path` of `machine` as a file here: itself, or a copy fetched through its agent. None when it cannot be."""
+        m = self.machine( machine )
+        if m.here:
+            return path
+        try:
+            return str( _fetch( m, path ) )
+        except Exception as err:
+            self.message = f"cannot read {path}: {err}"
+            return None
+
+    def _console_path( self ):
+        row = self.list.current()
+        got = self.seen.get( R.key( row ) ) or { } if row is not None else { }
+        if not got.get( "path" ):
+            self.message = "no output yet"
+        return got.get( "path" )
+
+    def open_output( self, machine, path ):
+        """Enter on an output: opened by what opens it here ( `open`, `xdg-open` ); the console in the pager."""
+        import subprocess
+        import sys
+        if path is None:
+            path = self._console_path()
+            if path:
+                self.page( machine, path )
+            return
+        local = self._local( machine, path )
+        if local is None:
+            return
+        try:
+            subprocess.Popen( [ "open" if sys.platform == "darwin" else "xdg-open", local ], stdin = subprocess.DEVNULL,
+                              stdout = subprocess.DEVNULL, stderr = subprocess.DEVNULL, start_new_session = True )
+            self.message = f"opened {Path( path ).name}" + ( "" if self.machine( machine ).here else f" ( a copy: {local} )" )
+        except OSError as err:
+            self.message = f"cannot open {local}: {err}"
+
+    def edit( self ):
+        """`e`: the output under the cursor in `$VISUAL` / `$EDITOR`; a copy, when it is on another machine."""
+        import os
+        row = self.detail.current() if self.pane() is self.detail else None
+        if row is None or row.kind != "output":
+            self.message = "e: tab to the detail, on an output"
+            return
+        machine, path = row.data
+        if path is None:
+            path = self._console_path()
+            if not path:
+                return
+        local = self._local( machine, path )
+        if local is None:
+            return
+        editor = shlex.split( os.environ.get( "VISUAL" ) or os.environ.get( "EDITOR" ) or "vi" )
+        self.run_outside( [ *editor, local ] )
+        if not self.machine( machine ).here:
+            self.message = f"that was a copy ( {local} ): {machine} keeps its own"
+
     def whole( self ):
         """`o`: the file under the cursor in the detail, or the whole output of the row in the list."""
         if self.pane() is self.detail:
             row = self.detail.current()
-            if row is not None and row.kind == "file":
+            if row is not None and row.kind == "output" and row.data[ 1 ] is not None:
                 return self.page( row.data[ 0 ], row.data[ 1 ] )
         row = self.list.current()
         if row is None or row.kind not in ( "proc", "run" ):
@@ -206,25 +339,71 @@ class Screen:
         self.run_outside( [ "ssh", "-t", *ssh_options( m.target.get( "options" ) ), m.target[ "host" ],
                             go + 'exec "${SHELL:-sh}" -l' ] )
 
-    def stop( self ):
-        """`s`: what is under the cursor stops, once confirmed -- a process, or a VM's keeper."""
+    def kill( self ):
+        """`k`: what is under the cursor is killed, once confirmed -- a process, a VM's keeper, or, on a
+        machine's row, everything errand runs there ( `actions.kill_plan` )."""
+        from . import actions as A
         row = self.list.current()
         try:
-            m = self.machine( row.data[ 0 ] ) if row is not None else None
-            req, said = R.stop_request( row, m )
+            m = self.machine( row.data[ 0 ] ) if row is not None and isinstance( row.data, tuple ) and row.data[ 0 ] else None
+            plan = A.kill_plan( row, m )
         except ValueError as err:
             self.message = str( err )
             return
 
         def go():
-            try:
-                m.ask( req, timeout = 30 )
-                self.message = f"stopping {said}: INT, then TERM, then KILL"
-            except Exception as err:
-                self.message = f"could not stop {said}: {err}"
-            m.wake.set()
+            def run():
+                self.message = A.send( plan )
+            threading.Thread( target = run, daemon = True ).start()
 
-        self.confirm = ( f"stop {said}?  y stops it, any other key does not", lambda: threading.Thread( target = go, daemon = True ).start() )
+        self.confirm = Confirm( plan.title, plan.lines, "kill", go, danger = True )
+
+    def forget( self ):
+        """`f`: the machine under the cursor is not asked any more, once confirmed ( `actions.forget` ):
+        out of the list until work is sent there again. Nothing over there stops."""
+        from . import actions as A
+        row = self.list.current()
+        if row is None or row.kind not in ( "machine", "broken", "dormant" ):
+            self.message = "put the cursor on a machine"
+            return
+        m = self.machine( row.data[ 0 ] )
+        if m.here:
+            self.message = "this machine is always shown: nothing to forget"
+            return
+
+        def go():
+            self.message = A.forget( m, self.machines )
+
+        self.confirm = Confirm( f"forget {m.name}?", A.forget_lines( m ), "forget", go )
+
+    def rename( self ):
+        """`r`: the machine of the row under the cursor -- a machine, or a run or a process on it -- shown under
+        another name, every name it is reached by alike. This machine too: its hostname until then."""
+        from . import actions as A
+        row = self.list.current()
+        machine = row.data[ 0 ] if row is not None and isinstance( row.data, tuple ) else None
+        if machine is None:
+            self.confirm = Confirm( "nothing to name here", [ "r names a machine: put the cursor on it,",
+                                                            "or on a run or a process of it" ], "close", lambda: None )
+            return
+        m = self.machine( machine )
+
+        def go( label ):
+            self.message = A.rename( m, label )
+
+        self.prompt = Prompt( A.rename_title( m ), m.name, go )
+
+    def activate( self ):
+        """`a`: a machine contacted or not, from now on ( `actions.toggle_watch` )."""
+        from . import actions as A
+        row = self.list.current()
+        if row is None or row.kind not in ( "machine", "broken", "dormant" ):
+            self.message = "a: on a machine, to watch it or not"
+            return
+        try:
+            self.message = A.toggle_watch( self.machine( row.data[ 0 ] ) )
+        except ValueError as err:
+            self.message = str( err )
 
     def refresh( self ):
         for m in self.machines:
@@ -232,6 +411,87 @@ class Screen:
             m.wake.set()
         self.seen.clear()
         self.message = "asking again"
+
+
+def detail_rows( row, m, got, preview = None ) -> list:
+    """What the detail says of `row` ( a row of the list, on machine `m` ): its facts; for a run or a
+    process, its step, its views, its outputs ( the console, then its files ), and the console itself --
+    or `preview`, the rows of the output chosen. `got`: what `_read` read of it, None while it is read.
+    Shared by `errand tui` and `errand web`."""
+    what = row.data[ 1 ] if isinstance( row.data, tuple ) else None
+    out = [ Row( f"{k:<9} {v}", data = ( k, v ) ) for k, v in R.facts( row, m ) ]
+    if row.kind not in ( "proc", "run" ):
+        return out
+    if got is None:
+        out.append( Row( "reading…", kind = "note" ) )
+        return out
+    if got.get( "error" ):
+        out.append( Row( f"cannot read: {got[ 'error' ]}", kind = "broken" ) )
+    step = what.get( "step" ) if row.kind == "proc" else got.get( "step" )
+    if row.kind == "run":
+        out += [ Row( f"{k:<9} {v}", data = ( k, v ) ) for k, v in R.step_facts( step, m.now() ) ]
+    views = ( step or { } ).get( "views" ) or [ ]
+    if views and what.get( "leaf" ):
+        # What the run designated to be looked at as it evolves ( ADR 0010 ), before the files.
+        out.append( Row( "", kind = "note" ) )
+        out.append( Row( "views", kind = "head" ) )
+        for v in views:
+            path = v[ "view" ] if v[ "view" ].startswith( "/" ) else f"{what[ 'leaf' ]}/{v[ 'view' ]}"
+            shown = v.get( "title" ) or v[ "view" ].rsplit( "/", 1 )[ -1 ]          # its name, not where it is
+            out.append( Row( shown, v[ "view" ].rsplit( "/", 1 )[ -1 ] if v.get( "title" ) else "", kind = "output",
+                             data = ( m.name, path ) ) )
+    # The outputs: what it printed, as `errand run` draws it, then its files. The one under the
+    # cursor ( tab to get there ) is shown below; enter opens it, e edits it.
+    out.append( Row( "", kind = "note" ) )
+    out.append( Row( "outputs", "", kind = "head" ) )
+    out.append( Row( "console", got.get( "source" ) or "", kind = "output", data = ( m.name, None ) ) )
+    for f in got.get( "files" ) or [ ]:
+        if f[ "name" ] == "output.txt":
+            continue                                    # the console is it
+        out.append( Row( f[ "name" ], f"{_size( f[ 'size' ] )}  {R.ago( m.now() - f[ 'mtime' ] )}", kind = "output",
+                         data = ( m.name, f[ "path" ] ) ) )
+    out.append( Row( "", kind = "note" ) )
+    out += console( row, got ) if preview is None else preview
+    return out
+
+
+def _detail_key( r ):
+    """The detail's rows kept across rebuilds: an output by its name, a fact by its name, a line of text
+    by its place -- each the n-th of its kind ( `_number` )."""
+    return r.ident
+
+
+def _number( rows ):
+    seen = { }
+    for r in rows:
+        if r.kind in ( "output", "file" ):
+            k = ( r.kind, r.label )
+        elif r.kind == "out":
+            k = ( r.kind, r.data )
+        else:
+            k = ( r.kind, r.label.split( " ", 1 )[ 0 ] if r.label else "" )
+        seen[ k ] = seen.get( k, -1 ) + 1
+        r.ident = ( *k, seen[ k ] )
+    return rows
+
+
+def console( row, got ) -> list:
+    """A run's output as `errand run` drew it ( ADR 0016 ): its header, its lines behind the gutter, its
+    end -- what was read of `output.txt`, the end of it when it is long."""
+    what = row.data[ 1 ] or { }
+    name = what.get( "what" ) or "?"
+    out = [ Row( f"▸ {name}" + ( f"  {what[ 'env' ]}" if what.get( "env" ) else "" ), kind = "chead" ) ]
+    text = ( got.get( "out" ) or "" ).replace( "\t", "    " )
+    lines = text.splitlines()
+    if len( lines ) > 400:
+        out.append( Row( f"  ┆ … {len( lines ) - 400} lines before ( o: all of it )", kind = "note" ) )
+    empty = "( no output )" if what.get( "status" ) else "( nothing yet )"
+    for i, line in enumerate( lines[ -400 : ] or ( [ empty ] if row.kind == "run" else [ ] ) ):
+        out.append( Row( f"  │ {line}", kind = "out", data = i ) )
+    if row.kind == "run" and what.get( "status" ):
+        took = f"  {R.ago( what[ 'duration' ] )}" if what.get( "duration" ) is not None else ""
+        out.append( Row( f"  ╰ {what[ 'status' ]} {name}{took}", kind = "cend", data = what[ "status" ] ) )
+    return out
 
 
 def _size( n ) -> str:
@@ -250,7 +510,10 @@ def _read( m, what: dict ) -> dict:
         files = [ { **f, "path": f"{leaf}/{f[ 'name' ]}" } for f in m.ask( { "op": "ls", "path": leaf } )[ "files" ] ]
         if any( f[ "name" ] == "output.txt" for f in files ):
             path, source = f"{leaf}/output.txt", "output.txt"
-    if path is None and what.get( "dir" ):
+    if path is None and what.get( "dir" ) and what.get( "kind" ) == "agent":
+        # a bridge to an environment agent: its stdout is the protocol ( binary frames ), its stderr what it says
+        path, source = f"{what[ 'dir' ]}/err", "the bridge's stderr"
+    elif path is None and what.get( "dir" ):
         path, source = f"{what[ 'dir' ]}/out", "the process's output"
     step = _step( m, leaf ) if leaf and any( f[ "name" ] == steps.FILE for f in files ) else None
     if path is None:
@@ -259,7 +522,7 @@ def _read( m, what: dict ) -> dict:
     text = got[ "data" ]
     if got[ "offset" ]:
         text = text.split( "\n", 1 )[ -1 ]            # a line cut in two is not shown
-    if source != "output.txt" and what.get( "dir" ):
+    if source == "the process's output":
         err = m.ask( { "op": "tail", "path": f"{what[ 'dir' ]}/err", "size": TAIL } )
         if err[ "data" ].strip():
             text += "\n── stderr ──\n" + err[ "data" ]

@@ -5,6 +5,7 @@ What it answered last stays shown when it stops answering, with the error beside
 """
 from __future__ import annotations
 
+import json
 import socket
 import threading
 import time
@@ -14,8 +15,15 @@ HISTORY = 15.0                                 # seconds between histories
 
 
 class Machine:
-    def __init__( self, name: str, target: dict | None = None ):
+    def __init__( self, name: str, target: dict | None = None, last: float | None = None, names = ( ),
+                  watch = None ):
         self.name, self.target = name, target          # target None: this machine
+        self.names   = list( names ) or [ name ]       # every name it is reached by ( `ledger.groups` )
+        self.last    = last                            # when work was last sent there ( the ledger's )
+        self.watch_set = watch                         # True / False when set with `a`, None: as its work says
+        # not contacted: switched off ( `a` ), or no work there for a day: no agent started for nothing
+        idle = target is not None and last is not None and time.time() - last > _dormant_after()
+        self.dormant = target is not None and ( watch is False or ( watch is None and idle ) )
         self.table   : dict | None = None
         self.history : dict | None = None
         self.error   : str | None = None
@@ -37,7 +45,7 @@ class Machine:
                 raise RuntimeError( got[ "error" ] )
             return got
         from .. import agents
-        call = agents.open( self.target ).open( req )
+        call = agents.open( self.target, noted = False ).open( req )   # looking is no work sent there
         try:
             return call.reply( timeout )
         finally:
@@ -50,9 +58,36 @@ class Machine:
         return self.table.get( "time", self.read_at ) + ( time.time() - self.read_at )
 
     def watch( self ):
+        if self.dormant:
+            return
         threading.Thread( target = self._loop, daemon = True ).start()
 
+    def activate( self ):
+        """Contacted from now on."""
+        if self.dormant:
+            self.dormant, self.stopped = False, False
+            self.watch()
+
+    def deactivate( self ):
+        """Not contacted any more: its subscription ends, what it said is put away."""
+        self.dormant, self.stopped = True, True
+        self.wake.set()
+        self.table, self.error = None, None
+
     def _loop( self ):
+        """A machine over there is subscribed to ( `look.Watch` ): its agent says what changes as it
+        changes. This machine, or an agent that does not know `watch` ( an older errand ), is asked again
+        and again, as before."""
+        if not self.here:
+            while not self.stopped:
+                try:
+                    if not self._subscribed():
+                        break                        # an older agent: asked instead
+                except Exception as err:
+                    self.error = brief( err )
+                if not self.stopped:
+                    self.wake.wait( 3.0 )            # gone: subscribed again, a moment later
+                    self.wake.clear()
         while not self.stopped:
             try:
                 got = self.ask( { "op": "table" }, timeout = 90 )
@@ -60,18 +95,82 @@ class Machine:
                 if time.time() - self.history_at > HISTORY:
                     self.history, self.history_at = self.ask( { "op": "seen", "limit": 200 } ), time.time()
             except Exception as err:
-                said = str( err ).strip()
-                self.error = said.splitlines()[ -1 ] if said else type( err ).__name__
+                self.error = brief( err )
             self.wake.wait( EVERY[ "here" if self.here else "remote" ] )
             self.wake.clear()
+
+    def _subscribed( self ) -> bool:
+        """Events until the subscription ends. -> False when the agent does not know `watch`."""
+        from .. import agents
+        from ..agents import frames as F
+        call = agents.open( self.target, noted = False ).open( { "op": "watch", "limit": 200 } )
+        try:
+            try:
+                call.reply( 90 )
+            except RuntimeError as err:
+                if "unknown" in str( err ):
+                    return False
+                raise
+            while not self.stopped:
+                try:
+                    kind, payload = call.next( timeout = 1.0 )
+                except TimeoutError:
+                    if self.wake.is_set():           # `r`: asked to read again, from scratch
+                        self.wake.clear()
+                        return True
+                    continue
+                if kind == F.EXIT:
+                    return True
+                if kind != F.OUT:
+                    continue
+                self.event( json.loads( payload ) )
+            return True
+        finally:
+            call.close()
+
+    def event( self, e: dict ):
+        """One event of the subscription, into what is shown."""
+        now = time.time()
+        if "table" in e:
+            self.table, self.error = e[ "table" ], None
+            if e[ "table" ].get( "host" ) and e[ "table" ][ "host" ] != getattr( self, "_host", None ):
+                self._host = e[ "table" ][ "host" ]
+                try:                                     # two names that answer alike: one machine, next time
+                    from ..agents import ledger
+                    for n in self.names:
+                        ledger.learn( n, self._host )
+                except Exception:
+                    pass
+        if "resources" in e and self.table is not None:
+            self.table = { **self.table, "resources": e[ "resources" ], "time": e.get( "time", self.table.get( "time" ) ) }
+        if "seen" in e:
+            self.history, self.history_at = e[ "seen" ], now
+        self.read_at = now
+
+
+def brief( err: Exception ) -> str:
+    """One line for a machine that did not answer. ssh that never got in says why on its first line,
+    advice on the next ones; anything else says the gist last."""
+    from ..layers.gateways import Unreachable
+    said = str( err ).strip()
+    if not said:
+        return type( err ).__name__
+    lines = said.splitlines()
+    if isinstance( err, Unreachable ):
+        return "unreachable: " + lines[ 0 ].split( ": ", 1 )[ -1 ] if lines[ 0 ].startswith( "cannot reach " ) else lines[ 0 ]
+    return lines[ -1 ]
 
 
 def watched( ) -> list:
     """This machine first, then the ledger's, as `errand status` asks them."""
     from ..agents import ledger
-    here = socket.gethostname().split( "." )[ 0 ]
-    out = [ Machine( here ) ]
-    for rec in ledger.machines():
-        if rec[ "name" ] not in ( m.name for m in out ):
-            out.append( Machine( rec[ "name" ], rec[ "target" ] ) )
+    out = [ Machine( ledger.here_name() ) ]
+    for g in ledger.groups():                         # a machine once, whatever names it is reached by
+        if g[ "name" ] not in ( m.name for m in out ):
+            out.append( Machine( g[ "name" ], g[ "target" ], g[ "last" ], g[ "names" ], g.get( "watch" ) ) )
     return out
+
+
+def _dormant_after( ) -> float:
+    from ..agents.ledger import DORMANT
+    return DORMANT

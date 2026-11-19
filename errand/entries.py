@@ -7,8 +7,9 @@ The guard works in two phases, driven by the runner.
   run      -- returns an `Args` (truthy) for the one entry being run, and
               something falsy for every other guard in the same file
 
-An entry is identified by its CALL SITE -- module plus line -- not by its name,
-so two entries may share a name, in one file or across several. The runner
+An entry is identified by its CALL SITE -- module plus line, plus its rank among the entries that
+line declares ( a loop: `for n in ...: if p := test( f"case {n}" ):` ) -- not by its name, so two
+entries may share a name, in one file or across several. The runner
 re-imports a file once per selected entry, which is what makes each body run
 isolated and each failure land on its own entry.
 """
@@ -70,7 +71,7 @@ class Entry:
     # A runner's `::name`, handed to its tool as it was typed ( ADR 0011 ): None for errand's own.
     selector = None
 
-    def __init__( self, name, tags, params, resources, file, line, module ):
+    def __init__( self, name, tags, params, resources, file, line, module, nth = 0 ):
         self.name      = name
         self.tags      = tags          # list[str], free-form, filtered by -e
         self.params    = params        # dict[str, Param]
@@ -78,14 +79,20 @@ class Entry:
         self.file      = Path( file )
         self.line      = line
         self.module    = module
+        self.nth       = nth           # its rank among the entries its line declares: 0 but in a loop
 
     @property
     def site( self ):
         """Identity: where it is written, not what it is called."""
-        return ( self.module, self.line )
+        return ( self.module, self.line, self.nth )
+
+    @property
+    def at( self ) -> str:
+        """The line, and the rank on it when it is not the first: `12`, `12#1`."""
+        return f"{self.line}#{self.nth}" if self.nth else str( self.line )
 
     def __repr__( self ):
-        return f"<Entry {self.name!r} {self.file.name}:{self.line}>"
+        return f"<Entry {self.name!r} {self.file.name}:{self.at}>"
 
 
 # ── the two phases ───────────────────────────────────────────────────────────
@@ -98,17 +105,20 @@ collected: list       = [ ]
 results: dict         = { }           # the dict behind the running Args.results
 _resolved: dict       = { }           # parameter values for the running entry
 _tags: dict           = { }           # the selected environment's tags
+_calls: dict          = { }           # ( module, line ) -> entries declared there so far, in this pass
 
 
 def reset_collection( ):
     global phase, target
     phase, target = COLLECT, None
     collected.clear()
+    _calls.clear()
 
 
 def begin_run( entry, resolved, out_dir ):
     global phase, target
     phase, target = RUN, entry
+    _calls.clear()
     results.clear()
     _resolved.clear()
     _resolved.update( resolved )
@@ -118,6 +128,7 @@ def begin_run( entry, resolved, out_dir ):
 def end_run( ):
     global phase, target
     phase, target = COLLECT, None
+    _calls.clear()
 
 
 def set_tags( tags: dict ):
@@ -158,13 +169,15 @@ def entry( name, tags = None, /, **kw ):
     frame  = sys._getframe( 2 if _is_preset( ) else 1 )
     line   = frame.f_lineno
     module = frame.f_globals.get( "__name__" )
+    nth    = _calls.get( ( module, line ), 0 )
+    _calls[ ( module, line ) ] = nth + 1
 
     if phase == COLLECT:
         collected.append( Entry( name, _as_list( tags ), params, resources,
-                                 frame.f_code.co_filename, line, module ) )
+                                 frame.f_code.co_filename, line, module, nth ) )
         return False
 
-    if target is None or ( module, line ) != target.site:
+    if target is None or ( module, line, nth ) != target.site:
         return False
 
     return Args( results = results, out_dir = out_dir( ), **dict( _resolved ) )

@@ -17,7 +17,6 @@ under them.
 """
 from __future__ import annotations
 
-import io
 import json
 import os
 import sys
@@ -29,7 +28,7 @@ MARK = "\x1eerrand-op "
 # What a session is told of the command line: everything that decides what runs and how.
 KNOWN = ( "pattern", "entry_tags", "from_default", "runner", "target_args", "jobs", "no_queue", "cpus", "ram",
           "gpus", "gpu_ram", "ranks", "exclusive", "label", "log", "quiet", "keep_out", "out", "mem", "from_plan", "phase",
-          "grid" )
+          "grid", "transfers" )
 
 
 def say( what: dict ):
@@ -82,6 +81,8 @@ def session( req: dict ) -> int:
         return rc
 
     ask = Ask( known )
+    from ..cli import here as H
+    H.crossed = list( known.transfers or [ ] )            # the push that brought the project here ( ADR 0016 )
     blocks = bool( req.get( "blocks" ) )
     cases = req.get( "cases" )
     cases = [ tuple( c ) for c in cases ] if cases is not None else [
@@ -93,32 +94,28 @@ def session( req: dict ) -> int:
         if not blocks and j == 0:
             banner = combo_banner( i, len( p.combos ), varied )
             if banner:
-                print( banner, flush = True )
+                say( { "op": "note", "text": banner.strip(), "kind": "head" } )
             if not ask.quiet:
-                n = len( p.selected )
-                print( head( f"\n{'=' * 10} {n} entr{'y' if n == 1 else 'ies'}  {env.name}  {where} {'=' * 10}" ),
-                       flush = True )
+                say( { "op": "banner", "n": len( p.selected ), "env": env.name, "place": where } )
         # The case under way, for the side that drives: what to name if this process dies in it.
+        from ..cli import here
+        here.last_tail = { }
         say( { "op": "start", "case": [ i, j ], "entry": _entry( e, root ) } )
-        kept, buf = sys.stdout, io.StringIO()
-        if blocks:
-            # Several sessions at once: each case is said as one block, or nobody could read them.
-            sys.stdout = buf
-        try:
-            # In an allocation errand holds, what says nothing of its needs takes all of it ( ADR 0009 ):
-            # what runs there is exclusive by default, and shares only what it declares.
-            status, error, hint = needs.run_claimed(
-                e, env_name = env.name, ask = ask, root = root, queued = not known.no_queue,
-                echo = lambda m: print( dim( m ), flush = True ),
-                whole_if_unasked = bool( queue.in_allocation() ),
-                run = lambda handed, devices: run_case(
-                    e, p.modules, root = root, out_root = out_root, overrides = values, env_name = env.name,
-                    tags = tags, version = __version__, selectors = p.selectors, ask = ask, handed = handed,
-                    devices = devices, marks = True ) )
-        finally:
-            sys.stdout = kept
+        # Several sessions at once: each case is drawn as one block by the side that drives ( ADR 0016 ),
+        # from everything this session writes while it runs, whoever writes it.
+        # In an allocation errand holds, what says nothing of its needs takes all of it ( ADR 0009 ):
+        # what runs there is exclusive by default, and shares only what it declares.
+        status, error, hint = needs.run_claimed(
+            e, env_name = env.name, ask = ask, root = root, queued = not known.no_queue,
+            echo = lambda m: say( { "op": "note", "text": m.strip() } ),
+            whole_if_unasked = bool( queue.in_allocation() ),
+            run = lambda handed, devices: run_case(
+                e, p.modules, root = root, out_root = out_root, overrides = values, env_name = env.name,
+                tags = tags, version = __version__, selectors = p.selectors, ask = ask, handed = handed,
+                devices = devices, marks = True ) )
         say( { "op": "ran", "case": [ i, j ], "entry": _entry( e, root ), "status": status,
-               "error": error, "hint": hint, "output": buf.getvalue() if blocks else None } )
+               "error": error, "hint": hint,
+               "tail": here.last_tail } )
     say( { "op": "done" } )
     return 0
 

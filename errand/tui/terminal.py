@@ -87,6 +87,33 @@ def get_mouse( ):
 
 
 C_TITLE, C_ACTIVE, C_DIM, C_OK, C_BAD, C_WARN = 1, 2, 3, 4, 5, 6
+SELECTED = 8           # pair n + SELECTED: pair n on the ground of the row chosen ( with 256 colours )
+SELECT_GROUND = 236    # a dark grey: the row chosen is tinted, its colours kept
+_tinted = False
+
+
+def tint_ready( ) -> bool:
+    """The pairs of the row chosen, when the terminal has the colours for it. -> whether it has."""
+    global _tinted
+    try:
+        if curses.COLORS < 256:
+            return False
+        base = { 0: -1, C_TITLE: curses.COLOR_CYAN, C_ACTIVE: curses.COLOR_CYAN, C_DIM: -1, C_OK: curses.COLOR_GREEN,
+                 C_BAD: curses.COLOR_RED, C_WARN: curses.COLOR_YELLOW }
+        for n, fg in base.items():
+            curses.init_pair( n + SELECTED, fg, SELECT_GROUND )
+        _tinted = True
+    except curses.error:
+        _tinted = False
+    return _tinted
+
+
+def selected( attr: int ) -> int:
+    """`attr` on the row chosen: its colour on the tinted ground, or reversed where there is no tint."""
+    if not _tinted:
+        return attr | curses.A_REVERSE
+    n = curses.pair_number( attr ) if attr & curses.A_COLOR else 0
+    return ( attr & ~curses.A_COLOR ) | curses.color_pair( n + SELECTED )
 
 
 def dim( ):

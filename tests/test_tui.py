@@ -6,6 +6,7 @@ over a real agent and a real process, in a cache directory of its own.
 """
 import contextlib
 import os
+import re
 import shutil
 import signal
 import tempfile
@@ -57,18 +58,23 @@ def a_machine( name = "lmo", here = False ):
     return m
 
 
-if test( "the list: a machine, what runs there oldest first, its vms with their guests' work, its history folded" ):
+if test( "the runs tab: what runs, what waits, what is done by day, of every machine; the machines tab: machines and vms" ):
     from errand.tui import rows as R
-    got = [ ( r.depth, r.kind, r.mark, r.label.split()[ 0 ] ) for r in R.build( [ a_machine() ] ) ]
-    assert got == [ ( 0, "machine", None, "lmo" ), ( 1, "proc", "wait", "otrec" ), ( 1, "proc", "run", "sdot-ffi" ),
-                    ( 1, "vm", "", "windows" ), ( 2, "proc", "run", "sdot-ffi" ), ( 1, "group", None, "history" ) ], got
-    head = R.build( [ a_machine() ] )[ 0 ].detail
-    assert "1 running" in head and "1 waiting" in head and "1 vm" in head, head
-    waits = R.build( [ a_machine() ] )[ 1 ].detail
-    assert "waiting: slurm job 81234 pending, 2 min" in waits and waits.startswith( "2 h 30" ), waits
-    opened = R.build( [ a_machine() ], opened = { "lmo" } )
-    assert [ ( r.kind, r.mark ) for r in opened[ -1 : ] ] == [ ( "run", "FAIL" ) ], "an opened history shows its runs"
-    assert [ r.kind for r in R.build( [ a_machine() ], folded = { "lmo" } ) ] == [ "machine" ], "a folded machine hides all"
+    got = [ ( r.kind, r.mark, r.label.split()[ 0 ] ) for r in R.build( [ a_machine() ] ) ]
+    assert got == [ ( "day", None, "running" ), ( "proc", "run", "lmo" ), ( "proc", "run", "lmo" ),
+                    ( "day", None, "waiting" ), ( "proc", "wait", "lmo" ), ( "day", None, "done" ), ( "run", "FAIL", "lmo" ) ], got
+    rows = R.build( [ a_machine() ] )
+    assert rows[ 1 ].label.split()[ 1 ] == "run" and "test_x.py::solve" in rows[ 1 ].label, "the machine, then what"
+    waits = rows[ 4 ].detail
+    assert "waiting: slurm job 81234 pending, 2 min" in waits and re.search( r"\d\d:\d\d$", waits ), waits
+    assert re.fullmatch( r"\d\d:\d\d", rows[ 6 ].detail ), "a run done says when it started, nothing else"
+    got = [ ( r.depth, r.kind, r.label.split()[ 0 ] ) for r in R.build( [ a_machine() ], tab = "machines" ) ]
+    assert got == [ ( 0, "machine", "lmo" ), ( 1, "vm", "windows" ), ( 2, "proc", "sdot-ffi" ) ], got
+    head = R.build( [ a_machine() ], tab = "machines" )[ 0 ]
+    assert head.detail == "1/1", head.detail                    # running / waiting: short, so that the gauges line up
+    m = a_machine()
+    assert dict( R.facts( head, m ) )[ "work" ] == "1 running, 1 waiting, 1 vm", R.facts( head, m )
+    assert [ r.kind for r in R.build( [ a_machine() ], folded = { "lmo" }, tab = "machines" ) ] == [ "machine" ]
 
 
 if test( "a step: the row says its text and bar, the detail its curves and views, a finished run its journal ( ADR 0010 )" ):
@@ -95,7 +101,7 @@ if test( "a step: the row says its text and bar, the detail its curves and views
         here.read_at = time.time()
         here.history = { "runs": [ { "leaf": str( leaf ), "project": "/x/p", "what": "a.py::b", "started": 1 } ] }
         screen = Screen( [ here ] )
-        run = next( r for r in R.build( [ here ], opened = { "here" } ) if r.kind == "run" )
+        run = next( r for r in R.build( [ here ] ) if r.kind == "run" )
         screen.describe( run )
         deadline = time.monotonic() + 10
         while R.key( run ) not in screen.seen and time.monotonic() < deadline:
@@ -103,21 +109,22 @@ if test( "a step: the row says its text and bar, the detail its curves and views
         shown = [ ( r.kind, r.label, r.detail ) for r in screen.describe( run ) ]
         assert any( label.startswith( "step" ) and "iteration 9" in label for _, label, _ in shown ), shown
         assert any( label.startswith( "energy" ) for _, label, _ in shown ), shown
-        view = next( ( r for r in shown if r[ 0 ] == "file" and r[ 1 ] == "convergence" ), None )
+        view = next( ( r for r in shown if r[ 0 ] == "output" and r[ 1 ] == "convergence" ), None )
         assert view is not None and view[ 2 ] == "plot.html", shown
 
 
 if test( "the list: the filter, the current project only, and the current project highlighted" ):
     from errand.tui import rows as R
     found = R.build( [ a_machine() ], query = "slurm" )
-    assert [ r.label.split()[ 0 ] for r in found ] == [ "lmo", "otrec" ], [ r.label for r in found ]
-    mine = R.build( [ a_machine() ], only = { "sdot-ffi" }, mine = { "sdot-ffi" }, opened = { "lmo" } )
-    assert { r.label.split()[ 0 ] for r in mine if r.kind in ( "proc", "run" ) } == { "sdot-ffi" }, [ r.label for r in mine ]
-    assert all( list( r.hits ) == list( range( 8 ) ) for r in mine if r.kind in ( "proc", "run" ) ), "not highlighted"
+    assert [ r.kind for r in found ] == [ "day", "proc" ] and "grid" in found[ 1 ].label, [ r.label for r in found ]
+    mine = R.build( [ a_machine() ], only = { "sdot-ffi" }, mine = { "sdot-ffi" } )
+    assert all( "sdot-ffi" in str( r.data[ 1 ].get( "project" ) ) for r in mine if r.kind in ( "proc", "run" ) ), [ r.label for r in mine ]
+    assert any( r.kind == "proc" for r in mine ) and any( r.kind == "run" for r in mine ), [ r.label for r in mine ]
     broken = a_machine()
     broken.error = "ssh: connect to host lmo port 22: Operation timed out"
-    head = R.build( [ broken ] )[ 0 ]
-    assert head.kind == "broken" and "cannot say: ssh" in head.detail and "last table shown" in head.detail, head.detail
+    head = R.build( [ broken ], tab = "machines" )[ 0 ]
+    assert head.kind == "broken" and head.detail == "✗", head.detail                  # why: in the detail
+    assert "ssh" in dict( R.facts( head, broken ) )[ "error" ], R.facts( head, broken )
 
 
 if test( "the agent's ops: the files of a leaf newest first, a file's end, a group stopped then its cancel line run" ):
@@ -173,7 +180,7 @@ if test( "history: a link per run, newest first, with its result; a link whose l
             del os.environ[ "ERRAND_CACHE_DIR" ], os.environ[ "ERRAND_PROC_DIR" ]
 
 
-if test( "the screen: a process an agent runs here, its output beside it, a run in the history, and `s` stops it" ):
+if test( "the screen: what runs, its output; a run done, as the console drew it; the machines; and `k` kills" ):
     from errand import agents
     from errand.agents import seen
     os.environ[ "ERRAND_AGENT" ] = "direct"
@@ -196,28 +203,31 @@ if test( "the screen: a process an agent runs here, its output beside it, a run 
         try:
             assert term.wait_for( "sh -c echo", 30 ), plain( term.buf )[ -2000 : ]
             shown = term.text()
-            assert "this machine" in shown and "proj" in shown and "running" in shown, shown
-            term.send( DOWN )                      # the process: its output, beside it
+            assert "1 runs" in shown and "running ( 1 )" in shown, shown         # the runs tab first
+            term.send( DOWN )                      # under `running`, the process: its output, beside it
             assert term.wait_for( "hello-from-the-process", 30 ), plain( term.buf )[ -3000 : ]
 
-            term.send( DOWN )                      # the history row
-            term.send( "\x1bOC" )                   # → opens it
-            assert term.wait_for( "test_t.py::case", 10 ), plain( term.buf )[ -3000 : ]
-            term.send( DOWN )
+            term.send( DOWN )                      # `done today`
+            term.send( DOWN )                      # the run done: its output, as the console drew it
             assert term.wait_for( "the run said this", 10 ), plain( term.buf )[ -3000 : ]
+            assert term.wait_for( "╰ PASS", 10 ), plain( term.buf )[ -3000 : ]
 
             term.send( "/hello" )                  # a filter that only the process passes
             term.send( "\r" )
             assert "test_t.py::case" not in term.frame(), "the filter kept a run it does not match"
             term.send( "\x1b" )
 
-            term.send( "\x1bOH" )                  # home: the machine
+            term.send( "2" )                       # the machines tab
+            assert term.wait_for( "this machine", 10 ), plain( term.buf )[ -2000 : ]
+            term.send( "1" )                       # back to the runs
+            term.send( "\x1bOH" )                  # home: `running`
             term.send( DOWN )                      # the process
-            term.send( "s" )
-            assert term.wait_for( "y stops it", 10 ), plain( term.buf )[ -2000 : ]
-            term.send( "y" )
+            term.send( "k" )
+            assert term.wait_for( "enter: kill", 10 ), plain( term.buf )[ -2000 : ]
+            term.send( "\r" )
+            term.buf = ""
             # Its group is gone ( the pid the agent gave may be a zygote's child, under `errand run` ).
-            assert term.wait_for( "idle · read", 15 ), "s y did not stop the process: " + plain( term.buf )[ -600 : ]
+            assert term.wait_for( "● 0 running", 15 ), "k enter did not kill the process: " + plain( term.buf )[ -600 : ]
             from errand.agents.table import procs_of, served
             assert procs_of( cache / "agents" / "a", served( cache / "agents" / "a" ) ) == [ ]
             term.send( "q", settle = 0.1 )
@@ -234,3 +244,316 @@ if test( "the screen: a process an agent runs here, its output beside it, a run 
             conn.close()
             agents._open.clear()
             del os.environ[ "ERRAND_CACHE_DIR" ]
+
+
+if test( "f forgets the machine under the cursor, once confirmed; this machine cannot be" ):
+    from errand.agents import ledger
+    from errand.tui import rows as R
+    from errand.tui.machines import Machine
+    from errand.tui.screen import Screen
+    base = Path( tempfile.mkdtemp( dir = "/tmp" ) )
+    kept = os.environ.get( "ERRAND_CACHE_DIR" )
+    os.environ[ "ERRAND_CACHE_DIR" ] = str( base )
+    try:
+        ledger.note( { "kind": "ssh", "host": "h", "options": [ ], "python": "python3", "keep_alive": 900 } )
+        here, far = Machine( "here" ), a_machine( "h" )
+        here.read_at = time.time()
+        screen = Screen( [ here, far ] )
+        screen.list.rows = R.build( screen.machines, tab = "machines" )
+        screen.list.cursor = next( i for i, r in enumerate( screen.list.rows ) if r.kind == "machine" and r.data[ 0 ] == "h" )
+        screen.forget()
+        assert screen.confirm and screen.confirm.title == "forget h?" and screen.confirm.verb == "forget", screen.confirm
+        assert [ m[ "name" ] for m in ledger.machines() ] == [ "h" ], "nothing before y"
+        screen.confirm.go()
+        assert ledger.machines() == [ ] and far not in screen.machines and far.stopped, screen.message
+        screen.confirm = None
+        screen.list.rows = R.build( screen.machines, tab = "machines" )
+        screen.list.cursor = next( i for i, r in enumerate( screen.list.rows ) if r.kind == "machine" )
+        screen.forget()
+        assert screen.confirm is None and "always shown" in screen.message, screen.message
+    finally:
+        if kept is None:
+            os.environ.pop( "ERRAND_CACHE_DIR", None )
+        else:
+            os.environ[ "ERRAND_CACHE_DIR" ] = kept
+        shutil.rmtree( base, ignore_errors = True )
+
+
+
+if test( "k on a machine kills everything errand runs there, once confirmed in its window; on a process, that one" ):
+    from errand.tui import rows as R
+    from errand.tui.loop import handle
+    from errand.tui.screen import Screen
+    far = a_machine( "lmo" )
+    asked = [ ]
+    far.ask = lambda req, timeout = 60: asked.append( req ) or { "ok": True }
+    screen = Screen( [ far ] )
+    screen.list.rows = R.build( screen.machines, tab = "machines" )
+    screen.list.cursor = next( i for i, r in enumerate( screen.list.rows ) if r.kind == "machine" )
+    screen.active = 0
+    handle( screen, ord( "k" ) )
+    c = screen.confirm
+    assert c and c.verb == "kill" and c.danger and "lmo" in c.title and any( "test_x.py::solve" in l for l in c.lines ), c
+    handle( screen, 27 )                                      # esc: nothing
+    assert screen.confirm is None and asked == [ ] and screen.message == "nothing done"
+    handle( screen, ord( "k" ) )
+    handle( screen, 10 )                                      # enter: kill
+    deadline = time.monotonic() + 5
+    while not asked and time.monotonic() < deadline:
+        time.sleep( 0.02 )
+    assert [ r[ "pgid" ] for r in asked ] == [ 12 ], asked     # the one row with a process group
+    asked.clear()
+    screen.list.rows = R.build( screen.machines )               # the runs tab: the work
+    screen.list.cursor = next( i for i, r in enumerate( screen.list.rows ) if r.kind == "proc" and "solve" in str( r.data ) )
+    handle( screen, ord( "k" ) )
+    assert screen.confirm.title.startswith( "kill " ) and "solve" in screen.confirm.title, screen.confirm
+
+
+if test( "a machine's resources: measured by its agent, as gauges on its row, in words in its detail" ):
+    from errand.agents import resources
+    from errand.tui import rows as R
+    got = resources.measure()
+    assert got[ "cpus" ] >= 1 and ( got[ "busy" ] is None or 0 <= got[ "busy" ] <= 1 ), got
+    assert got[ "ram" ] is None or 0 < got[ "ram" ][ "used" ] <= got[ "ram" ][ "total" ], got
+    started = time.time()
+    resources.measure()
+    assert time.time() - started < 0.5, "cheap enough for every table"
+    res = { "cpus": 128, "busy": 0.68, "load": 87.1, "ram": { "total": 524288, "used": 215040 },
+            "gpus": [ { "index": 0, "name": "A100", "util": 87.0, "used": 30720.0, "total": 81920.0 } ],
+            "held": { "cpus": 16.0, "ram": 65536.0, "gpus": 1, "exclusive": False, "claims": 2 }, "scheduler": None }
+    assert [ ( n, round( f, 2 ) ) for n, f in R.meters( res ) ] == [ ( "cpu", 0.68 ), ( "ram", 0.41 ), ( "gpu0", 0.87 ) ]
+    four = dict( res, gpus = [ dict( res[ "gpus" ][ 0 ], index = i, util = 50.0 ) for i in range( 4 ) ] )
+    assert R.meters( four )[ -1 ] == ( "gpu×4", 0.5 ), "beyond two cards, their mean"
+    facts = dict( R.resource_facts( res ) )
+    assert facts[ "cpu" ] == "68 % of 128 cores · load 87.1" and facts[ "ram" ] == "210 G of 512 G used", facts
+    assert facts[ "gpu 0" ] == "A100 · 87 % · 30 G of 80 G" and facts[ "held" ] == "by errand: 16 cpus · 64 G · 1 gpu ( 2 claims )", facts
+    m = a_machine( "lmo" )
+    m.table[ "resources" ] = res
+    row = next( r for r in R.build( [ m ], tab = "machines" ) if r.kind == "machine" )
+    assert [ n for n, _ in row.meters ] == [ "cpu", "ram", "gpu0" ], row.meters
+    assert R.meters( None ) == [ ] and R.resource_facts( None ) == [ ], "an older agent says nothing of them"
+
+
+if test( "a machine without work for a day is greyed and not contacted until a; r names a machine" ):
+    from errand.agents import ledger
+    from errand.tui import rows as R
+    from errand.tui.loop import handle
+    from errand.tui.machines import Machine
+    from errand.tui.screen import Screen
+    base = Path( tempfile.mkdtemp( dir = "/tmp" ) )
+    kept = os.environ.get( "ERRAND_CACHE_DIR" )
+    os.environ[ "ERRAND_CACHE_DIR" ] = str( base )
+    try:
+        ledger.note( { "kind": "ssh", "host": "jz", "options": [ ], "python": "python3", "keep_alive": 900 } )
+        old = Machine( "jz", { "kind": "ssh", "host": "jz" }, time.time() - 3 * 86400, [ "jz" ] )
+        assert old.dormant
+        started = [ ]
+        old._loop = lambda: started.append( 1 )
+        old.watch()
+        time.sleep( 0.1 )
+        assert started == [ ], "contacted though dormant"
+        screen = Screen( [ old ] )
+        screen.list.rows = R.build( screen.machines, tab = "machines" )
+        row = screen.list.rows[ 0 ]
+        assert row.kind == "dormant" and row.detail.startswith( "3 d" ) and not row.meters, ( row.kind, row.detail )
+        assert "not contacted" in dict( R.facts( row, old ) )[ "dormant" ]
+        handle( screen, ord( "a" ) )
+        time.sleep( 0.1 )
+        assert not old.dormant and started == [ 1 ] and "watching jz" in screen.message, screen.message
+        assert ledger.groups()[ 0 ][ "watch" ] is True, "saved: the next screen, and errand status, watch it too"
+        screen.list.rows = R.build( screen.machines, tab = "machines" )
+        handle( screen, ord( "r" ) )
+        assert screen.prompt and screen.prompt.text == "jz", screen.prompt
+        for k in "jean-zay":                                  # the first letter replaces the name, as selected
+            handle( screen, ord( k ) )
+        handle( screen, 10 )
+        assert old.name == "jean-zay" and [ g[ "name" ] for g in ledger.groups() ] == [ "jean-zay" ], ledger.groups()
+    finally:
+        if kept is None:
+            os.environ.pop( "ERRAND_CACHE_DIR", None )
+        else:
+            os.environ[ "ERRAND_CACHE_DIR" ] = kept
+        shutil.rmtree( base, ignore_errors = True )
+
+
+if test( "a on a watched machine stops watching it, saved; agents kept warm are no work" ):
+    from errand.agents import ledger
+    from errand.tui import rows as R
+    from errand.tui.loop import handle
+    from errand.tui.screen import Screen
+    base = Path( tempfile.mkdtemp( dir = "/tmp" ) )
+    kept = os.environ.get( "ERRAND_CACHE_DIR" )
+    os.environ[ "ERRAND_CACHE_DIR" ] = str( base )
+    try:
+        ledger.note( { "kind": "ssh", "host": "lmo", "options": [ ], "python": "python3", "keep_alive": 900 } )
+        m = a_machine( "lmo" )
+        m.names = [ "lmo" ]
+        m.table[ "procs" ].append( { "id": "ag", "kind": "agent", "project": "/home/h/p", "what": "environment agent env-1",
+                                     "started": time.time() - 60, "state": "running", "pgid": 99 } )
+        rows = R.build( [ m ], tab = "machines" )
+        assert rows[ 0 ].detail == "1/1" and not any( "environment agent" in r.label for r in rows ), [ r.label for r in rows ]
+        assert dict( R.facts( rows[ 0 ], m ) )[ "agents" ].startswith( "1 kept warm" )
+        screen = Screen( [ m ] )
+        screen.list.rows = rows
+        handle( screen, ord( "a" ) )
+        assert m.dormant and m.table is None and "not watched" in screen.message, screen.message
+        assert ledger.groups()[ 0 ][ "watch" ] is False and not ledger.watched( ledger.groups()[ 0 ] ), "not saved"
+        assert R.build( [ m ], tab = "machines" )[ 0 ].detail == "off"
+        ledger.note( { "kind": "ssh", "host": "lmo", "options": [ ], "python": "python3", "keep_alive": 900 } )
+        os.utime( next( ( base / "ledger" ).glob( "*.json" ) ), ( 0, 0 ) )        # past REFRESH: written again
+        ledger.note( { "kind": "ssh", "host": "lmo", "options": [ ], "python": "python3", "keep_alive": 900 } )
+        assert ledger.groups()[ 0 ][ "watch" ] is None and ledger.watched( ledger.groups()[ 0 ] ), "work sent there: watched again"
+    finally:
+        if kept is None:
+            os.environ.pop( "ERRAND_CACHE_DIR", None )
+        else:
+            os.environ[ "ERRAND_CACHE_DIR" ] = kept
+        shutil.rmtree( base, ignore_errors = True )
+
+
+if test( "r names this machine too; ← → fold a day, ← goes up to it; the cursor stays on a run as it ends and others arrive" ):
+    from errand.agents import ledger
+    from errand.tui import rows as R
+    from errand.tui.loop import handle
+    from errand.tui.machines import Machine
+    from errand.tui.screen import Screen
+    import curses
+    base = Path( tempfile.mkdtemp( dir = "/tmp" ) )
+    kept = os.environ.get( "ERRAND_CACHE_DIR" )
+    os.environ[ "ERRAND_CACHE_DIR" ] = str( base )
+    try:
+        here = Machine( ledger.here_name() )
+        here.read_at, now = time.time(), time.time()
+        runs = [ { "leaf": f"/x/leaf{i}", "project": "/x/p", "what": f"a.py::c{i}", "started": now - 100 - i, "status": "PASS" }
+                 for i in range( 3 ) ]
+        here.history = { "runs": list( runs ) }
+        here.table = { "procs": [ ] }
+        screen = Screen( [ here ] )
+        screen.list.box = screen.detail.box = ( 1, 0, 20, 80 )
+        screen.build()
+        assert [ r.kind for r in screen.list.rows ] == [ "day", "run", "run", "run" ], [ r.kind for r in screen.list.rows ]
+        handle( screen, curses.KEY_DOWN )
+        handle( screen, curses.KEY_DOWN )                    # on c1
+        assert screen.list.current().data[ 1 ][ "what" ] == "a.py::c1"
+        # a new run, running: rows come before -- the cursor stays on c1
+        here.table = { "procs": [ { "state": "running", "what": "a.py::new", "project": "/x/p", "leaf": "/x/new", "id": "n",
+                                    "started": now } ] }
+        screen.build()
+        assert screen.list.current().data[ 1 ][ "what" ] == "a.py::c1", screen.list.current().label
+        # c1's own: running, then done -- the same run, by its leaf
+        here.table = { "procs": [ ] }
+        screen.build()
+        assert screen.list.current().data[ 1 ][ "what" ] == "a.py::c1"
+        handle( screen, curses.KEY_LEFT )                     # ← on a run: up to its day
+        assert screen.list.current().kind == "day", screen.list.current().kind
+        handle( screen, curses.KEY_LEFT )                     # ← on the day: folded
+        screen.build()
+        assert [ r.kind for r in screen.list.rows ] == [ "day" ] and "( 3 )" in screen.list.rows[ 0 ].label
+        handle( screen, curses.KEY_RIGHT )                    # → unfolds it
+        screen.build()
+        assert len( screen.list.rows ) == 4
+        handle( screen, ord( "r" ) )                          # on a day: nothing to name, said in a window
+        assert screen.confirm and "nothing to name" in screen.confirm.title, screen.confirm
+        handle( screen, 10 )
+        handle( screen, curses.KEY_DOWN )
+        handle( screen, ord( "r" ) )                          # on a run of this machine: it can be named
+        assert screen.prompt and screen.prompt.text == ledger.here_name(), screen.prompt
+        for k in "mac":
+            handle( screen, ord( k ) )
+        handle( screen, 10 )
+        assert here.name == "mac" and ledger.here_name() == "mac", ( here.name, screen.message )
+        assert [ g[ "name" ] for g in ledger.groups() ] == [ ], "this machine is no machine to ask"
+        handle( screen, ord( "1" ) )
+        screen.build()
+        handle( screen, 9 )                                   # tab: the detail, its outputs
+        assert screen.active == 1
+    finally:
+        if kept is None:
+            os.environ.pop( "ERRAND_CACHE_DIR", None )
+        else:
+            os.environ[ "ERRAND_CACHE_DIR" ] = kept
+        shutil.rmtree( base, ignore_errors = True )
+
+
+if test( "the detail: outputs to go through, the one under the cursor shown, enter opens it, e edits it" ):
+    from errand.tui import rows as R
+    from errand.tui.loop import handle
+    from errand.tui.machines import Machine
+    from errand.tui.screen import Screen
+    import curses
+    leaf = Path( tempfile.mkdtemp( dir = "/tmp" ) )
+    try:
+        ( leaf / "output.txt" ).write_text( "the console\n" )
+        ( leaf / "notes.txt" ).write_text( "first line of notes\nsecond\n" )
+        ( leaf / "data.bin" ).write_bytes( b"\x00\x01\x02" * 100 )
+        here = Machine( "here" )
+        here.read_at = time.time()
+        here.table = { "procs": [ ] }
+        here.history = { "runs": [ { "leaf": str( leaf ), "project": "/x/p", "what": "a.py::b", "started": time.time(), "status": "PASS" } ] }
+        screen = Screen( [ here ] )
+        screen.list.box, screen.detail.box = ( 1, 0, 30, 60 ), ( 1, 60, 30, 80 )
+        opened, edited = [ ], [ ]
+        screen.run_outside = lambda argv, cwd = None: edited.append( argv )
+        screen.build()
+        handle( screen, curses.KEY_DOWN )                     # the run
+
+        def settle( what ):
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                screen.build()
+                if any( what in r.label for r in screen.detail.rows ):
+                    return True
+                time.sleep( 0.05 )
+            return False
+
+        assert settle( "the console" ), [ r.label for r in screen.detail.rows ]
+        outputs = [ r.label for r in screen.detail.rows if r.kind == "output" ]
+        assert outputs[ 0 ] == "console" and "notes.txt" in outputs and "output.txt" not in outputs, outputs
+        handle( screen, 9 )                                   # tab: the detail
+        screen.build()
+        screen.detail.cursor = next( i for i, r in enumerate( screen.detail.rows ) if r.label == "notes.txt" )
+        assert settle( "first line of notes" ), [ r.label for r in screen.detail.rows ]
+        assert not any( "the console" in r.label for r in screen.detail.rows ), "the file shown, not the console"
+        screen.detail.cursor = next( i for i, r in enumerate( screen.detail.rows ) if r.label == "data.bin" )
+        assert settle( "binary" ), [ r.label for r in screen.detail.rows ]
+        screen.detail.cursor = next( i for i, r in enumerate( screen.detail.rows ) if r.label == "notes.txt" )
+        os.environ[ "VISUAL" ] = "myeditor -x"
+        try:
+            handle( screen, ord( "e" ) )
+        finally:
+            del os.environ[ "VISUAL" ]
+        assert edited == [ [ "myeditor", "-x", str( leaf / "notes.txt" ) ] ], edited
+        import subprocess
+        real = subprocess.Popen
+        subprocess.Popen = lambda argv, **kw: opened.append( argv )
+        try:
+            handle( screen, 10 )
+        finally:
+            subprocess.Popen = real
+        assert opened and opened[ 0 ][ -1 ] == str( leaf / "notes.txt" ), opened
+    finally:
+        shutil.rmtree( leaf, ignore_errors = True )
+
+
+if test( "a run that still runs is under running only, not done as well; ↓ goes past it" ):
+    from errand.tui import rows as R
+    from errand.tui.loop import handle
+    from errand.tui.machines import Machine
+    from errand.tui.screen import Screen
+    import curses
+    m = Machine( "here" )
+    m.read_at, now = time.time(), time.time()
+    m.table = { "procs": [ { "state": "running", "what": "a.py::live", "project": "/x/p", "leaf": "/x/live", "id": "l", "started": now } ] }
+    m.history = { "runs": [ { "leaf": "/x/live", "project": "/x/p", "what": "a.py::live", "started": now },
+                            { "leaf": "/x/old", "project": "/x/p", "what": "a.py::old", "started": now - 10, "status": "PASS" },
+                            { "leaf": "/x/gone", "project": "/x/p", "what": "a.py::gone", "started": now - 20 } ] }
+    screen = Screen( [ m ] )
+    screen.list.box = screen.detail.box = ( 1, 0, 20, 80 )
+    screen.build()
+    shown = [ ( r.kind, r.mark, r.label.split()[ -1 ] if r.label else "" ) for r in screen.list.rows ]
+    assert [ k for k in shown if k[ 2 ] == "a.py::live" ] == [ ( "proc", "run", "a.py::live" ) ], shown
+    assert ( "run", "lost", "a.py::gone" ) in shown, shown
+    for _ in range( 4 ):
+        handle( screen, curses.KEY_DOWN )
+        screen.build()
+    assert screen.list.current().label.endswith( "a.py::gone" ), [ r.label for r in screen.list.rows ]

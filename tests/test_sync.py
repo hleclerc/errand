@@ -262,7 +262,44 @@ if test( "a directory left because it holds a zone says which" ):
     shutil.rmtree( src / "pkg" )
     r, said = run( src, dst, state, sel )
     assert r.kept == [ "pkg" ] and r.deleted == [ "pkg/m.py" ], r
-    assert said == [ "  pkg: left on the copy, it holds build ( build zone )" ], said
+    assert len( said ) == 1 and said[ 0 ].startswith( "  pkg: no longer in the project, kept on the copy: a run made "
+                                                    "what it holds, build ( build zone ). Said once" ), said
+    r, said = run( src, dst, state, sel )
+    assert r.kept == [ "pkg" ] and not said, ( r, said )         # ADR 0019: said once, then theirs
+    ( src / "pkg" ).mkdir()
+    ( src / "pkg/m.py" ).write_text( "back" )
+    run( src, dst, state, sel )
+    assert "pkg" not in S.load( state / "dst.json" ).theirs       # the project's again
+    shutil.rmtree( src / "pkg" )
+    r, said = run( src, dst, state, sel )
+    assert len( said ) == 1, said
+
+
+TAG = "Signature: 8a477f597d28d172789f06886806bc55\n# a cache\n"
+
+if test( "a directory tagged CACHEDIR.TAG is each side's own: not sent, not removed, no finding ( ADR 0019 )" ):
+    sel = zoned()
+    src, dst, state = pair( { "m.py": "m", "pkg/cat/CACHEDIR.TAG": TAG, "pkg/cat/k.bin": "here" } )
+    r, said = run( src, dst, state, sel )
+    assert sorted( r.sent ) == [ "m.py" ] and not said, ( r, said )
+    tree( { "pkg/cat2/CACHEDIR.TAG": TAG, "pkg/cat2/k.bin": "made by a run" }, dst )
+    r, said = run( src, dst, state, sel )
+    assert not r and not r.findings and not said, ( r, said )
+    assert ( dst / "pkg/cat2/k.bin" ).exists()
+    tree( { "pkg/cat3/CACHEDIR.TAG": "not the signature", "pkg/cat3/k.bin": "x" }, dst )
+    r, said = run( src, dst, state, sel )
+    assert [ f.key for f in r.findings ] == [ "pkg/cat3", "pkg/cat3/CACHEDIR.TAG", "pkg/cat3/k.bin" ], r.findings
+
+
+if test( "a directory errand counted as its own, tagged since, leaves the manifest without a word ( ADR 0019 )" ):
+    sel = zoned()
+    src, dst, state = pair( { "m.py": "m", "cat/k.py": "k" } )
+    run( src, dst, state, sel )
+    tree( { "cat/CACHEDIR.TAG": TAG, "cat/k.so": "built" }, dst )
+    shutil.rmtree( src / "cat" )
+    r, said = run( src, dst, state, sel )
+    assert not said and ( dst / "cat/k.so" ).exists(), ( r, said )
+    assert not any( k.startswith( "cat" ) for k in S.load( state / "dst.json" ) )
 
 
 if test( "the agent's check finds a change when it starts or goes; the next sync says it, with when it was seen" ):

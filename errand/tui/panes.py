@@ -8,11 +8,13 @@ from __future__ import annotations
 
 class Row:
     __slots__ = ( "label", "detail", "kind", "data", "depth", "checked", "mark", "open",
-                  "hits" )
+                  "hits", "meters", "ident" )
 
     def __init__( self, label, detail = "", *, kind = "plain", data = None, depth = 0,
-                  checked = None, mark = None, open = None, hits = ( ) ):
+                  checked = None, mark = None, open = None, hits = ( ), meters = ( ) ):
         self.label, self.detail, self.kind, self.data = label, detail, kind, data
+        self.ident   = None         # what it stands for, when the pane's own key needs it ( the detail )
+        self.meters  = tuple( meters )   # ( name, fraction ): gauges after the label ( a machine's resources )
         self.depth   = depth
         self.checked = checked      # None: not something that can be ticked
         self.mark    = mark         # what stands where the box would be
@@ -72,9 +74,14 @@ class Pane:
         still there -- these lists are rebuilt twice a second."""
         was = self.current()
         self.rows = rows
-        if was is not None:
+        if was is not None and self.cursor < len( rows ) and key( rows[ self.cursor ] ) == key( was ):
+            pass                            # still there: two rows alike, the one under the cursor is kept
+        elif was is not None:
             for i, row in enumerate( rows ):
                 if key( row ) == key( was ):
+                    # rows came before it: the view moves with it, the row stays where the eye is
+                    if self.top <= self.cursor < self.top + self.inner[ 2 ]:
+                        self.top = max( 0, self.top + i - self.cursor )
                     self.cursor = i
                     break
             else:

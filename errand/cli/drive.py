@@ -17,12 +17,14 @@ again is in `<state>/live/<id>.json`, which `errand attach` follows.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import posixpath
 import re
 import shlex
 import subprocess
+import sys
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -36,6 +38,9 @@ from .plans import plans_rel, read_plan
 from .project import build_dir_for, child_env_for
 from . import alive, guest, relay
 from .views import Views
+from . import bottom
+from .bottom import working
+from .render import forced_colors
 from .sessions import follow_all, INTERRUPTED, LocalSession, Session, WatchedSession
 from .style import bad, dim, head, warn
 
@@ -43,7 +48,9 @@ LOGIN = 'exec "${SHELL:-/bin/sh}" -ic "$1"'          # `sh -c LOGIN sh line`: th
 
 
 def say( s ):
-    print( dim( s ), flush = True )
+    from . import place
+    if not place.say( s ):                  # under the place line, while it is drawn ( `place.Place` )
+        print( dim( s ), flush = True )
 
 
 def arrive( env, tags, root, project = True, phase = "run" ):
@@ -52,22 +59,37 @@ def arrive( env, tags, root, project = True, phase = "run" ):
     the run's, or the preparation's when it has one of its own ( `Env( prepare = … )` )."""
     ssh = L.ssh_of( env.stack_for( phase ) )
     there = ssh.remote_root( L.Context( root = root ) ) if ssh is not None else root
+    from . import place
     for message in L.warnings_for( env.stack_for( phase ), there ):
-        print( warn( f"  warning: {message}" ), flush = True )
+        if not place.warned( f"warning: {message}" ):
+            print( warn( f"  warning: {message}" ), flush = True )
     cache = None
+    transfers = [ ]                     # what crossed, for each run's journal ( ADR 0016 )
     if ssh is not None and not project:
-        cache = bootstrap.ship( ssh.host, ssh.options )
+        with working( f"↑ errand → {ssh.host}" ):
+            cache = bootstrap.ship( ssh.host, ssh.options )
     elif ssh is not None:
-        say( f"  {L.transfer( ssh.transfer )} push -> {ssh.host}:{there}" )
-        L.push( root, ssh.host, there, ssh.options, echo = say, outputs = ssh.errand_outputs_directory,
-                transfer_by = ssh.transfer )
-        for other in ssh.also:
-            L.push( Path( os.path.normpath( root / other ) ), ssh.host,
-                    L.remote_path( posixpath.normpath( L.remote_path( there ) / other ) ), ssh.options,
-                    transfer_by = ssh.transfer )
-        cache = bootstrap.ship( ssh.host, ssh.options )
+        how = L.transfer( ssh.transfer )
+        for src, dst in ( ( root, there ), *( ( Path( os.path.normpath( root / other ) ),
+                                                 L.remote_path( posixpath.normpath( L.remote_path( there ) / other ) ) )
+                                               for other in ssh.also ) ):
+            with working( f"↑ {how} push → {ssh.host}:{dst}", kind = "push" ) as w:
+                got = L.push( src, ssh.host, dst, ssh.options, echo = say, transfer_by = ssh.transfer,
+                              outputs = ssh.errand_outputs_directory if src == root else None )
+                w.numbers = { "to": f"{ssh.host}:{dst}", "by": how, **_counted( got ) }
+            transfers.append( w.record )
+        with working( f"↑ errand → {ssh.host}" ):
+            cache = bootstrap.ship( ssh.host, ssh.options )
     return SimpleNamespace( root = root, ssh = ssh, there = L.remote_path( there ) if ssh else Path( there ), cache = cache,
-                            boot = envs.boot_of( ssh, cache ) )
+                            boot = envs.boot_of( ssh, cache ), transfers = transfers )
+
+
+def _counted( report ) -> dict:
+    """What a sync came to ( `sync.Report` ), for a journal; nothing from rsync, which says nothing."""
+    if report is None or not hasattr( report, "sent" ):
+        return { }
+    return { "files": len( report.sent ), "bytes": int( report.bytes ), "touched": len( report.touched ),
+             **( { "deleted": len( report.deleted ) } if getattr( report, "deleted", None ) else { } ) }
 
 
 class AgentOutside:
@@ -129,7 +151,8 @@ class Reach:
             return self.inner
         return [ *self.inner[ : at + 1 ], AgentOutside( self.where.cache, self.where.boot ), *self.inner[ at + 1 : ] ]
 
-    def start( self, request: dict, child: dict ):
+    def start( self, request: dict, child: dict, interactive = False ):
+        """`interactive`: the session's input stays open for what is typed here ( ADR 0016 )."""
         w = self.where
         if w.ssh is not None:
             # over there, errand's outputs are the copy's own: not wherever this side keeps them
@@ -141,15 +164,16 @@ class Reach:
             conn = agents.open( self.target )
             return Session.start( conn, envs.ops_argv( envs.python_of( conn ), w.boot, request,
                                                        L.preload_of( self.inner ) ),
-                                  cwd = str( w.there ), env = child, store = store_of( w ) )
+                                  cwd = str( w.there ), env = child, store = store_of( w ), interactive = interactive )
         line = self.line( request, child )
         if self.kind == "watched":
             host = L.Over( w.ssh, w.there ) if w.ssh is not None else L.Here( w.root )
             return WatchedSession( host, self.wrapped, L.watch_dir( self.ctx ), self.sched.watch, say )
         if w.ssh is None:
-            return LocalSession( [ "sh", "-c", line ], cwd = str( w.root ) )
+            return LocalSession( [ "sh", "-c", line ], cwd = str( w.root ), interactive = interactive )
         self.target = U.ssh_target( w.ssh )
-        return Session.start( agents.open( self.target ), [ "sh", "-c", LOGIN, "sh", line ], store = store_of( w ) )
+        return Session.start( agents.open( self.target ), [ "sh", "-c", LOGIN, "sh", line ], store = store_of( w ),
+                              interactive = interactive )
 
 
     def _allocation( self ):
@@ -176,17 +200,17 @@ def _carry( env, src, dst, root ):
     """What the preparation built ( `build/<env>/` ), carried from its copy to the copy that runs it, when
     they are on two machines ( ADR 0011 ). Through here: the two need not reach each other."""
     rel = os.path.relpath( build_dir_for( root, env.name ), root )
-    name = lambda w: f"{w.ssh.host}:{w.there}" if w.ssh is not None else "here"
-    say( f"  carry {rel}: {name( src )} -> {name( dst )}" )
-    staging = root
-    if src.ssh is not None:
-        if dst.ssh is not None:
-            staging = config.state( root ) / "carry" / R.slug( env.name )
-        L.fetch( [ rel ], src.ssh.host, src.there, staging, src.ssh.options, transfer_by = src.ssh.transfer )
-    local = staging / rel
-    if dst.ssh is not None and local.is_dir():
-        L.put( local, dst.ssh.host, L.remote_path( posixpath.join( str( dst.there ), rel ) ), dst.ssh.options,
-               transfer_by = dst.ssh.transfer, echo = say )
+    name = lambda w: w.ssh.host if w.ssh is not None else "here"
+    with working( f"⇄ carry {rel}: {name( src )} → {name( dst )}" ):
+        staging = root
+        if src.ssh is not None:
+            if dst.ssh is not None:
+                staging = config.state( root ) / "carry" / R.slug( env.name )
+            L.fetch( [ rel ], src.ssh.host, src.there, staging, src.ssh.options, transfer_by = src.ssh.transfer )
+        local = staging / rel
+        if dst.ssh is not None and local.is_dir():
+            L.put( local, dst.ssh.host, L.remote_path( posixpath.join( str( dst.there ), rel ) ), dst.ssh.options,
+                   transfer_by = dst.ssh.transfer, echo = say )
 
 
 def _prepare_for_run( env, tags, verb, known, where, report, box ):
@@ -219,8 +243,10 @@ def _prepare( env, tags, verb, known, where, report, box ) -> int:
 def drive( env, tags, verb, known, *, root, out_root, report, pull = ( ) ) -> int:
     if env.vm is not None:
         return _drive_guest( env, tags, verb, known, root = root, report = report, pull = pull )
-    where = arrive( env, tags, root )
-    child = child_env_for( env, tags )
+    from .place import Place, title
+    with Place( title( env ) ):              # `▸ lmo → micromamba lmo-torch`, what it took on its right
+        where = arrive( env, tags, root )
+    child = { **child_env_for( env, tags ), **forced_colors() }       # colors as on this terminal ( ADR 0016 )
     base = _requests( env, tags, verb, known, where )
     how_many = job_count( known.jobs )
     single = env.single_pass() and how_many == 1 and verb != "list"
@@ -240,9 +266,11 @@ def drive( env, tags, verb, known, *, root, out_root, report, pull = ( ) ) -> in
     asked = { **env_needs( env.name )[ 0 ], **asked }
     needs = ( box.get( "plan" ) or { } ).get( "needs" ) if not single else asked
     reach = Reach( env, tags, "run", where, needs = needs, time = getattr( known, "time", None ) )
-    runs = { **base, "known": { **base[ "known" ], **told, "from_plan": not single, "phase": "run" } }
+    runs = { **base, "known": { **base[ "known" ], **told, "from_plan": not single, "phase": "run",
+                                "transfers": where.transfers } }
+    talk = _interactive()
     if single:
-        sessions = [ reach.start( runs, child ) ]
+        sessions = [ reach.start( runs, child, talk ) ]
     else:
         cases = [ ( i, j ) for i in range( len( box[ "combos" ] ) ) for j in range( len( box[ "entries" ] ) ) ]
         k = max( 1, min( how_many, len( cases ) ) )
@@ -251,15 +279,17 @@ def drive( env, tags, verb, known, *, root, out_root, report, pull = ( ) ) -> in
             k = 1
         if how_many > 1:
             place = ( box[ "plan" ].get( "runs" ) or [ { } ] )[ 0 ].get( "place" ) or R.place( env.name )
-            print( head( f"\n{'=' * 10} {len( cases )} entr{'y' if len( cases ) == 1 else 'ies'}"
-                         f"  {env.name}  {place}  -j {how_many} {'=' * 10}" ), flush = True )
-        sessions = [ reach.start( { **runs, "cases": cases[ s :: k ], "blocks": how_many > 1 }, child )
+            from .render import Renderer
+            Renderer().banner( len( cases ), env.name, f"{place}  -j {how_many}" )
+        sessions = [ reach.start( { **runs, "cases": cases[ s :: k ], "blocks": how_many > 1 }, child, talk )
                      for s in range( k ) ]
 
+    _in_blocks( sessions )
     live = _remember( root, env, reach, sessions, where, pull )
     boxes = [ dict( box ) for _ in sessions ]
     shown = _views( where, root )
-    rcs = follow_all( sessions, report, boxes, relay = _relay( where.ssh, root ), views = shown )
+    with _typing( sessions ):                                    # the keyboard, for a case ( ADR 0016 )
+        rcs = follow_all( sessions, report, boxes, relay = _relay( where.ssh, root ), views = shown )
     shown.wait()
     if rcs is None:
         if live:
@@ -274,6 +304,7 @@ def drive( env, tags, verb, known, *, root, out_root, report, pull = ( ) ) -> in
                             "errand attach, then Ctrl-C, stops it )" ), flush = True )
         return INTERRUPTED
     box.update( next( ( b for b in boxes if b.get( "plan" ) ), { } ) )
+    box[ "leaves" ] = [ l for b in boxes for l in b.get( "leaves", [ ] ) ]
     if any( b.get( "lost" ) for b in boxes ):
         return 1                                        # left running, and said so: `errand attach`
     _bring_back( where, env.name, box, pull )
@@ -286,7 +317,7 @@ def _drive_guest( env, tags, verb, known, *, root, report, pull ) -> int:
     """The same, in a virtual machine: held for as long as this runs, everything through its guest agent."""
     from ..vm.common import VmError
     where = arrive( env, tags, root, project = False )
-    child = child_env_for( env, tags )
+    child = { **child_env_for( env, tags ), **forced_colors() }       # colors as on this terminal ( ADR 0016 )
     base = _requests( env, tags, verb, known, where )
     how_many = job_count( known.jobs )
     box : dict = { }
@@ -305,10 +336,12 @@ def _drive_guest( env, tags, verb, known, *, root, report, pull ) -> int:
                 sessions = [ g.start( { **runs, "cases": cases[ s :: k ], "blocks": True }, child ) for s in range( k ) ]
             else:
                 sessions = [ g.start( { **base, "known": { **base[ "known" ], "phase": "run" } }, child ) ]
+            _in_blocks( sessions )
             boxes = [ dict( box ) for _ in sessions ]
             shown = Views( root, lambda rel: g.pull_file( rel ), "windows" )
-            rcs = follow_all( sessions, report, boxes,
-                              relay = relay.through( g.host_conn, root, "windows" ), views = shown )
+            with bottom.keys() if len( sessions ) > 1 else contextlib.nullcontext():
+                rcs = follow_all( sessions, report, boxes,
+                                  relay = relay.through( g.host_conn, root, "windows" ), views = shown )
             shown.wait()
             if rcs is None:
                 return INTERRUPTED
@@ -321,6 +354,35 @@ def _drive_guest( env, tags, verb, known, *, root, report, pull ) -> int:
         say( f"  {err}" )
         return 1
     return max( rcs ) if rcs else 0           # what the guest wrote came straight here
+
+
+def _interactive( ) -> bool:
+    """What is typed here can reach a case: the keyboard and the screen are a terminal's ( ADR 0016 ).
+    Otherwise a case's input is closed: nothing waits for an answer that cannot come."""
+    try:
+        return sys.stdin.isatty() and sys.stdout.isatty()
+    except ( AttributeError, ValueError ):
+        return False
+
+
+def _typing( sessions ):
+    """One session: the keyboard is its, as it is ( `bottom.feeding` ). Several: Focus's keys, and the
+    case in front's input ( `bottom.keys` )."""
+    talking = [ s for s in sessions if getattr( s, "interactive", False ) ]
+    if len( sessions ) > 1:
+        return bottom.keys()
+    if talking:
+        s = talking[ 0 ]
+        return bottom.feeding( lambda d: ( s.write( d ), s.render.typed( d, echoed = True ) ), s.close_input )
+    return contextlib.nullcontext()
+
+
+def _in_blocks( sessions ):
+    """Several sessions at once: each case drawn as one block when it ends ( ADR 0016 )."""
+    if len( sessions ) > 1:
+        for s in sessions:
+            if getattr( s, "render", None ) is not None:
+                s.render.blocks = True
 
 
 def _relay( ssh, root ):
@@ -373,21 +435,43 @@ def _bring_back( where, env_name, box, pull ):
     ssh = where.ssh
     if ssh is None:
         return
+    pulled = [ ]
 
     def fetch( paths, runs = False, keep = False ):
         if paths:
-            say( f"  {L.transfer( ssh.transfer )} pull  <- {ssh.host}:{where.there} [{', '.join( paths )}]"
-                 + ( " ( cache )" if keep else "" ) )
-            L.fetch( paths, ssh.host, where.there, where.root, ssh.options, transfer_by = ssh.transfer,
-                     finished_only = runs, keep = keep )
+            how = L.transfer( ssh.transfer )
+            with working( f"↓ {how} pull ← {ssh.host} [{', '.join( paths )}]", kind = "pull" ) as w:
+                got = L.fetch( paths, ssh.host, where.there, where.root, ssh.options, transfer_by = ssh.transfer,
+                               finished_only = runs, keep = keep )
+                w.numbers = { "from": f"{ssh.host}:{where.there}", "by": how, "paths": list( paths ), **_counted( got ) }
+            pulled.append( w.record )
 
-    fetch( [ plans_rel( where.root ) ] )
-    plan = box.get( "plan" ) or read_plan( where.root, env_name )
-    if plan:
-        # A run comes back once it has written its record: never half of one.
-        fetch( sorted( { r[ "under" ] for r in plan[ "runs" ] } ), runs = True )
-    fetch( [ *pull, *L.back_zones( env_name ) ] )
-    fetch( L.cache_zones( env_name ), keep = True )
+    from .place import Place
+    with Place( "", back = True ):           # `↓ 3 files · 12 kB · 0.4 s`, under the last case
+        fetch( [ plans_rel( where.root ) ] )
+        plan = box.get( "plan" ) or read_plan( where.root, env_name )
+        if plan:
+            # A run comes back once it has written its record: never half of one.
+            fetch( sorted( { r[ "under" ] for r in plan[ "runs" ] } ), runs = True )
+        fetch( [ *pull, *L.back_zones( env_name ) ] )
+        fetch( L.cache_zones( env_name ), keep = True )
+    _journal( where.root, box.get( "leaves" ), pulled )
+
+
+def _journal( root, leaves, records ):
+    """What crossed, said in the journal of each run it concerned ( `steps.jsonl`, ADR 0016 ): never on the
+    terminal, where it was only under way."""
+    import json as J
+    if not records:
+        return
+    for leaf in leaves or ( ):
+        path = Path( root ) / leaf / "steps.jsonl"
+        if path.parent.is_dir():
+            try:
+                with open( path, "a" ) as f:
+                    f.write( "".join( J.dumps( r ) + "\n" for r in records ) )
+            except OSError:
+                pass
 
 
 def attach( root, ident = None, *, report ) -> int:

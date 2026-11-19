@@ -120,6 +120,11 @@ class Proc:
                 shutil.rmtree( self.dir, ignore_errors = True )
             if self.mark != self.dir:          # the same directory: kept above until its client is told
                 shutil.rmtree( self.mark, ignore_errors = True )
+        try:
+            from . import look
+            look.nudge()                       # its watchers see it end now
+        except Exception:
+            pass
 
     def attach( self, writer, channel, out = 0, err = 0 ):
         """Send what was written from these offsets on, then follow."""

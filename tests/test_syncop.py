@@ -313,3 +313,24 @@ if test( "a cache file a run wrote there, and that came back here, is not sent a
         assert "data/big.h5" in known and known[ "data/big.h5" ].digest, "recorded: not hashed at every push"
         r, said = push( conn, src, dst, sel )
         assert not r.sent and not said, ( r, said )
+
+
+TAG = "Signature: 8a477f597d28d172789f06886806bc55\n"
+
+if test( "through the agent: a run's directory is said once; a tagged one never ( ADR 0019 )" ):
+    with scratch() as d:
+        sel = S.Selection( [ "__pycache__" ], zones = [ S.Zone( "*.so", "build" ) ] )
+        src = tree( d / "src", { "a.py": "a", "kern/k.py": "k" } )
+        dst = d / "copy"
+        conn = agent( d / "ag" )
+        push( conn, src, dst, sel )
+        tree( dst, { "kern/x.so": "built there", "cat/CACHEDIR.TAG": TAG, "cat/y.so": "built there" } )
+        shutil.rmtree( src / "kern" )
+        r, said = push( conn, src, dst, sel, check = True )
+        assert r.kept == [ "kern" ] and len( said ) == 1 and said[ 0 ].startswith( "  kern: no longer in the project" ), said
+        r, said = push( conn, src, dst, sel, check = True )
+        assert not said, said
+        conn.close()
+        conn = agent( d / "ag2" )              # a new agent walks the copy: still nothing to say
+        r, said = push( conn, src, dst, sel )
+        assert not said and ( dst / "cat/y.so" ).exists() and ( dst / "kern/x.so" ).exists(), said

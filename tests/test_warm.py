@@ -41,6 +41,11 @@ def session( p: Path, agent: Path, warm = "1" ):
                            cwd = p, env = env, capture_output = True, text = True, timeout = 120 )
 
 
+def passed( out: str, name = "hello" ) -> bool:
+    """A session says how a case ended as an event ( `ran`, ADR 0016 ), drawn by the side that drives it."""
+    return any( '"op": "ran"' in l and '"status": "PASS"' in l and f'"name": "{name}"' in l for l in out.splitlines() )
+
+
 if test( "a session is a fork of the zygote, which stays, and learns what to import" ):
     if not hasattr( os, "fork" ):
         from errand import skip
@@ -49,12 +54,12 @@ if test( "a session is a fork of the zygote, which stays, and learns what to imp
     try:
         p, agent = project( d ), d / "agent"
         first = session( p, agent )
-        assert first.returncode == 0 and "PASS hello" in first.stdout, first.stdout + first.stderr
+        assert first.returncode == 0 and passed( first.stdout ), first.stdout + first.stderr
         zygote = agent / "warm"
         log = ( zygote / "log" ).read_text() if ( zygote / "log" ).exists() else "( no log )"
         assert ( zygote / "sock" ).exists(), f"the zygote stays:\n{log[ -1500 : ]}"
         second = session( p, agent )
-        assert second.returncode == 0 and "PASS hello" in second.stdout, second.stdout + second.stderr
+        assert second.returncode == 0 and passed( second.stdout ), second.stdout + second.stderr
         pids = [ int( r.stdout.split( "pid " )[ 1 ].split()[ 0 ] ) for r in ( first, second ) ]
         assert pids[ 0 ] != pids[ 1 ], "each session is a process of its own"
         deadline = time.monotonic() + 20
@@ -71,7 +76,7 @@ if test( "ERRAND_WARM=0, or no agent to say where a zygote is: the session runs 
     try:
         p, agent = project( d ), d / "agent"
         got = session( p, agent, warm = "0" )
-        assert got.returncode == 0 and "PASS hello" in got.stdout, got.stdout + got.stderr
+        assert got.returncode == 0 and passed( got.stdout ), got.stdout + got.stderr
         assert not ( agent / "warm" ).exists(), "nothing was started"
     finally:
         shutil.rmtree( d, ignore_errors = True )
@@ -119,7 +124,7 @@ if test( "the zygote keeps as long as its agent, is listed, and goes when its ag
             got = session( p, agent )
         finally:
             del os.environ[ "ERRAND_AGENT_PID" ], os.environ[ "ERRAND_AGENT_KEEP" ]
-        assert got.returncode == 0 and "PASS hello" in got.stdout, got.stdout + got.stderr
+        assert got.returncode == 0 and passed( got.stdout ), got.stdout + got.stderr
         listed = T.zygotes( [ agent ] )
         assert len( listed ) == 1 and listed[ 0 ][ "pid" ], listed
         zygote = listed[ 0 ][ "pid" ]

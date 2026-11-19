@@ -170,8 +170,8 @@ if test( "two passes: the preparation writes the plan, the run checks it and run
         project = write_project( Path( tmp ) / "proj", TWO.format(), { "test_a.py": WORK } )
         code, output = run_errand( project, "run", "--no-queue", "--env", "two", "**::*" )
         assert code == 0, output
-        # prepared on its own, by the preparation's layers, then run by the run's ( through their agents )
-        assert "prepared 1 entry in two" in output, output
+        # prepared on its own, by the preparation's layers ( its plan, below ), then run by the run's
+        # ( through their agents ); errand no longer says it prepared ( ADR 0016: its work is transient )
         assert "who run" in output, "the run phase goes through the run phase's layers"
         plans = list( ( project / "errand-outputs" / "state" / "plans" ).glob( "*-two.json" ) )
         assert len( plans ) == 1, plans

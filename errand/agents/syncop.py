@@ -9,7 +9,7 @@ each one frame ( IN toward the agent, OUT back ): `J` and JSON, or `C` and a chu
 
     <- { "dst": manifest, "findings", "ci" }       what the copy holds, what changed there, its case
     -> { "hash": [ keys ] }                        <- { "digests": { key: digest } }
-    -> { "apply": { "delete", "dirs", "links" } }  <- { "deleted", "kept": [ [ key, zone ] ] }
+    -> { "apply": { "delete", "dirs", "links" } }  <- { "deleted", "kept": [ [ key, what to say of it, or "" ] ] }
     -> { "file": key }, C..., { "end": entry, "stable" }   ( { "restart" } if read again )
     -> { "touch": [ [ key, entry ] ] }
     -> { "done" }                                  <- { "saved" }, then EXIT
@@ -181,6 +181,8 @@ class Session( _Channel ):
             w = S.Writer( root, dst, trusted = known if known is not None else S.Manifest(), spare_in = S.spare_dir() )
             written = S.Manifest( dst )
             written.real = dict( dst.real )
+            prior = dict( known.theirs ) if known is not None else { }    # a run's directories, said already ( ADR 0019 )
+            written.theirs = { k: v for k, v in prior.items() if k in dst }
             handle, raced = None, [ ]
             while True:
                 got = self.get()
@@ -209,11 +211,11 @@ class Session( _Channel ):
                             written.pop( key, None )
                             written.real.pop( key, None )
                         else:
-                            held = S._held( sel, key, w.path( key ) )
-                            kept.append( [ key, str( held ) if held is not None and held.kind != "errand" else "" ] )
+                            kept.append( [ key, S.refused( sel, key, w.path( key ), prior, written ) or "" ] )
                     for key in a[ "dirs" ]:
                         w.mkdir( key )
                         written[ key ] = S.Entry( "d" )
+                        written.theirs.pop( key, None )         # the project's again
                     for key, target in a[ "links" ]:
                         w.link( key, target )
                         written[ key ] = S.Entry( "l", target = target )
@@ -508,7 +510,7 @@ def push( conn, local_root, remote_root, sel: S.Selection, *, src_cache = None, 
         report.kept = [ k for k, _ in applied[ "kept" ] ]
         for key, zone in applied[ "kept" ]:
             if zone and key not in src:
-                say( f"  {key}: left on {where}, it holds {zone}" )
+                S.say_kept( key, zone, where, say )
         for key in p.send:
             c.send( { "file": key } )
             entry, stable = S.read_into( local_root, src, key, lambda b: c.send( b"C" + S.pack( b, accepted ) ),

@@ -47,7 +47,14 @@ The whole example, with a benchmark that also asserts, is
 `if test( … ):` reads like `if __name__ == "__main__":`, but a file can hold as many as it likes.
 errand imports the file once to find them, then once more per entry it runs: the guard of that entry
 is true, every other one false. Each body runs on its own, and each failure is caught on its own.
-Entries are told apart by **call site**, so two may share a name.
+Entries are told apart by **call site**, so two may share a name. A line may declare several, in a
+loop, each its own entry, told apart by its rank on the line:
+
+```python
+for solver in ( "lu", "cg" ):
+    if p := bench( f"solve {solver}" ):
+        ...
+```
 
 The walrus form hands back what the run needs:
 

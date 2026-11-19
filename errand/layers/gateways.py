@@ -335,7 +335,7 @@ def push( local_root: Path, host: str, remote_root: Path, options = ( ), echo = 
     # somebody put there by hand: at least it does not go silently.
     gone = [ line.split( None, 1 )[ 1 ] for line in done.stdout.splitlines() if line.startswith( "*deleting" ) ]
     for name in gone[ : 20 ]:
-        echo( f"    deleted on {host}: {name}" )
+        echo( f"    deleted there: {name}" )
     if len( gone ) > 20:
         echo( f"    ...and {len( gone ) - 20} more" )
     # The caches ( ADR 0012 ): what the copy lacks, nothing replaced, nothing deleted.
@@ -351,7 +351,7 @@ def _say_kept_runs( kept, host, echo ):
     marks = { R.RESULT, *R.RUN_MARKS }
     runs = sorted( { k.rpartition( "/" )[ 0 ] for k in kept if "/" in k and k.rpartition( "/" )[ 2 ] in marks } )
     if runs:
-        echo( f"    left on {host}: {len( runs )} run director{'y' if len( runs ) == 1 else 'ies'} made there, "
+        echo( f"    {len( runs )} run director{'y' if len( runs ) == 1 else 'ies'} made there, kept, "
               f"not in the project here ( {runs[ 0 ]}{', …' if len( runs ) > 1 else ''} )" )
 
 
@@ -393,14 +393,11 @@ def _push_sync( local_root: Path, host: str, remote_root, options, echo ):
     r = syncop.push( conn, local_root, remote_root, selection( local_root ),
                      src_cache = config.state( local_root ) / "sync" / "src.json", where = host, say = echo )
     for name in r.deleted[ : 20 ]:
-        echo( f"    deleted on {host}: {name}" )
+        echo( f"    deleted there: {name}" )
     if len( r.deleted ) > 20:
         echo( f"    ...and {len( r.deleted ) - 20} more" )
     _say_kept_runs( r.kept_runs, host, echo )
-    if r:
-        echo( f"    {len( r.sent )} sent ( {r.bytes / 1e6:.1f} MB ), {len( r.touched )} touched, "
-              f"{len( r.deleted )} deleted" )
-    return r
+    return r                    # its numbers: in the journal of each run ( `drive._counted`, ADR 0016 )
 
 
 def back_zones( env_name = None ) -> list:
@@ -498,7 +495,9 @@ def fetch_file( path: str, host: str, remote_root, local_root: Path, options = (
     if transfer( transfer_by ) == "sync":
         from ..agents import syncop, upstream
         conn = agents.open( upstream.of_host( host, options ) )
-        syncop.pull( conn, remote_root, local_root, [ path ], where = host, say = say )
+        for _ in range( 3 ):                    # rewritten while read, twice: read again, the run is still at it
+            if not syncop.pull( conn, remote_root, local_root, [ path ], where = host, say = say ).unstable:
+                break
         if not target.is_file():
             raise FileNotFoundError( f"{host}:{remote_root}/{path}" )
         return

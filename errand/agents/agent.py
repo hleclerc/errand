@@ -97,6 +97,7 @@ class Agent:
                 channels[ channel ] = proc
                 writer.send( channel, F.REPLY, { "ok": True, "id": proc.id, "pid": proc.child.pid } )
                 proc.attach( writer, channel )
+                look.nudge()                         # its watchers see it now
             elif op == "attach":
                 proc = self.procs.get( req[ "id" ] )
                 if proc is None or proc.code is not None:
@@ -133,6 +134,12 @@ class Agent:
             elif op in ( "sync", "pull", "receive" ):
                 from . import syncop
                 syncop.serve( self, writer, channels, channel, req )      # its own REPLY, from its thread
+            elif op == "watch":
+                # A watcher's subscription ( `errand tui` ): events as things change ( `look.Watch` ).
+                w = look.Watch( writer, channel, req )
+                channels[ channel ] = w
+                writer.send( channel, F.REPLY, { "ok": True } )
+                w.start()
             elif op in look.OPS:
                 # What a watcher asks ( `errand tui` ): from a thread, a table may wait on a guest's ssh.
                 threading.Thread( target = lambda: writer.send( channel, F.REPLY, look.answer( req ) ),

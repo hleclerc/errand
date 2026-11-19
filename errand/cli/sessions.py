@@ -25,6 +25,7 @@ from types import SimpleNamespace
 from .. import agents, layers as L
 from ..agents import frames as F
 from ..agents.ops import MARK
+from . import bottom
 from .here import tally
 from .style import bad
 
@@ -36,10 +37,16 @@ STDERR_KEPT = 64 * 1024
 class Marked:
     """Output with marks in it: the marks are taken out and queued, the rest is shown."""
 
+    interactive = False                 # its input open for what is typed here ( ADR 0016 )
+    views = None                        # what brings back the files its cases show ( `follow` sets it )
+
     def __init__( self ):
+        from .render import Renderer
         self.marks = Q.Queue()
         self._held = b""
         self.stderr_tail = b""         # the last of what it wrote on stderr: said if it dies
+        # What draws it ( ADR 0016 ): its events where they come among its bytes, not when `follow` reads them.
+        self.render = Renderer()
 
     def _out( self, payload: bytes, end = False ):
         data = self._held + payload
@@ -58,19 +65,24 @@ class Marked:
             if nl < 0:
                 self._held = data[ at : ]
                 return
-            self.marks.put( json.loads( data[ at + len( _MARK ) : nl ].decode() ) )
+            m = json.loads( data[ at + len( _MARK ) : nl ].decode() )
+            if m.get( "op" ) == "view" and self.views is not None:
+                self.views( m, self.render )    # where it comes among its output: its link inside the case
+                data = data[ nl + 1 : ]
+                continue
+            if m.get( "op" ) == "ran" and self.views is not None:
+                self.views.settle()             # the views on their way, before its end
+            if not self.render.mark( m ) or m.get( "op" ) == "ran":
+                self.marks.put( m )             # drawn only: a header, a note; `ran` is counted too
             data = data[ nl + 1 : ]
 
-    @staticmethod
-    def _show( data: bytes ):
+    def _show( self, data: bytes ):
         if data:
-            sys.stdout.buffer.write( data )
-            sys.stdout.flush()
+            self.render.write( data )
 
     def _err( self, data: bytes ):
         self.stderr_tail = ( self.stderr_tail + data )[ -STDERR_KEPT : ]
-        sys.stderr.buffer.write( data )
-        sys.stderr.flush()
+        self.render.write( data, err = True )
 
     def next( self ) -> dict:
         return self.marks.get()
@@ -86,8 +98,18 @@ class Session( Marked ):
         threading.Thread( target = self._pump, daemon = True ).start()
 
     @classmethod
-    def start( cls, conn, argv, *, cwd = None, env = None, store = None ):
-        return cls( conn, agents.start( conn, argv, cwd = cwd, env = env, store = store ), store )
+    def start( cls, conn, argv, *, cwd = None, env = None, store = None, interactive = False ):
+        """`interactive`: its input stays open, for what is typed here ( `write`, ADR 0016 ); EOF otherwise."""
+        s = cls( conn, agents.start( conn, argv, cwd = cwd, env = env, store = store, keep_input = interactive ), store )
+        s.interactive = interactive
+        return s
+
+    def write( self, data: bytes ):
+        """Typed here, for the case it runs ( ADR 0016 )."""
+        self.call.send( F.IN, data )
+
+    def close_input( self ):
+        self.call.send( F.EOF )
 
     def _pump( self ):
         try:
@@ -111,14 +133,29 @@ class Session( Marked ):
 class LocalSession( Marked ):
     """A process of this machine: it goes with this one."""
 
-    def __init__( self, argv, *, cwd = None, env = None ):
+    def __init__( self, argv, *, cwd = None, env = None, interactive = False ):
         super().__init__()
         self.pid = None
+        self.interactive = interactive
         self.proc = subprocess.Popen( argv, cwd = cwd, env = { **os.environ, **( env or { } ) },
                                       stdout = subprocess.PIPE, stderr = subprocess.PIPE,
-                                      stdin = subprocess.DEVNULL, start_new_session = True )
+                                      stdin = subprocess.PIPE if interactive else subprocess.DEVNULL,
+                                      start_new_session = True )
         threading.Thread( target = self._pump_err, daemon = True ).start()
         threading.Thread( target = self._pump, daemon = True ).start()
+
+    def write( self, data: bytes ):
+        try:
+            self.proc.stdin.write( data )
+            self.proc.stdin.flush()
+        except ( OSError, ValueError, AttributeError ):
+            pass                            # gone, or its input closed
+
+    def close_input( self ):
+        try:
+            self.proc.stdin.close()
+        except ( OSError, AttributeError ):
+            pass
 
     def _pump_err( self ):
         for chunk in iter( lambda: os.read( self.proc.stderr.fileno(), 65536 ), b"" ):
@@ -172,19 +209,6 @@ def _stub( entry: dict ):
     return SimpleNamespace( name = entry[ "name" ], file = Path( entry[ "file" ] ), line = entry[ "line" ] )
 
 
-# The step of the case running, at the bottom of this terminal ( ADR 0010 ): one line for all
-# the sessions followed, the last one that said something.
-_footer = None
-
-
-def _step( text ):
-    global _footer
-    from .footer import Footer
-    if _footer is None:
-        if not Footer.usable( sys.stdout ):
-            return
-        _footer = Footer( sys.stdout )
-    _footer.show( text )
 
 
 def follow( session, report, box: dict, relay = None, views = None ) -> int:
@@ -193,11 +217,16 @@ def follow( session, report, box: dict, relay = None, views = None ) -> int:
     what brings back a file a case shows ( `errand.view`, `views.Views` ) and says where it opens."""
     rc = 0
     running = None                     # the case under way: what a session that dies was doing
+    if views is not None and isinstance( session, Marked ):
+        session.views = views          # its view marks, dealt with where they come ( `Marked._out` )
     while True:
         m = session.next()
         op = m.get( "op" )
         if op == "step":
-            _step( m.get( "line" ) )
+            bottom.case_step( id( session ), m.get( "line" ) )
+            render = getattr( session, "render", None )
+            if render is not None:
+                render.set_step( m.get( "line" ) )      # under the case, with its time
         elif op == "want":
             if relay is not None:
                 threading.Thread( target = relay, args = ( m, ), daemon = True ).start()
@@ -205,7 +234,7 @@ def follow( session, report, box: dict, relay = None, views = None ) -> int:
             if views is not None:
                 views( m )
         elif op in ( "ran", "exit", "lost" ):
-            _step( None )
+            bottom.case_end( id( session ) )
         if op == "prepared":
             report.broken += [ ( Path( p ), why, "" ) for p, why in m[ "broken" ] ]
             rc |= m[ "rc" ]
@@ -213,11 +242,20 @@ def follow( session, report, box: dict, relay = None, views = None ) -> int:
                 box.update( m )
         elif op == "start":
             running = m.get( "entry" )
+            render = getattr( session, "render", None )
+            # its line at the bottom ( ADR 0016 ); under `-j`, what Focus shows of it
+            talks = getattr( session, "interactive", False ) and render is not None
+            bottom.case_start( id( session ), ( running or { } ).get( "name", "?" ),
+                               recent = render.recent if render is not None and render.blocks else None,
+                               write = ( lambda d: ( session.write( d ), render.typed( d, echoed = False ) ) )
+                                       if talks else None,
+                               close = session.close_input if talks else None,
+                               waiting = render.waiting if render is not None else None )
         elif op == "ran":
             running = None
-            if m.get( "output" ):
-                sys.stdout.write( m[ "output" ] )
-                sys.stdout.flush()
+            leaf = ( m.get( "tail" ) or { } ).get( "leaf" )
+            if leaf:
+                box.setdefault( "leaves", [ ] ).append( leaf )      # whose journal hears of the pull ( ADR 0016 )
             tally( report, _stub( m[ "entry" ] ), m[ "status" ], m[ "error" ], m[ "hint" ] )
         elif op == "done":
             box[ "done" ] = True

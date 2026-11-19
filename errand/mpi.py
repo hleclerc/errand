@@ -270,7 +270,7 @@ def run( e, *, n: int, stack, root: Path, leaf: Path, resolved: dict, argv: list
     path = os.pathsep.join( p for p in ( env.get( "PYTHONPATH" ) or os.environ.get( "PYTHONPATH" ), here ) if p )
     child = { **os.environ, **env, "PYTHONPATH": path, "PYTHONUNBUFFERED": "1",
               RESOLVED: json.dumps( resolved ), ARGV: json.dumps( argv ), RANKED: "1" }
-    cmd = [ *start, sys.executable, "-m", "errand.mpi", str( e.file ), str( e.line ), str( root ), str( leaf ) ]
+    cmd = [ *start, sys.executable, "-m", "errand.mpi", str( e.file ), e.at, str( root ), str( leaf ) ]
     if "through" not in start[ 1 : 4 ]:            # the relay says its own
         print( f"  $ {_shown( start )} …", flush = True )
     proc = subprocess.Popen( cmd, cwd = str( root ), env = child, text = True, errors = "replace",
@@ -328,7 +328,6 @@ class _Prefixed:
 
 
 def main( argv = None ):
-    import traceback
     from . import discovery, entries as E, local
 
     argv = argv or sys.argv[ 1 : ]
@@ -343,7 +342,7 @@ def main( argv = None ):
 
     status, error, hint = "PASS", None, None
     try:
-        entries, modules = discovery.select_at( Path( file ), int( line ), root )
+        entries, modules = discovery.select_at( Path( file ), line, root )
         if not entries:
             raise RuntimeError( f"no entry at {file}:{line}" )
         e = entries[ 0 ]
@@ -356,7 +355,8 @@ def main( argv = None ):
         raise
     except BaseException as exc:                    # SystemExit included, as in process
         status, error = "FAIL", f"{type( exc ).__name__}: {exc}"
-        traceback.print_exc()
+        from .cli.tracebacks import print_failure
+        print_failure( exc )
 
     record = { "status": status, "error": error, "hint": hint,
                "results": dict( E.results ) if r == 0 else { } }

@@ -11,6 +11,7 @@ never one transfer per call. A run on this machine needs nothing brought: only s
 from __future__ import annotations
 
 import threading
+import time
 from pathlib import Path
 
 from .style import warn
@@ -22,16 +23,24 @@ class Views:
 
     def __init__( self, local_root, pull = None, where: str = "", say = None ):
         self.root, self.pull, self.where = Path( local_root ), pull, where
-        self.say = say or ( lambda s: print( s, flush = True ) )
+        if say is None:
+            from .render import Renderer
+            say = Renderer().view               # on a line of its own, among the cases ( ADR 0016 )
+        self.say = say
         self.lock = threading.Lock()
         self.busy: dict = { }            # path -> named again while on its way
         self.said: set = set()
         self.threads: list = [ ]
+        self.renders: dict = { }         # path -> the renderer of the session that named it
+        self.idle = threading.Condition( self.lock )
 
-    def __call__( self, mark: dict ):
+    def __call__( self, mark: dict, render = None ):
+        """`render`: the session's renderer ( `render.Renderer.view` ): the link inside its case."""
         path = mark.get( "path" )
         if not path:
             return
+        if render is not None:
+            self.renders[ path ] = render
         if self.pull is None or Path( path ).is_absolute():
             # here, or outside the copy over there ( nothing here to bring it to ): said as it is
             self._said( path if self.pull is None else None, path )
@@ -59,8 +68,16 @@ class Views:
             with self.lock:
                 if not self.busy.get( path ):
                     del self.busy[ path ]
+                    self.idle.notify_all()
                     return
                 self.busy[ path ] = False
+
+    def settle( self, timeout = 20.0 ):
+        """The views on their way, arrived -- before a case's end is drawn, so that its link is inside it."""
+        end = time.monotonic() + timeout
+        with self.lock:
+            while self.busy and time.monotonic() < end:
+                self.idle.wait( max( 0.0, end - time.monotonic() ) )
 
     def _said( self, here: str | None, there: str | None ):
         key = here or there
@@ -70,9 +87,14 @@ class Views:
             self.said.add( key )
         if here is not None:
             p = Path( here )
-            self.say( f"OUTPUT: { ( p if p.is_absolute() else self.root / p ).absolute().as_uri() }" )
+            link = ( p if p.is_absolute() else self.root / p ).absolute().as_uri()
         else:
-            self.say( f"OUTPUT: {self.where}:{there}" )
+            link = f"{self.where}:{there}"
+        render = self.renders.get( key )
+        if render is not None:
+            render.view( link )
+        else:
+            self.say( link )
 
     def wait( self, timeout = 60.0 ):
         """The views on their way, arrived: before the run's own coming back, and before this process ends."""

@@ -105,6 +105,16 @@ errand agents stop         # all of them, and the hub
 Stopping goes from the far end: an environment before the machine or the allocation it runs in. An
 agent with something running is left alone and says so; `--force` stops it, and what it runs.
 
+## Watching, without asking again
+
+`errand tui` does not ask each machine what runs there every few seconds: it subscribes to its agent,
+through the hub's link, and the agent says what changes as it changes -- a process that starts or
+ends ( within a fraction of a second ), the resources when they move by more than a few points, a run
+recorded in the history. Nothing crosses while nothing changes, but a sign of life every ten seconds.
+Over there, the agent looks at the dates of the agents' directories twice a second ( a `stat` each ),
+and at the whole table every two seconds, sent only when it differs. An agent of an older errand is
+asked again and again, as before.
+
 ## What stays on disk
 
 Under `~/.cache/errand` (or `$ERRAND_CACHE_DIR`), errand keeps only what is live: sockets, locks,

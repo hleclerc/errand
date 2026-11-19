@@ -2,13 +2,18 @@
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
-from .. import discovery, entries as E, results as R, streams
+from .. import discovery, entries as E, results as R, steps, streams
+from . import bottom
+from .render import COLOR, colors_on, forced_colors, recent_lines
 from .style import bad, head
 from .here import run_entries
 from .parsing import shown_params
@@ -52,45 +57,109 @@ def run_in_processes( entries, combos, *, root, out_root, env, tags, how_many, r
     pending = [ ( e, values ) for _, values in combos for e in entries ]
     running, done = [ ], 0
     total = len( pending )
-    print( head( f"\n{'=' * 10} {total} entr{'y' if total == 1 else 'ies'}"
-                 f"  {env.name}  {out_prefix}  -j {how_many} {'=' * 10}" ), flush = True )
+    from .here import drawn
+    drawn().banner( total, env.name, f"{out_prefix}  -j {how_many}" )
 
     def start( e, values ):
         child = dict( os.environ )
         child[ PARAMS ] = json.dumps( values )
         child[ "PYTHONUNBUFFERED" ] = "1"
+        if colors_on( sys.stdout ):
+            child[ COLOR ] = "1"          # its block is shown on this terminal: drawn for it ( ADR 0016 )
+            child.update( forced_colors() )   # and what it runs colors its output, as it would here
         argv = [ sys.executable, "-m", "errand", "run", "--at", at_of( e, root ),
                  "--root", str( root ), "--env", env.name, *flags ]
-        return ( e, values,
-                 subprocess.Popen( argv, cwd = root, env = child, text = True,
-                                   stdout = subprocess.PIPE, stderr = subprocess.STDOUT ) )
+        talk = how_many > 1 and _interactive()
+        proc = subprocess.Popen( argv, cwd = root, env = child, stdin = subprocess.PIPE if talk else subprocess.DEVNULL,
+                                 stdout = subprocess.PIPE, stderr = subprocess.STDOUT )
+        said = [ ]                        # what it wrote, read as it comes: for Focus, then its block
+        last = [ 0.0 ]
+        answered = [ False ]              # a line typed for it ended the line its question left open
+        from .here import drawn
+        gutter = drawn().gutter( False ).encode()
 
-    while pending or running:
-        while pending and len( running ) < how_many:
-            running.append( start( *pending.pop( 0 ) ) )
+        def read():
+            for chunk in iter( lambda: os.read( proc.stdout.fileno(), 65536 ), b"" ):
+                if answered[ 0 ] and gutter and not chunk.startswith( gutter ):
+                    chunk = gutter + chunk        # the child cannot know its line was ended here
+                answered[ 0 ] = False
+                said.append( chunk )
+                last[ 0 ] = time.time()
 
-        e, values, child = running.pop( 0 )
-        output = child.communicate()[ 0 ]
-        done += 1
-        # In completion order, as a block: interleaved lines from several
-        # entries at once are unreadable, and worse, unattributable.
-        sys.stdout.write( output )
-        sys.stdout.flush()
+        def write( data ):
+            said.append( data )           # in its block, as a terminal would have shown it ( ADR 0016 )
+            answered[ 0 ] = data.endswith( b"\n" )
+            try:
+                proc.stdin.write( data )
+                proc.stdin.flush()
+            except ( OSError, ValueError ):
+                pass
 
+        def close():
+            try:
+                proc.stdin.close()
+            except OSError:
+                pass
+
+        reader = threading.Thread( target = read, daemon = True )
+        reader.start()
+        leaf = leaf_of( e, values )
+        journal = leaf / steps.FILE
+        bottom.case_start( proc.pid, e.name,
+                           recent = lambda n: recent_lines( b"".join( said ).decode( errors = "replace" ), n ),
+                           poll = lambda: steps.line( steps.summary( journal ) ) if journal.exists() else None,
+                           write = write if talk else None, close = close if talk else None,
+                           waiting = lambda: bool( said ) and not said[ -1 ].endswith( b"\n" ) and time.time() - last[ 0 ] > 2 )
+        return e, values, proc, reader, said
+
+    def leaf_of( e, values ):
         resolved = E.resolve_params( e.params, values )
-        leaf, _ = R.dirs_for( out_root, e, shown_params( resolved, values ), R.place( env.name ), root )
-        got = yamlish.read( leaf / R.RESULT ) or { }
-        status = got.get( "status" ) or ( "PASS" if child.returncode == 0 else "FAIL" )
-        if status == "SKIP":
-            report.skipped.append( ( e, got.get( "error" ), None ) )
-        elif status != "PASS":
-            why = got.get( "error" ) or streams.ended( child.returncode )
-            if child.returncode and got.get( "duration_s" ) is None:
-                # it died before writing its record ( the keeper of its streams wrote one ): how, and its stderr
-                why = streams.with_tail( f"{streams.ended( child.returncode )}: {why}",
-                                         streams.tail( leaf / R.STDERR ) )
-            report.failed.append( ( e, why ) )
+        return R.dirs_for( out_root, e, shown_params( resolved, values ), R.place( env.name ), root )[ 0 ]
+
+    with bottom.keys() if how_many > 1 else contextlib.nullcontext():
+        while pending or running:
+            while pending and len( running ) < how_many:
+                running.append( start( *pending.pop( 0 ) ) )
+            ended = next( ( r for r in running if r[ 2 ].poll() is not None ), None )
+            if ended is None:
+                time.sleep( 0.05 )
+                continue
+            running.remove( ended )
+            e, values, child, reader, said = ended
+            reader.join()
+            bottom.case_end( child.pid )
+            done += 1
+            # In completion order, as a block: interleaved lines from several
+            # entries at once are unreadable, and worse, unattributable.
+            sys.stdout.write( b"".join( said ).decode( errors = "replace" ) )
+            sys.stdout.flush()
+            _tally( e, values, child, report, leaf_of )
     return report
+
+
+def _tally( e, values, child, report, leaf_of ):
+    """What came of a child, read from its record."""
+    from .. import yamlish
+    leaf = leaf_of( e, values )
+    got = yamlish.read( leaf / R.RESULT ) or { }
+    status = got.get( "status" ) or ( "PASS" if child.returncode == 0 else "FAIL" )
+    if status == "SKIP":
+        report.skipped.append( ( e, got.get( "error" ), None ) )
+    elif status != "PASS":
+        why = got.get( "error" ) or streams.ended( child.returncode )
+        if child.returncode and got.get( "duration_s" ) is None:
+            # it died before writing its record ( the keeper of its streams wrote one ): how, and its stderr
+            why = streams.with_tail( f"{streams.ended( child.returncode )}: {why}",
+                                     streams.tail( leaf / R.STDERR ) )
+        report.failed.append( ( e, why ) )
+    return report
+
+
+def _interactive( ) -> bool:
+    try:
+        return sys.stdin.isatty() and sys.stdout.isatty()
+    except ( AttributeError, ValueError ):
+        return False
 
 
 RUNNER_AT = "runner:"
@@ -100,7 +169,7 @@ def at_of( e, root ) -> str:
     """What a child is told to run: errand's own entry by its call site ( FILE:LINE ), a runner's run
     by the runner and its target ( `runner:NAME:path[::selector]` )."""
     if e.runner is None:
-        return f"{e.file}:{e.line}"
+        return f"{e.file}:{e.at}"
     path = os.path.relpath( e.file, root ) if Path( e.file ).is_absolute() else str( e.file )
     if e.runner.takes_entries:
         path += f"::{e.selector or '*'}"
@@ -117,7 +186,7 @@ def run_one( at, *, root, out_root, env_name, tags, version, report, queued, ask
                                                 runners = config.runners, cwd = root, force = name )
     else:
         path, _, line = at.rpartition( ":" )
-        entries, modules = discovery.select_at( Path( path ), int( line ), root )
+        entries, modules = discovery.select_at( Path( path ), line, root )
     if not entries:
         print( bad( f"no entry at {at}" ) )
         return 1

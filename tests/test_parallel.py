@@ -94,7 +94,8 @@ if test( "an entry's output arrives whole, not interleaved", tags = [ "slow" ] )
         # Both entries print three lines each, slowly, at the same time. If the
         # parent wrote them as they came, they would be shuffled -- and worse,
         # unattributable, since neither line says whose it is.
-        lines = [ l for l in output.splitlines() if re.match( r"^(first|second) \d$", l ) ]
+        lines = [ m.group( 1 ) for l in output.splitlines()          # behind its gutter ( ADR 0016 )
+                  if ( m := re.match( r"^(?:    [│┃] )?((?:first|second) \d)$", l ) ) ]
         assert lines == [ "first 0", "first 1", "first 2",
                           "second 0", "second 1", "second 2" ] or \
                lines == [ "second 0", "second 1", "second 2",
@@ -148,3 +149,25 @@ if p := bench( "alone two" ):
         elapsed = time.perf_counter() - started
         assert code == 0, output
         assert elapsed > 2.5, f"two exclusive benchmarks overlapped ({elapsed:.1f}s)\n{output}"
+
+
+LOOPED = '''
+from errand import test
+
+for n in ( "a", "b" ):
+    if p := test( f"case {n}" ):
+        print( f"body {n}" )
+        p.results[ "n" ] = n
+'''
+
+
+if test( "entries a loop declares on one line run once each, serial or -j", tags = [ "slow" ] ):
+    for jobs in ( "1", "2" ):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = write_project( Path( tmp ) / "proj", "", { "test_looped.py": LOOPED } )
+            code, output = run_errand( project, "run", "--no-queue", "-o", "-j", jobs, "test_looped.py::*" )
+            assert code == 0, output
+            assert output.count( "body a" ) == 1 and output.count( "body b" ) == 1, f"-j {jobs}\n{output}"
+            got = { yamlish.read( p )[ "name" ]: yamlish.read( p )[ "results" ][ "n" ]
+                    for p in ( project / "errand-outputs" / "runs" ).rglob( "result.yaml" ) }
+            assert got == { "case a": "a", "case b": "b" }, f"-j {jobs}: {got}\n{output}"

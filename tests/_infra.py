@@ -143,6 +143,12 @@ def write_project( directory: Path, config: str, files: dict, vendor = False ):
     return directory
 
 
+def case_lines( output: str ) -> list:
+    """The lines of `errand run`'s output, without the gutter it draws before a case's own ( ADR 0016 )."""
+    import re
+    return [ re.sub( r"^ *[│┃] ", "", l ) for l in output.splitlines() ]
+
+
 def run_errand( directory: Path, *args, timeout = 600 ):
     """`errand` as a real subprocess, in `directory`. -> ( returncode, output ).
 
@@ -164,6 +170,8 @@ def run_errand( directory: Path, *args, timeout = 600 ):
     package_root = str( Path( errand.__file__ ).resolve().parent.parent )
     env[ "PYTHONPATH" ] = os.pathsep.join(
         [ package_root, *filter( None, [ env.get( "PYTHONPATH" ) ] ) ] )
+    # No keyboard: a case that reads one gets EOF at once, as off any terminal ( ADR 0016 ), rather than
+    # whatever this suite was given as its own input.
     got = subprocess.run( [ "python3", "-m", "errand", *args ], cwd = directory, env = env,
-                          capture_output = True, text = True, timeout = timeout )
+                          stdin = subprocess.DEVNULL, capture_output = True, text = True, timeout = timeout )
     return got.returncode, got.stdout + got.stderr

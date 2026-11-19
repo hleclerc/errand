@@ -45,6 +45,10 @@ def _main( argv = None ):
     # starts still inherit `-v` and say their commands in their own panes.
     if pre.verbose:
         os.environ[ trace.ENV ] = "1"
+    if getattr( pre, "plain", False ):
+        from . import render, style
+        os.environ[ render.ENV ] = "plain"         # ADR 0016: and for what this command starts here
+        style.plain()
     if split_verb( build_parser(), argv )[ 0 ] != "tui":
         trace.install()
     root = Path( pre.root ).resolve() if pre.root else find_root()
@@ -117,7 +121,8 @@ def _main( argv = None ):
         if unknown:
             print( bad( f"errand {verb}: unknown option {unknown[ 0 ]}" ) )
             return 2
-        wanted = { "forget": 1, "vm": 1, "setup": None, "attach": None, "agents": None, "download": 1 }.get( verb, 0 )
+        wanted = { "forget": 1, "vm": 1, "setup": None, "attach": None, "agents": None, "machines": None,
+                   "download": 1, "web": None }.get( verb, 0 )
         if wanted is not None and len( words ) != wanted:
             print( bad( f"errand {verb}: " + ( f"takes no argument ( got {' '.join( words )} )"
                                                if not wanted else "expects one argument" ) ) )
@@ -133,7 +138,7 @@ def _main( argv = None ):
 
     if verb == "web":
         from .. import web
-        return web.main()
+        return web.main( words )
 
     if verb == "init":
         from .. import detect
@@ -162,6 +167,19 @@ def _main( argv = None ):
             return 1
         return 0
 
+    if verb == "caches":
+        from .. import caches as C
+        where = config.caches( root )
+        found = C.caches_in( where )
+        if not found:
+            print( dim( f"no cache kept by errand's rules in {where}" ) )
+            return 0
+        for name, r in C.purge_all( where, dry_run = known.dry_run ):
+            what = ( f"{len( r[ 'removed' ] )} entries, {C.human( r[ 'freed' ] )} "
+                     f"{'would go' if known.dry_run else 'removed'}" ) if r[ "removed" ] else "nothing to remove"
+            print( f"caches/{name}: {r[ 'entries' ]} entries, {C.human( r[ 'size' ] )} -- {what}" )
+        return 0
+
     if verb == "forget":
         if words[ 0 ] == "finished":
             from .batches import forget_finished
@@ -176,6 +194,10 @@ def _main( argv = None ):
     if verb == "agents":
         from . import standing
         return standing.main( words, force = known.force )
+
+    if verb == "machines":
+        from . import standing
+        return standing.machines_main( words )
 
     if verb == "status":
         from . import standing
@@ -280,8 +302,8 @@ def _main( argv = None ):
                     print( bad( f"  could not prepare {env.name}" ) )
                     rc = 1
                     continue
-            print( dim( f"\n  -> {env.name}  {env.describe()}" ), flush = True )
-            # Driven from here, a session over there doing the work: the report is this side's.
+            # Driven from here, a session over there doing the work: the report is this side's. Where it
+            # goes is its first line ( `place.Place` ).
             rc |= drive.drive( env, tags, verb, known, root = root, out_root = out_root,
                                report = report, pull = known.pull or ( ) )
             continue

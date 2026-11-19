@@ -12,7 +12,7 @@ from pathlib import Path
 from errand import test
 from errand import queue as Q, yamlish
 
-from _infra import run_errand, write_project
+from _infra import run_errand, write_project, case_lines
 
 
 @contextlib.contextmanager
@@ -340,10 +340,10 @@ if test( "--cpus, --ram and -x reach the claim, and the claim's path reaches the
         project = write_project( Path( tmp ) / "p", "", { } )
         rc, out = run_errand( project, "run", "--cpus", "1", "--ram", "1G", sys.executable, "-c", SHOW )
         assert rc == 0, out
-        line = next( l for l in out.splitlines() if l.startswith( "CLAIM" ) )
+        line = next( l for l in case_lines( out ) if l.startswith( "CLAIM" ) )
         assert "cpus: 1" in line and "ram: 1024" in line and "exclusive: false" in line, line
         rc, out = run_errand( project, "run", "-x", sys.executable, "-c", SHOW )
-        assert "exclusive: true" in next( l for l in out.splitlines() if l.startswith( "CLAIM" ) ), out
+        assert "exclusive: true" in next( l for l in case_lines( out ) if l.startswith( "CLAIM" ) ), out
 
 
 if test( "the environment's needs reach the claim, under the command line" ):
@@ -353,7 +353,7 @@ if test( "the environment's needs reach the claim, under the command line" ):
         project = write_project( Path( tmp ) / "p", config, { } )
         rc, out = run_errand( project, "run", "--ram", "1G", sys.executable, "-c", SHOW )
         assert rc == 0, out
-        line = next( l for l in out.splitlines() if l.startswith( "CLAIM" ) )
+        line = next( l for l in case_lines( out ) if l.startswith( "CLAIM" ) )
         assert "cpus: 1" in line and "ram: 1024" in line, line
 
 
@@ -468,7 +468,7 @@ if test( "errand::require grows the claim of a C++ run, and does nothing outside
         assert alone.returncode == 0 and alone.stdout.strip() == "CARDS 0", alone.stdout + alone.stderr
         rc, out = run_errand( project, "run", str( binary ) )
         assert rc == 0, out
-        line = next( l for l in out.splitlines() if l.startswith( "CLAIM" ) )
+        line = next( l for l in case_lines( out ) if l.startswith( "CLAIM" ) )
         assert "required: { ram: 1024.0, cpus: 1.0 }" in line or "required: { cpus: 1.0, ram: 1024.0 }" in line, line
 
 

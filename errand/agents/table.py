@@ -326,9 +326,10 @@ def node_table( d: Path, job: str, node: str, timeout = 60 ) -> dict:
     return _parsed( got ) or { "error": ( got.stderr or got.stdout or "" ).strip()[ -300 : ] or f"exit {got.returncode}" }
 
 
-def scan( guests = True, only: Path | None = None ) -> dict:
+def scan( guests = True, only: Path | None = None, resources = True ) -> dict:
     """What runs on this machine. `only`: the agents under one directory ( an allocation's, read on its
-    node ), and nothing else."""
+    node ), and nothing else. `resources`: what they are doing too ( `resources.measure` ); a subscription
+    measures them at its own pace ( `look.Watch` )."""
     procs = [ ]
     if only is not None:
         dirs = [ only ] if ( only / "lock" ).exists() and ( only / "proc" ).is_dir() else [ ]
@@ -336,7 +337,7 @@ def scan( guests = True, only: Path | None = None ) -> dict:
         for d in dirs:
             procs += procs_of( d, served( d ) )
         return { "host": socket.gethostname(), "time": time.time(), "procs": procs, "vms": [ ], "guests": [ ],
-                 "nodes": [ ], "zygotes": zygotes( dirs ) }
+                 "nodes": [ ], "zygotes": zygotes( dirs ), "resources": _resources() if resources else None }
     cache = bootstrap.local_cache()
     held = allocations( cache )
     elsewhere = { d for d, _, _ in held }
@@ -352,7 +353,16 @@ def scan( guests = True, only: Path | None = None ) -> dict:
                 asked.append( { "vm": vm[ "name" ], **guest_table( vm ) } )
     nodes = [ { "node": node, "job": job, **node_table( d, job, node ) } for d, job, node in held ]
     return { "host": socket.gethostname(), "time": time.time(), "procs": procs, "vms": machines, "guests": asked,
-             "nodes": nodes, "zygotes": zygotes( dirs ) }
+             "nodes": nodes, "zygotes": zygotes( dirs ), "resources": _resources() if resources else None }
+
+
+def _resources( ) -> dict | None:
+    """What the machine's resources are doing ( `resources` ): never the table's failure."""
+    try:
+        from . import resources
+        return resources.measure()
+    except Exception:
+        return None
 
 
 def main() -> int:

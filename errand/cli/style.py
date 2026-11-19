@@ -12,7 +12,13 @@ from pathlib import Path
 BOLD, DIM, GREEN, RED, YELLOW, CYAN, RESET = (
     "\033[1m", "\033[2m", "\033[32m", "\033[31m", "\033[33m", "\033[36m", "\033[0m" )
 
-if not sys.stdout.isatty() or os.environ.get( "NO_COLOR" ):
+if not sys.stdout.isatty() or os.environ.get( "NO_COLOR" ) or os.environ.get( "ERRAND_OUTPUT" ) == "plain":
+    BOLD = DIM = GREEN = RED = YELLOW = CYAN = RESET = ""
+
+
+def plain( ):
+    """No colors from here on ( `--plain` )."""
+    global BOLD, DIM, GREEN, RED, YELLOW, CYAN, RESET
     BOLD = DIM = GREEN = RED = YELLOW = CYAN = RESET = ""
 
 
@@ -37,7 +43,11 @@ class Tee:
             st.flush()
 
     def isatty( self ):
-        return False
+        # As the stream it shows on: a library that asks ( colors, a progress bar ) sees the terminal.
+        try:
+            return self._streams[ 0 ].isatty()
+        except Exception:
+            return False
 
 
 @contextlib.contextmanager

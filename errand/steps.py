@@ -8,6 +8,7 @@ Every call is a dated event, one JSON line of the run's journal, `$ERRAND_STEPS`
 
     {"t": 1763220000.12, "text": "iteration 41", "done": 0.41, "residual": 3e-07}
     {"t": 1763220001.40, "view": "convergence.html"}
+    {"t": 1763220002.10, "transfer": "pull", "s": 0.01, "files": 12, "bytes": 4145, ...}   errand's ( ADR 0016 )
 
 A view is also said where it opens, `OUTPUT: file://...`: by the run itself when nobody drives it,
 else by the side that drives it, once the file is brought back there ( `cli.views` ).
@@ -39,6 +40,7 @@ RATE   = 0.1               # seconds between two writes, at least
 EDGE   = 1 << 16           # bytes read at each end of a journal for a summary
 POINTS = 60                # points of a curve kept in a summary
 KEYS   = ( "t", "text", "done", "view", "title", "want" )   # what is not a curve ( `want`: `downloads` )
+# An event with `transfer` is errand's ( ADR 0016 ): a push or a pull, its numbers; never a curve.
 
 # The same calls in POSIX sh. The first argument is the text unless it reads `name=value`.
 SHELL_STEPS = r'''
@@ -222,6 +224,8 @@ def summary( path ) -> dict | None:
 
 
 def summarize( events: list ) -> dict | None:
+    # What crossed to get the run there and back ( `transfer`, ADR 0016 ) is errand's, not the run's steps.
+    events = [ e for e in events if "transfer" not in e ]
     if not events:
         return None
     out = { "t": events[ -1 ].get( "t" ), "first": events[ 0 ].get( "t" ), "text": None, "done": None,

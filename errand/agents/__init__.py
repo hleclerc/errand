@@ -45,11 +45,14 @@ def mode( ) -> str:
 
 
 
-def open( target: dict ) -> Connection:
-    """A connection to the agent `target` names: reused while it lives."""
+def open( target: dict, noted = True ) -> Connection:
+    """A connection to the agent `target` names: reused while it lives. `noted`: the machine is one work
+    is sent to, kept in the ledger ( `errand status` asks it from now on ); False for a connection that
+    only looks or stops ( `errand agents`, the screen ): looking at a machine must not keep it there."""
     key = U.identity( target )
     from . import ledger
-    ledger.note( target )             # a machine `errand status` asks from now on
+    if noted:
+        ledger.note( target )
     with _lock:
         conn = _open.get( key )
         if conn is None or not conn.alive:

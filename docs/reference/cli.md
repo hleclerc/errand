@@ -24,6 +24,7 @@ target is the target's: `errand --env gpu run t.py` and `errand run --env gpu t.
 | verb | |
 |---|---|
 | `status [--all]` | what runs on this machine and every machine work was sent to, what waits, what is kept warm, then the `--batch` work — [What is running](/guide/status) |
+| `machines [forget NAME...]` | the machines `errand status` and `errand tui` ask, and forgetting one: not asked any more until work is sent there again — [Status](/guide/status#the-machines-asked) |
 | `agents [stop [NAME]]` | the hub and its agents, and stopping them; `--force` even with something running — [Agents](/guide/agents#listing-and-stopping-agents) |
 | `vm stop` | stop the [Windows VMs](/guide/layers/windows) kept warm, here and over every `Ssh` |
 | `queue` | what this machine has, and what holds it — [Sharing a machine](/guide/machine) |
@@ -43,6 +44,7 @@ target is the target's: `errand --env gpu run t.py` and `errand run --env gpu t.
 | verb | |
 |---|---|
 | `download URL [--sha256 H]` | a file into the project's cache, as [`errand.download`](/reference/python-api#download) does; prints its path. The next push carries it |
+| `caches [--dry-run]` | the caches of `$ERRAND_CACHES` here that keep the `errand-cache/1` format: what each holds, and what no longer serves removed ( [ADR 0020](/adr/0020-a-library-cache-says-what-it-holds) ) |
 | `require [--gpus N] [--gpu-ram S] [--ram S] [--cpus N] [-x] [--extra]` | inside a run: grows its claim ( to that much in all; `--extra`: that much more than it was started with ), as [`errand.require`](/reference/python-api#require) does, waits, then prints what to set ( `CUDA_VISIBLE_DEVICES=1` ). Nothing outside errand; exit 75 when stopped to run again |
 
 **Suites**
@@ -95,6 +97,7 @@ target, `run` runs `errand.default_run`, the targets the project declares in `er
 | `--grid SEP` | several values, split on SEP, make a [matrix](/guide/matrices) — of environments, tags and declared parameters: `--grid=+ --env a+b t.py::x --n=1+2` is four runs. Without it a value is one value, commas included. `run`, `list`, `setup`, `shell` |
 | `--batch` | launch and give the shell back — [detached](/guide/detached) |
 | `-o` | an output directory of its own for each run — the run's directory under `errand-outputs/runs/` — exported as `$ERRAND_OUT_DIR`, and what it holds brought back |
+| `--plain` | the output as the programs wrote it: no gutter before their lines, no colors. `$ERRAND_OUTPUT` says the same for a machine: `bar` ( the default: │ before stdout, ┃ before stderr ), `spaces`, `off`, `plain`; `errand.configure( output = … )` for a project |
 | `--out PATTERN` | the same under another tree, or a pattern: `"results/{env}/{when}"`, with `{path}` `{name}` `{when}` `{place}` `{env}` `{params}`; `{params:a,b}` keeps only those parameters, in that order ( a hash of all of them on the end when some are left out ) |
 | `--no-setup` | skip the freshness check for this run |
 | `--no-queue` | this run does not wait, and does not hold |
@@ -110,7 +113,7 @@ target, `run` runs `errand.default_run`, the targets the project declares in `er
 | `-n`, `--label NAME` | its name in `errand queue` |
 | `-l`, `--log FILE` | its output goes there too |
 | `-q` | no banners |
-| `--at FILE:LINE` | run exactly the entry at that call site. This is how errand's own child processes are started; you never type it |
+| `--at FILE:LINE` | run exactly the entry at that call site ( `FILE:LINE#N`: the entry of rank N on a line that declares several ). This is how errand's own child processes are started; you never type it |
 
 Every run is recorded in `errand-outputs/runs/…`, with or without `-o`; `status`, `attach` and
 `--batch` read it there. `-o` and `--out` only give the run a directory to write its own
@@ -161,6 +164,7 @@ errand run -o --env gpu train.py --epochs 3
 errand run --batch --env cluster --pull out python train.py
 errand status --all
 errand agents stop cluster
+errand machines forget old-box
 errand run --grid=, --env gpu,cluster ./bench
 errand setup --dry-run
 errand queue

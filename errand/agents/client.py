@@ -182,12 +182,14 @@ def shell( conn: Connection, line: str, *, cwd = None, quiet = False, capture = 
                                         decode( out ) if capture else None, decode( err ) if capture else None )
 
 
-def start( conn: Connection, argv, *, cwd = None, env = None, store = None ) -> str:
+def start( conn: Connection, argv, *, cwd = None, env = None, store = None, keep_input = False ) -> str:
     """A process that outlives this connection: -> its id, to `attach` to later, from anywhere.
-    Its output is kept in `store` over there ( the project's ), not in the agent's directory."""
+    Its output is kept in `store` over there ( the project's ), not in the agent's directory. Its input is
+    closed at once, unless `keep_input`: somebody will write to it through `attach`'s channel, and close it."""
     call = conn.open( { "op": "spawn", "argv": list( argv ), "cwd": cwd, "env": env, "keep": True, "store": store } )
     pid = call.reply()[ "id" ]
-    call.send( F.EOF )
+    if not keep_input:
+        call.send( F.EOF )
     call.close()
     return pid
 

@@ -54,6 +54,31 @@ Slurm. Its rows show as `login > node`.
 Typed on a machine that runs work (a lab server, say), `errand status` shows everything its agents
 run, whoever started it and from wherever.
 
+### The machines asked
+
+The machines are those work was sent to from here: errand keeps them, and forgets one after two
+weeks without work sent there. Looking at a machine ( `errand status`, `errand tui` ) does not keep it.
+
+```bash
+errand machines                       # which, most recently used first
+errand machines forget h              # not asked any more, until work is sent there again
+errand machines rename cinaps lab     # shown as `lab`, whatever name reaches it
+errand machines watch jz off          # never contacted ( on: always; auto: while work is sent there )
+```
+
+A machine reached under several names ( `cinaps` and `hugo.leclerc@cinaps` ) is one: the same ssh
+name but for the user, the same label, or the same hostname answered. It shows its oldest name, or
+the label it was given.
+
+A machine no work was sent to for a day is **dormant**: neither `errand status` nor `errand tui`
+contacts it, so that no agent of errand's starts for nothing on a machine others share ( a cluster's
+login node ). `errand status` names it; `errand tui` shows it greyed. `a` on a machine in `errand tui`
+switches watching it on or off, and it is saved: the next screen and `errand status` do the same.
+Sending work to a machine switched off watches it again.
+
+In `errand tui`: `f` forgets the machine under the cursor, `r` names it, `k` kills what runs there,
+each once confirmed. Forgetting a machine stops nothing over there: `k`, or `errand agents stop`, does.
+
 ## Stopping work
 
 | what | how |

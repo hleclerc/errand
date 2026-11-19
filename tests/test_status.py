@@ -24,6 +24,19 @@ def scratch( ):
         shutil.rmtree( d, ignore_errors = True )
 
 
+@contextlib.contextmanager
+def patched( owner, **values ):
+    """`owner.name = value` for each, for the block only."""
+    kept = { k: getattr( owner, k ) for k in values }
+    for k, v in values.items():
+        setattr( owner, k, v )
+    try:
+        yield
+    finally:
+        for k, v in kept.items():
+            setattr( owner, k, v )
+
+
 def gone( pid, within = 10 ):
     deadline = time.monotonic() + within
     while time.monotonic() < deadline:
@@ -144,9 +157,9 @@ if test( "status: this project in full, one line per other one, --all expands; t
                                    row( "/h/guitar", "running", "cccccccc3" ) ],
             "vms": [ { "name": "80103674ede5f052-9a5c1a75", "state": "ready", "cpus": 2, "ram": "4G" } ],
             "guests": [ { "vm": "80103674ede5f052-9a5c1a75", "procs": [ row( "C:/errand/sdot", "running", "dddddddd4" ) ] } ] }
-    S.tables = lambda: [ ( "mac", here, None ), ( "lmo", lmo, None ), ( "n22", None, "ssh: connect timed out" ) ]
+    tables = lambda: [ ( "mac", here, None ), ( "lmo", lmo, None ), ( "n22", None, "ssh: connect timed out" ) ]
     out = io.StringIO()
-    with contextlib.redirect_stdout( out ):
+    with patched( S, tables = tables ), contextlib.redirect_stdout( out ):
         assert S.show_running( Path( "/x/sdot" ) ) == 5
     said = out.getvalue()
     for want in ( "aaaaaaaa", "bbbbbbbb", "orphaned", "lmo > windows 80103674", "dddddddd", "guitar:",
@@ -154,7 +167,7 @@ if test( "status: this project in full, one line per other one, --all expands; t
         assert want in said, f"{want!r} not in:\n{said}"
     assert "cccccccc" not in said, "another project was shown in full without --all"
     out = io.StringIO()
-    with contextlib.redirect_stdout( out ):
+    with patched( S, tables = tables ), contextlib.redirect_stdout( out ):
         S.show_running( Path( "/x/sdot" ), everything = True )
     assert "cccccccc" in out.getvalue() and "kill -- -4242" in out.getvalue(), out.getvalue()
 
@@ -244,11 +257,12 @@ if test( "an allocation's agents are read on its node, not from the login node; 
         only = T.scan( guests = False, only = job )
         assert only[ "vms" ] == [ ] and only[ "nodes" ] == [ ]
         asked = [ ]
-        T.allocations = lambda cache: [ ( job, "81234", "r1i0n3" ) ]
-        T.node_table = lambda d, j, n: asked.append( ( d, j, n ) ) or { "procs": [ ] }
-        T.roots = lambda: [ base ]
-        T.bootstrap.local_cache = lambda: base
-        got = T.scan( guests = False )
+        # Put back whatever happens: the suite runs in one process, and every test after this one would
+        # find errand's cache in this scratch directory ( the screen's, the web's, the vms' tests did ).
+        with patched( T, allocations = lambda cache: [ ( job, "81234", "r1i0n3" ) ],
+                      node_table = lambda d, j, n: asked.append( ( d, j, n ) ) or { "procs": [ ] },
+                      roots = lambda: [ base ] ), patched( T.bootstrap, local_cache = lambda: base ):
+            got = T.scan( guests = False )
         assert asked == [ ( job, "81234", "r1i0n3" ) ] and got[ "nodes" ][ 0 ][ "node" ] == "r1i0n3", got
     now = time.time()
     row = lambda i, **kw: { "agent": "a", "id": i, "pid": 1, "started": now - 60, "keep": False, "state": "running",
@@ -371,3 +385,123 @@ if test( "what a process of an agent is at is read by table, and shown by status
             agents.client.stop( agents.attach( conn, pid ) )
             conn.close()
             agents._open.clear()
+
+
+if test( "a machine forgotten is not asked any more, until work is sent there again: errand machines forget" ):
+    from errand.agents import ledger
+    from _infra import run_errand, write_project
+    with scratch() as base:
+        kept = os.environ.get( "ERRAND_CACHE_DIR" )
+        os.environ[ "ERRAND_CACHE_DIR" ] = str( base )
+        try:
+            for host in ( "lmo", "h" ):
+                ledger.note( { "kind": "ssh", "host": host, "options": [ ], "python": "python3", "keep_alive": 900 } )
+            assert sorted( m[ "name" ] for m in ledger.machines() ) == [ "h", "lmo" ]
+            assert ledger.forget( "nowhere" ) == [ ]
+            project = write_project( base / "proj", "", { } )
+            code, out = run_errand( project, "machines" )
+            assert code == 0 and "h " in out and "lmo" in out, out
+            code, out = run_errand( project, "machines", "forget", "h", "nowhere" )
+            assert code == 1 and "h: forgotten" in out and "nowhere: no such machine" in out, out
+            assert [ m[ "name" ] for m in ledger.machines() ] == [ "lmo" ]
+            ledger.note( { "kind": "ssh", "host": "h", "options": [ ], "python": "python3", "keep_alive": 900 } )
+            assert "h" in [ m[ "name" ] for m in ledger.machines() ], "work sent there again: asked again"
+        finally:
+            if kept is None:
+                os.environ.pop( "ERRAND_CACHE_DIR", None )
+            else:
+                os.environ[ "ERRAND_CACHE_DIR" ] = kept
+
+
+if test( "a watcher subscribed is told what changes as it changes: a process that starts, that ends; no asking again" ):
+    from errand import agents
+    from errand.agents import frames as F
+    from errand.tui.machines import Machine
+    os.environ[ "ERRAND_AGENT" ] = "direct"
+    agents._open.clear()
+    with scratch() as base:
+        kept = os.environ.get( "ERRAND_CACHE_DIR" )
+        os.environ[ "ERRAND_CACHE_DIR" ] = str( base )         # the agent's machine: this scratch directory
+        target = { "kind": "local", "dir": str( base / "agents" / "w" ), "keep_alive": 10 }
+        try:
+            conn = agents.open( target )
+            call = conn.open( { "op": "watch", "limit": 10 } )
+            assert call.reply( 10 ).get( "ok" )
+
+            def next_table( within ):
+                deadline = time.monotonic() + within
+                while time.monotonic() < deadline:
+                    try:
+                        kind, payload = call.next( timeout = max( 0.05, deadline - time.monotonic() ) )
+                    except TimeoutError:
+                        break
+                    e = json.loads( payload ) if kind == F.OUT else { }
+                    if "table" in e:
+                        return e[ "table" ]
+                return None
+
+            first = next_table( 10 )
+            assert first is not None and first[ "procs" ] == [ ] and "resources" in first, first
+            started = time.monotonic()
+            pid = agents.start( conn, [ "sh", "-c", "exec sleep 60" ] )
+            got = next_table( 5 )
+            took = time.monotonic() - started
+            assert got and [ p[ "state" ] for p in got[ "procs" ] ] == [ "running" ], got
+            assert took < 1.5, f"told {took:.2f} s after it started: not as it changed"
+            pgid = got[ "procs" ][ 0 ][ "pgid" ]
+            os.killpg( pgid, signal.SIGKILL )
+            got = next_table( 5 )
+            assert got is not None and got[ "procs" ] == [ ], got
+            call.close()
+
+            m = Machine( "w", target )                          # the screen's way: subscribed
+            m.watch()
+            deadline = time.monotonic() + 10
+            while m.table is None and time.monotonic() < deadline:
+                time.sleep( 0.05 )
+            assert m.table is not None and m.error is None and m.table[ "procs" ] == [ ], ( m.table, m.error )
+            agents.start( conn, [ "sh", "-c", "exec sleep 60" ] )
+            deadline = time.monotonic() + 5
+            while not m.table[ "procs" ] and time.monotonic() < deadline:
+                time.sleep( 0.05 )
+            assert m.table[ "procs" ], "the screen was not told"
+            for p in m.table[ "procs" ]:
+                os.killpg( p[ "pgid" ], signal.SIGKILL )
+            m.stopped = True
+        finally:
+            if kept is None:
+                os.environ.pop( "ERRAND_CACHE_DIR", None )
+            else:
+                os.environ[ "ERRAND_CACHE_DIR" ] = kept
+            try:
+                conn.close()
+            except Exception:
+                pass
+            agents._open.clear()
+
+
+if test( "one machine whatever names reach it; named once for all; a machine without work for a day is left alone" ):
+    from errand.agents import ledger
+    with scratch() as base:
+        kept = os.environ.get( "ERRAND_CACHE_DIR" )
+        os.environ[ "ERRAND_CACHE_DIR" ] = str( base )
+        try:
+            note = lambda host: ledger.note( { "kind": "ssh", "host": host, "options": [ ], "python": "python3", "keep_alive": 900 } )
+            for host in ( "hugo.leclerc@cinaps", "cinaps", "urg11uj@jz", "lmo", "n22", "node22" ):
+                note( host )
+                time.sleep( 0.01 )
+            ledger.learn( "n22", "node22.lab" )
+            ledger.learn( "node22", "node22.lab" )                     # two names that answered alike
+            got = { tuple( g[ "names" ] ): g[ "name" ] for g in ledger.groups() }
+            assert got == { ( "cinaps", "hugo.leclerc@cinaps" ): "hugo.leclerc@cinaps", ( "urg11uj@jz", ): "urg11uj@jz",
+                             ( "lmo", ): "lmo", ( "n22", "node22" ): "n22" }, got        # the oldest name shows
+            assert ledger.rename( "cinaps", "the lab" ) == [ "cinaps", "hugo.leclerc@cinaps" ]
+            assert [ g[ "name" ] for g in ledger.groups() if "cinaps" in g[ "names" ] ] == [ "the lab" ]
+            assert sorted( ledger.forget( "the lab" ) ) == [ "cinaps", "hugo.leclerc@cinaps" ], "forgotten whole"
+            assert not ledger.dormant( ledger.groups()[ 0 ] )
+            assert ledger.dormant( { "last": time.time() - ledger.DORMANT - 1 } )
+        finally:
+            if kept is None:
+                os.environ.pop( "ERRAND_CACHE_DIR", None )
+            else:
+                os.environ[ "ERRAND_CACHE_DIR" ] = kept

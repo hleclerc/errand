@@ -142,9 +142,6 @@ def prepare_here( env, tags, verb, known, *, root, out_root, report ):
     if len( combos ) > 1 and not from_plan:
         print( dim( f"  {describe_grid( combos )}" ), flush = True )
 
-    if phase == "prepare":
-        print( dim( f"  prepared {len( selected )} entr{'y' if len( selected ) == 1 else 'ies'} "
-                    f"in {env.name}: {_short( where, root )}" ), flush = True )
     return 0, Prepared( selected = selected, modules = modules, selectors = selectors, combos = combos,
                         plan = plan, how_many = how_many, phase = phase )
 

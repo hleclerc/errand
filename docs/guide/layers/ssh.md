@@ -22,11 +22,15 @@ errand run --env box -o python train.py
 ```
 
 ```text
-  -> box  ssh:gpu-box -> apptainer:cuda.sif
-  sync push -> gpu-box:/home/me/proj
-  ...
-  sync pull  <- gpu-box:/home/me/proj [errand-outputs/runs/train.py/…]
+box · 1 entry  box@gpu-box
+▸ python  python · args=train.py
+  │ epoch 1  loss 0.41
+PASS python  12 min 03 s
 ```
+
+The push before and the pull after are said at the bottom of the terminal while they last
+( `↑ sync push → gpu-box:/home/me/proj · 3 s` ), then gone: what they came to — files, bytes,
+seconds — is in the run's journal, `steps.jsonl` ( [Results and records](../output#on-the-terminal) ).
 
 It **must be the first layer**: `errand.Env()` refuses a stack where it is not.
 

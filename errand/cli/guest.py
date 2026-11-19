@@ -193,8 +193,10 @@ class Guest:
         from ..agents import syncop
         target = Path( self.where.root ) / path
         target.parent.mkdir( parents = True, exist_ok = True )
-        syncop.pull( self.host_conn(), self.there, self.where.root, [ Path( path ).as_posix() ],
-                     where = "windows", say = self.echo )
+        for _ in range( 3 ):                    # rewritten while read, twice: read again
+            if not syncop.pull( self.host_conn(), self.there, self.where.root, [ Path( path ).as_posix() ],
+                                where = "windows", say = self.echo ).unstable:
+                break
         if not target.is_file():
             raise FileNotFoundError( f"windows:{self.there}/{path}" )
 

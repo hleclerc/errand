@@ -1,8 +1,9 @@
 """A run's raw streams: what its process writes to its descriptors 1 and 2, kept in its directory as
 `stdout.txt` and `stderr.txt` -- the C library's writes, a child's, a fault handler's included.
 
-`output.txt` is what Python printed, interleaved, as it was shown. These two are the streams as the
-operating system saw them, apart: what is left to read when the process died without a word of
+`output.txt` is both of them, interleaved as they came, whoever wrote them ( ADR 0016 ): the keeper
+writes it, and Python only where there is no keeper. These two are the streams as the operating system
+saw them, apart: what is left to read when the process died without a word of
 Python ( a segfault in an extension, an abort ), and the only place a child's stderr is not mixed
 with everything else.
 
@@ -46,20 +47,37 @@ def _redirectable( ) -> bool:
         return False
 
 
+def _on_terminals( ) -> bool:
+    """Both descriptors a terminal, on POSIX: the keeper can take them through pseudo-terminals, and
+    what runs still sees a terminal ( colors, progress bars )."""
+    if os.name != "posix":
+        return False
+    try:
+        return os.isatty( 1 ) and os.isatty( 2 )
+    except OSError:
+        return False
+
+
 @contextlib.contextmanager
-def raw( leaf: Path, crashed: str | None = None ):
+def raw( leaf: Path, crashed: str | None = None, shows = None ):
     """`stdout.txt` and `stderr.txt` in `leaf` for what runs inside. `crashed`: the record to write
-    in `leaf` if the process ends before leaving this block ( its `result.yaml`, rendered )."""
+    in `leaf` if the process ends before leaving this block ( its `result.yaml`, rendered ). `shows`: what
+    draws the case here ( `render.Renderer`, ADR 0016 ): what is passed on to the terminal goes behind
+    its gutter, never what the files keep."""
     leaf = Path( leaf )
     _fault_handler()
-    keeper = _start( leaf, crashed ) if _redirectable() else None
+    keeper = None
+    if _redirectable():
+        keeper = _start( leaf, crashed, shows )
+    elif shows is not None and _on_terminals():
+        keeper = _start( leaf, crashed, shows, terminals = True )
     if keeper is None:
-        with _python_level( leaf ):
-            yield
+        with _python_level( leaf, shows ):
+            yield False                     # `output.txt` is Python's to write ( `style.capture` )
         return
     proc, ctrl, saved = keeper
     try:
-        yield
+        yield True                          # the keeper writes `output.txt`: both streams, whoever wrote them
     finally:
         _flush()
         for fd, old in zip( ( 1, 2 ), saved ):
@@ -88,18 +106,45 @@ def _fault_handler( ):
         pass                               # no descriptor to write to: nothing to say it with
 
 
-def _start( leaf: Path, crashed ):
-    """The keeper started, and descriptors 1 and 2 handed to it. -> ( process, control fd, saved fds ),
-    or None when it cannot be: the run goes on without."""
+def _terminal_pair( like: int, narrower: int ):
+    """A pseudo-terminal as wide as the terminal `like` is, less the gutter, that changes no byte
+    ( no `\r` added before `\n` ). -> ( the keeper's end, the run's end )."""
+    import fcntl
+    import struct
+    import termios
+    master, slave = os.openpty()
     try:
-        r_out, w_out = os.pipe()
-        r_err, w_err = os.pipe()
+        attrs = termios.tcgetattr( slave )
+        attrs[ 1 ] &= ~termios.OPOST
+        termios.tcsetattr( slave, termios.TCSANOW, attrs )
+        rows, cols, x, y = struct.unpack( "HHHH", fcntl.ioctl( like, termios.TIOCGWINSZ, b"\0" * 8 ) )
+        fcntl.ioctl( slave, termios.TIOCSWINSZ, struct.pack( "HHHH", rows, max( 20, cols - narrower ), x, y ) )
+    except OSError:
+        pass                                 # a size it cannot tell: the default one
+    return master, slave
+
+
+def _start( leaf: Path, crashed, shows = None, terminals = False ):
+    """The keeper started, and descriptors 1 and 2 handed to it -- through pipes, or `terminals`: two
+    pseudo-terminals, for a run drawn on a terminal here. -> ( process, control fd, saved fds ), or None
+    when it cannot be: the run goes on without."""
+    try:
+        if terminals:
+            import re
+            narrower = len( re.sub( r"\x1b\[[0-9;]*m", "", shows.gutter( False ) ) )
+            r_out, w_out = _terminal_pair( 1, narrower )
+            r_err, w_err = _terminal_pair( 2, narrower )
+        else:
+            r_out, w_out = os.pipe()
+            r_err, w_err = os.pipe()
         r_ctl, w_ctl = os.pipe()
     except OSError:
         return None
     try:
         proc = subprocess.Popen( [ sys.executable, "-S", "-E", str( KEEPER ), str( r_out ), str( r_err ),
-                                   str( leaf / R.STDOUT ), str( leaf / R.STDERR ), str( leaf / R.RESULT ) ],
+                                   str( leaf / R.STDOUT ), str( leaf / R.STDERR ), str( leaf / R.RESULT ),
+                                   str( leaf / R.OUTPUT ),
+                                   *( [ shows.gutter( False ), shows.gutter( True ) ] if shows is not None else [ ] ) ],
                                  # a Ctrl-C to the group leaves it copying to the end: it ignores SIGINT
                                  stdin = r_ctl, pass_fds = ( r_out, r_err ), close_fds = True )
     except OSError:
@@ -122,16 +167,20 @@ def _start( leaf: Path, crashed ):
 
 
 class _Copy:
-    """A stream that also writes to a file: where descriptors stay as they are."""
+    """A stream that also writes to a file: where descriptors stay as they are. `shows`: the terminal's
+    copy goes behind its gutter ( ADR 0016 )."""
 
-    def __init__( self, stream, f ):
-        self._stream, self._f = stream, f
+    def __init__( self, stream, f, shows = None, err = False ):
+        self._stream, self._f, self._shows, self._err = stream, f, shows, err
 
     def write( self, s ):
         try:
             self._f.write( s )
         except Exception:
             pass
+        if self._shows is not None:
+            self._shows.write( s, err = self._err )
+            return len( s )
         return self._stream.write( s )
 
     def flush( self ):
@@ -146,7 +195,7 @@ class _Copy:
 
 
 @contextlib.contextmanager
-def _python_level( leaf: Path ):
+def _python_level( leaf: Path, shows = None ):
     files = [ ]
     try:
         files = [ open( leaf / R.STDOUT, "w", buffering = 1, errors = "replace" ),
@@ -157,7 +206,9 @@ def _python_level( leaf: Path ):
         yield
         return
     old = sys.stdout, sys.stderr
-    sys.stdout, sys.stderr = _Copy( old[ 0 ], files[ 0 ] ), _Copy( old[ 1 ], files[ 1 ] )
+    if shows is not None:
+        shows.out_.stream, shows.err_.stream = old
+    sys.stdout, sys.stderr = _Copy( old[ 0 ], files[ 0 ], shows ), _Copy( old[ 1 ], files[ 1 ], shows, True )
     try:
         yield
     finally:

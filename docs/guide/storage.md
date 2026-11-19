@@ -21,6 +21,7 @@ errand-outputs/
   runs/       the record of every run
   builds/     what errand built: the Windows images, the records of what was set up
   state/      errand's bookkeeping: plans, history, the output kept for `errand attach`
+  caches/     the caches of the libraries the runs use, one directory each ( $ERRAND_CACHES )
 ```
 
 What each holds is in [Results and records](./output).
@@ -122,6 +123,30 @@ export APPTAINER_CACHEDIR=/scratch/me/cache/apptainer
 ```
 
 For apptainer builds, [`Apptainer( scratch = … )`](./layers/containers) does that for you.
+
+## A library's caches: `$ERRAND_CACHES`
+
+Every run gets `ERRAND_CACHES`, the absolute path of `errand-outputs/caches/` on the machine it runs
+on. A library that keeps a cache ( compiled kernels, say ) puts it in a directory named after itself,
+`$ERRAND_CACHES/<name>`, and uses its own default when the variable is not set -- a run by hand.
+An explicit setting of the library wins over both: loom reads `LOOM_CACHE_DIR`, then
+`$ERRAND_CACHES/loom`, then `~/.cache/loom`. Each machine keeps its own; nothing there is synced.
+
+A cache that keeps the format `errand-cache/1` at its root ( `errand-cache.json`, and a journal per process ) is
+tidied by errand: the first run of a command, at most once a day, removes the entries a dependency of which changed or
+went, then the shared ones nothing left needs ( ADR 0020 ). `errand caches` does it at once and says what each cache
+holds; `--dry-run` only says it. A cache without the format is never touched.
+
+## A directory tagged as a cache
+
+A directory that holds a [`CACHEDIR.TAG`](https://bford.info/cachedir/) ( first line
+`Signature: 8a477f597d28d172789f06886806bc55` ) is a zone wherever it is, on either side: never sent,
+never removed, never reported as a change, as a `build` zone. pytest, cargo and ruff write that tag;
+loom writes it in a package's catalogue and in its caches. A library that writes a directory inside
+the project, at run time, tags it, and errand leaves it alone without being told.
+
+A directory that a run made, that the project does not have, and that is not tagged nor in a zone, is
+not errand's to remove: a push says it once, with what it holds, and then leaves it ( ADR 0019 ).
 
 ## A small home, in short
 

@@ -18,7 +18,7 @@ from pathlib import Path
 VERBS = {
     "run"   : ( "run a file, a command or entries, in one or several environments",
                 [ "runner", "entry_tags", "jobs", "no_queue", "no_setup", "batch", "keep_out",
-                  "out", "grid", "pull", "exclusive", "cpus", "ram", "gpus", "gpu_ram", "ranks", "time", "mem", "label", "quiet", "log",
+                  "out", "plain", "grid", "pull", "exclusive", "cpus", "ram", "gpus", "gpu_ram", "ranks", "time", "mem", "label", "quiet", "log",
                   "at" ] ),
     "list"  : ( "what a target designates, with its parameters",
                 [ "runner", "entry_tags", "grid", "no_setup" ] ),
@@ -27,7 +27,7 @@ VERBS = {
     "setup" : ( "build or update environments now, and nothing else", [ "grid", "force", "dry_run" ] ),
     "init"  : ( "write a starting errand-envs.py, and suggest runners for what is here", [ "force" ] ),
     "tui"   : ( "the screen: what runs where, for whom, since when, and what waits", [ ] ),
-    "web"   : ( "the same, as a page in the browser ( served by this machine's agent )", [ ] ),
+    "web"   : ( "the same, as a page in the browser ( served by this machine's agent ): errand web [token]", [ ] ),
     "queue" : ( "what this machine has, and what is holding it", [ ] ),
     "wait"  : ( "wait until nothing holds the machine", [ ] ),
     "status": ( "what runs on every machine work was sent to, then how the --batch work is going", [ "all" ] ),
@@ -36,7 +36,10 @@ VERBS = {
     "attach": ( "follow again what a command left running ( a lost connection ), and bring it back", [ ] ),
     "vm"    : ( "the virtual machines kept warm between commands: errand vm stop", [ ] ),
     "agents": ( "what is kept between commands: errand agents [stop [NAME]]", [ "force" ] ),
+    "machines": ( "the machines errand asks what runs there: errand machines [forget NAME...]", [ ] ),
     "download": ( "a file into the project's cache, as errand.download does: errand download URL", [ "sha256" ] ),
+    "caches": ( "the caches of the libraries the runs use here ( $ERRAND_CACHES ), and what they no longer need, removed",
+                [ "dry_run" ] ),
     "require": ( "inside a run: grow its claim, as errand.require does, then print what to set ( ADR 0014 )",
                  [ "exclusive", "cpus", "ram", "gpus", "gpu_ram" ] ),
 }
@@ -72,6 +75,8 @@ def build_parser( tag_names = ( ) ):
     p.add_argument( "--batch", action = "store_true", help = "launch it and give the shell back" )
     p.add_argument( "-o", dest = "keep_out", action = "store_true",
                     help = "an output directory for each run, brought back: errand-outputs/runs/… ( $ERRAND_OUT_DIR )" )
+    p.add_argument( "--plain", action = "store_true",
+                    help = "the output as it is: no gutter, no colors ( $ERRAND_OUTPUT: bar, spaces, off, plain )" )
     p.add_argument( "--out", default = None, metavar = "PATTERN",
                     help = "the same, under another tree, or as a pattern: "
                            "\"results/{env}/{when}\" ( {path} {name} {when} {place} {env} {params} ); "
@@ -110,7 +115,7 @@ def build_parser( tag_names = ( ) ):
     # setup, init
     p.add_argument( "--force", action = "store_true",
                     help = "setup: from scratch; init: replace what is there; agents stop: even with something running" )
-    p.add_argument( "--dry-run", action = "store_true", help = "say what setup would do, and do nothing" )
+    p.add_argument( "--dry-run", action = "store_true", help = "say what setup ( or caches ) would do, and do nothing" )
     p.add_argument( "--sha256", default = None, help = "download: the hash the file must have ( never required )" )
     p.add_argument( "--all", dest = "all", action = "store_true", help = "status: every project in full, not one line each" )
 

@@ -246,6 +246,9 @@ class Settings:
     # ( `errand-outputs/state/needs.json` ) and claimed up front the next time ( ADR 0014 ).
     # Off: every run asks again, from what it is told and what its code requires.
     remember_needs   : bool = False
+    # How `errand run` draws a case's output ( ADR 0016 ): behind a `bar` ( │ stdout, ┃ stderr ), behind
+    # `spaces`, or `off`; `plain` is `off` without colors. `$ERRAND_OUTPUT` and `--plain` win.
+    output           : str = "bar"
 
 
 class Envs( dict ):
@@ -287,6 +290,24 @@ def outputs( root: Path ) -> Path:
     import os
     where = Path( os.environ.get( OUTPUTS_ENV ) or settings.outputs_directory ).expanduser()
     return where if where.is_absolute() else Path( root ) / where
+
+
+CACHES_ENV = "ERRAND_CACHES"
+
+
+def caches( root: Path ) -> Path:
+    """Where a library run under errand puts its caches, one subdirectory each ( `$ERRAND_CACHES/loom` ): the
+    outputs' `caches/`, made if missing and tagged as a cache ( ADR 0019 ). Each machine keeps its own."""
+    from .sync import CACHEDIR_TAG, CACHEDIR_SIGNATURE
+    out = outputs( root ) / "caches"
+    tag = out / CACHEDIR_TAG
+    if not tag.exists():
+        try:
+            out.mkdir( parents = True, exist_ok = True )
+            tag.write_bytes( CACHEDIR_SIGNATURE + b"\n# errand: the caches of the libraries its runs use ( ADR 0019 )\n" )
+        except OSError:
+            pass
+    return out
 
 
 def outputs_rel( root: Path ) -> str:
@@ -418,6 +439,8 @@ def configure( **kw ):
                              f"expected one of { ', '.join( vars( settings ) ) }" )
         if k == "zones":
             _check_zones( v, "configure( zones = ... )" )
+        if k == "output" and v not in ( "bar", "spaces", "off", "plain" ):
+            raise ValueError( f"configure( output = {v!r} ): bar, spaces, off or plain" )
         setattr( settings, k, v )
 
 

@@ -7,7 +7,6 @@ import shutil
 import subprocess
 import sys
 import time
-import traceback
 from pathlib import Path
 
 from .. import config, discovery, entries as E, local, mpi, needs, queue, results as R, runner as P, steps, streams
@@ -122,8 +121,7 @@ def run_entries( entries, modules, *, root, out_root, overrides, env_name, tags,
     ask = ask or Ask()
     quiet = quiet or ask.quiet
     if not quiet:
-        print( head( f"\n{'=' * 10} {len( entries )} entr{'y' if len( entries ) == 1 else 'ies'}"
-                     f"  {env_name}  {R.place( env_name )} {'=' * 10}" ), flush = True )
+        drawn().banner( len( entries ), env_name, R.place( env_name ) )
     for e in entries:
         # The claim is taken OUTSIDE the timing: waiting for the machine is not
         # part of how long the work takes, and recording it as if it were would
@@ -132,13 +130,30 @@ def run_entries( entries, modules, *, root, out_root, overrides, env_name, tags,
         # ( ADR 0014 ).
         status, error, hint = needs.run_claimed(
             e, env_name = env_name, ask = ask, root = root, queued = queued,
-            echo = lambda m: print( dim( m ), flush = True ),
+            echo = lambda m: drawn().note( m.strip() ),
             run = lambda handed, devices, e = e: run_case(
                 e, modules, root = root, out_root = out_root, overrides = overrides, env_name = env_name,
                 tags = tags, version = version, selectors = selectors, ask = ask, handed = handed,
                 devices = devices ) )
         tally( report, e, status, error, hint )
     return report
+
+
+_caches_seen = set()
+
+
+def _caches_kept( root ) -> Path:
+    """`$ERRAND_CACHES` of this place, and once a process, what its caches no longer need removed: at most once a
+    day and a cache ( ADR 0020 ). One line for a cache something went from, nothing otherwise."""
+    from .. import caches as C
+    where = config.caches( root ).resolve()
+    if where not in _caches_seen:
+        _caches_seen.add( where )
+        try:
+            C.purge_all( where, only_due = True, say = lambda s: print( dim( f"  {s}" ), flush = True ) )
+        except Exception as err:             # a cache is never a reason for a run to fail
+            print( dim( f"  caches: not purged ( {type( err ).__name__}: {err} )" ), flush = True )
+    return where
 
 
 def _kept( names ):
@@ -179,8 +194,42 @@ def _followed( journal, marks, root = None ):
     if marks:
         return footer.Followed( journal, footer.mark, want = footer.want, view = footer.view, root = root )
     if footer.Footer.usable():
-        return footer.Followed( journal, footer.Footer().show )
+        from . import bottom
+        return footer.Followed( journal, lambda t: drawn().set_step( t ) )
     return contextlib.nullcontext()
+
+
+# What the last case's end says besides its status ( ADR 0016 ): `agents.ops` sends it with `ran`.
+last_tail: dict = { }
+# What crossed before the cases, to get here ( a push ): the first events of each one's journal ( ADR 0016 ).
+crossed: list = [ ]
+
+
+def _crossed( journal ):
+    if not crossed:
+        return
+    import json
+    try:
+        with open( journal, "a" ) as f:
+            f.write( "".join( json.dumps( r ) + "\n" for r in crossed ) )
+    except OSError:
+        pass
+
+_drawn = None
+
+
+def drawn( ):
+    """What draws the cases run in this process ( `render.Renderer` ), one for all of them."""
+    global _drawn
+    from .render import Renderer
+    if _drawn is None or _drawn.out_.stream is not sys.stdout:
+        _drawn = Renderer()
+    return _drawn
+
+
+def _jsonable( results: dict ) -> dict:
+    from .render import short
+    return { k: v for k, v in ( results or { } ).items() if short( v ) is not None }
 
 
 def tally( report, e, status, error, hint ):
@@ -211,18 +260,26 @@ def run_case( e, modules, *, root, out_root, overrides, env_name, tags, version,
     seen.note( leaf, root, f"{e.file.name}::{e.name}" + "".join( f" {k}={v}" for k, v in shown.items() ), env_name )
     # Where the case says its steps ( ADR 0010 ), and the shell functions that say them.
     journal = leaf / steps.FILE
+    _crossed( journal )
     handed = { **handed, steps.ENV: str( journal ), steps.SH_ENV: steps.SHELL_STEPS,
                # what the shell's `download` calls ( ADR 0013 ): this errand, with this Python
-               "ERRAND_PYTHON": sys.executable, "ERRAND_SRC": str( Path( __file__ ).resolve().parents[ 2 ] ) }
+               "ERRAND_PYTHON": sys.executable, "ERRAND_SRC": str( Path( __file__ ).resolve().parents[ 2 ] ),
+               # where a library puts its caches, by its name ( ADR 0019 )
+               config.CACHES_ENV: str( _caches_kept( root ) ) }
     if marks:
         # Followed by the side that drives it: a download with no route asks it ( ADR 0013 ).
         from ..downloads import RELAY
         handed[ RELAY ] = "1"
 
     site =f"{e.file.name}:{e.line}" if e.line else e.file.name
-    if shown:
-        told = ", ".join( f"{k}={v!r}" for k, v in shown.items() )
-        print( dim( f"  {e.name} ({site}) -- {told}" ), flush = True )
+    # Its header ( ADR 0016 ): said to the side that drives a session, drawn here otherwise.
+    shows = drawn() if not marks else None
+    if marks:
+        from ..agents.ops import say
+        say( { "op": "head", "name": e.name, "site": site, "params": { k: str( v ) for k, v in shown.items() },
+               **( { "gpus": list( devices ) } if devices else { } ) } )
+    else:
+        shows.head( e.name, site, { k: str( v ) for k, v in shown.items() }, gpus = devices )
 
     E.begin_run( e, resolved, leaf )
     status, error, hint = "PASS", None, None
@@ -232,11 +289,10 @@ def run_case( e, modules, *, root, out_root, overrides, env_name, tags, version,
                               params = shown, version = version, provenance = provenance )
     # `errand.require` sets the cards in this process when the run is in it: put back as they were.
     with _with_env( handed ), _kept( E._DEVICE_VARS + ( queue.CLAIM, ) ), _followed( journal, marks, root ), \
-            streams.raw( leaf, crashed ):
-        if devices:
-            print( dim( f"  gpu {','.join( str( d ) for d in devices )}" ), flush = True )
+            streams.raw( leaf, crashed, shows ) as kept:
         started = time.perf_counter()
-        with capture( leaf / R.OUTPUT, ask.log ) as buf:
+        # `output.txt`: the keeper's when there is one ( both streams, a child's included ), else Python's
+        with capture( None if kept else leaf / R.OUTPUT, ask.log ) as buf:
             try:
                 ranks = mpi.ranks_of( e.resources, ask.resources )
                 if ranks > 1 and not mpi.inside() and ( e.runner is None or not e.runner.whole_files ):
@@ -302,7 +358,8 @@ def run_case( e, modules, *, root, out_root, overrides, env_name, tags, version,
                 status, error = "FAIL", f"{type( exc ).__name__}: {exc}"
                 if isinstance( exc, SystemExit ) and isinstance( exc.code, int ) and exc.code:
                     exit_code = exc.code
-                traceback.print_exc()
+                from .tracebacks import print_failure
+                print_failure( exc )             # without errand's frames ( ADR 0016 ); `-v`: whole
         duration = time.perf_counter() - started
         steps.flush()
     E.end_run()
@@ -310,12 +367,13 @@ def run_case( e, modules, *, root, out_root, overrides, env_name, tags, version,
         # Ended by its exit status or a signal: what it said last on stderr is what says why.
         error = streams.with_tail( error, streams.tail( leaf / R.STDERR ) )
 
-    if status == "PASS":
-        print( f"{GREEN}PASS{RESET} {e.name} {dim( f'({site})' )}", flush = True )
-    elif status == "SKIP":
-        print( f"{YELLOW}SKIP{RESET} {e.name} {dim( f'({site})' )} - {error}", flush = True )
-    else:
-        print( f"{RED}FAIL{RESET} {e.name} {dim( f'({site})' )} - {error}", flush = True )
+    # Its end ( ADR 0016 ): what the side that drives draws from `ran`, or drawn here.
+    global last_tail
+    output = os.path.relpath( leaf / R.OUTPUT, root ) if status not in ( "PASS", "SKIP" ) else None
+    last_tail = { "seconds": duration, "results": _jsonable( E.results ), "output": output,
+                  "leaf": os.path.relpath( leaf, root ) }
+    if not marks:
+        shows.tail( status, e.name, site, error = error, seconds = duration, results = E.results, output = output )
 
     R.write_result(
         leaf, entry = e, root = root, env_name = env_name, where = where, tags = tags,

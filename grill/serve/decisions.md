@@ -1,0 +1,24 @@
+# errand serve (et sviz) : décisions
+
+- **Propriétaire** : un service appartient à l'agent hôte de la machine ; `errand serve` rend la main une fois prêt, `-f` le garde au premier plan ( Ctrl-C l'arrête ).
+- **Activité** : les connexions ouvertes et la sonde quand elle dit busy, jamais le débit ; `--idle` ne part que sans connexion ni busy.
+- **Connexions vues** : errand tient le port annoncé et relaie vers un port interne donné au service.
+- **Identité** : un service par ( utilisateur, machine, nom ) ; `--ensure` le lance s'il manque, attend qu'il réponde, rend l'adresse ; jamais deux.
+- **Définition** : déclarée comme les envs ( `errand.services[ … ] = errand.Service( … )` ), et aussi en ligne de commande pour un service ad hoc.
+- **sviz, où** : par défaut sur le Mac, sur le répertoire ramené en direct ; sur lmo par `forward` plus tard ( `sviz open --there` ).
+- **sviz et errand** : sdot ne dépend pas d'errand ; serveur stdlib, un par utilisateur, jamais dans le processus de l'agent.
+- **Gardien** : un par service, processus `keep=True` de l'agent hôte ( `python -m errand.serve keep <nom>` ), stdlib ; il tient réservation, port et relais, sonde, enfant, arrêts.
+- **Sonde** : fonction dans la déclaration ( aides comme `errand.http_json` ), `--busy-if CMD` en ligne de commande ; toutes les 2 s, délai 5 s ; échec ou silence = busy.
+- **Ordre de la file** : toute demande en attente s'inscrit, FIFO pour tous ( `errand run` compris ), pas de backfill pour l'instant.
+- **Attente de la carte** : le port est tenu dès le lancement, les connexions attendent ; l'attente est abandonnée quand plus personne n'attend depuis `--idle`.
+- **Ports** : prêt = le port interne accepte ( ou `ready =` ) ; port interne libre, `{port}` / `$PORT` ; port annoncé déclaré, sinon choisi et gardé par nom ; 127.0.0.1.
+- **connect / forward** : `connect` d'abord ( stdio, pour `authorized_keys` ), `forward` ensuite, en opération native de l'agent, une voie par connexion.
+- **Déclaration** : `~/.config/errand/services.py` par utilisateur, plus les fichiers de projet.
+- **Arrêt** : INT, TERM, KILL sur le groupe, `grace` 10 s ; sur expulsion en warm, `--idle`, Ctrl-C / `stop`, mort du service ( pas de relance automatique ).
+- **Visibilité** : services et réservations dans `errand status`, `errand queue` avec « kept warm: gives way » ; `errand hold` documenté, inchangé pour la VM ; doc : file par utilisateur et machine.
+- **Vue d'un répertoire** : nommée à nouveau = ce qui a changé est ramené ( absents, taille ou date différentes ), rien supprimé ; le run renomme la vue après chaque frame ; le manifeste en dernier.
+- **Deux sens** : sviz lance errand ( `sviz open` → `errand serve --ensure sviz` ) ; dans l'autre sens, errand ( `errand web`, la ligne `OUTPUT:` ) trouve sviz par des règles déclarées, les ouvreurs ( `errand.openers[ "*.sviz" ] = "sviz open --url {path}"` ), jamais par le répertoire lui-même.
+- **Accès** : port annoncé optionnel ( sans lui, seulement `connect` / `forward` par l'agent de l'utilisateur ) ; avec lui, au service de contrôler ; sviz met un jeton dans son URL ; la doc le dit.
+- **sviz** : `open [--url] [--there plus tard]`, `export --html [--every --frames --max-mb]`, `export --vtk` ; GIF / vidéo par le bouton de la page, en ligne de commande plus tard.
+- **Extension** : `.sviz`.
+- **ADR et ordre** : 0017 réécrit ( format, store, page, sviz, vues de répertoires, ouvreurs ; plus de `/s/<cap>/` ), 0018 `errand serve` ; ordre : sdot + sviz seul, otrec, vues de répertoires + ouvreurs, errand serve ( remplace ollama-errand ), forward + `--there`.

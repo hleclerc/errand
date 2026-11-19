@@ -64,5 +64,6 @@ def runs( limit = 50 ) -> dict:
             result = yamlish.read( Path( rec[ "leaf" ] ) / "result.yaml" ) or { }
         except Exception:
             result = { }
-        rec.update( status = result.get( "status" ), duration = result.get( "duration_s" ) )
+        rec.update( status = result.get( "status" ), duration = result.get( "duration_s" ),
+                    **( { "file": result[ "file" ] } if result.get( "file" ) else { } ) )
     return { "runs": found[ : limit ], "more": max( 0, len( found ) - limit ) }

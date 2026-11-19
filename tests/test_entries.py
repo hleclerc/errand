@@ -38,6 +38,29 @@ if test( "an entry is its call site, so two may share a name" ):
     assert all( e.file.name == "test_entries.py" for e in got )
 
 
+if test( "a line that declares several entries ( a loop ) tells them apart by their rank on it" ):
+    def looped( ):
+        for n in ( "a", "b", "c" ):
+            test( f"case {n}" )
+    got = collected_of( looped )
+    assert [ e.nth for e in got ] == [ 0, 1, 2 ] and len( { e.site for e in got } ) == 3, got
+    assert len( { e.line for e in got } ) == 1
+    assert got[ 0 ].at == str( got[ 0 ].line ) and got[ 2 ].at == f"{got[ 2 ].line}#2", [ e.at for e in got ]
+    from errand.discovery import parse_at
+    assert parse_at( "12" ) == ( 12, 0 ) and parse_at( "12#2" ) == ( 12, 2 )
+    # run: only the guard of the targeted rank opens
+    E.reset_collection()
+    def again( ):
+        return [ n for n in ( "a", "b", "c" ) if test( f"case {n}" ) ]
+    again()
+    target = E.collected[ 1 ]
+    E.begin_run( target, { }, "/tmp" )
+    try:
+        assert again() == [ "b" ], again
+    finally:
+        E.end_run()
+
+
 if test( "a Param is a parameter; anything else must be a known word" ):
     got = collected_of( lambda: entry( "e", n = Param( 10 ), ranks = 4 ) )
     assert list( got[ 0 ].params ) == [ "n" ]

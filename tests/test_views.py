@@ -110,7 +110,7 @@ if test( "views: one file brought at a time, the last state always, said once wh
         gate.set()
         v.wait()
         assert pulled == [ "runs/a.html", "runs/a.html" ], pulled
-        assert said == [ "OUTPUT: far:/not/in/the/copy.html", f"OUTPUT: {( d / 'runs/a.html' ).as_uri()}" ], said
+        assert said == [ "far:/not/in/the/copy.html", ( d / 'runs/a.html' ).as_uri() ], said
 
         said = [ ]
         def broken( rel ):
@@ -123,7 +123,7 @@ if test( "views: one file brought at a time, the last state always, said once wh
         said = [ ]
         v = Views( d, None, say = said.append )      # the run is here: only said
         v( { "path": "c.html" } ); v( { "path": "c.html" } )
-        assert said == [ f"OUTPUT: {( d / 'c.html' ).as_uri()}" ], said
+        assert said == [ ( d / 'c.html' ).as_uri() ], said
 
 
 SHOWN = '''
@@ -184,8 +184,57 @@ if p := experiment( "waits", local = Param( "" ) ):
         watcher_stop.set()
         assert code == 0, output
         page = next( ( project / "errand-outputs" / "runs" ).rglob( "page.html" ) )
-        assert f"OUTPUT: {page.as_uri()}" in output and output.count( "OUTPUT: " ) == 1, output
+        assert f"↗ {page.as_uri()}" in output and output.count( page.as_uri() ) == 1, output
+        lines = output.splitlines()
+        assert next( i for i, l in enumerate( lines ) if "↗" in l ) < next( i for i, l in enumerate( lines ) if "PASS" in l ), \
+            "the link inside the case, before its end"
         from errand import yamlish
         rec = yamlish.read( next( ( project / "errand-outputs" / "runs" ).rglob( "result.yaml" ) ) )
         assert rec[ "results" ][ "seen" ] is True, "the page came only with the run's end"
     subprocess.run( [ "ssh", *options, host, f"rm -rf {remote_root}" ] )
+
+
+if test( "a view brought back is drawn inside its case, behind a ↗, before its end; OUTPUT: when the output is plain" ):
+    import io
+    from errand.agents.ops import MARK
+    from errand.cli import render as Rd
+    from errand.cli.sessions import Marked
+    from errand.cli.views import Views
+    with scratch() as d:
+        kept = os.environ.get( Rd.ENV )
+        os.environ[ Rd.ENV ] = "bar"
+        try:
+            s = Marked()
+            out = io.StringIO()
+            s.render = Rd.Renderer( out = out, err = out )
+
+            def pull( rel ):
+                time.sleep( 0.3 )                      # still on its way when the case ends
+                ( d / rel ).write_text( "x" )
+
+            s.views = Views( d, pull, "far" )
+            mark = lambda m: ( MARK + json.dumps( m ) + "\n" ).encode()
+            s._out( mark( { "op": "head", "name": "solve", "site": "a.py:1" } ) + b"it 1\n"
+                    + mark( { "op": "view", "path": "p.html" } )
+                    + mark( { "op": "ran", "status": "PASS", "entry": { "name": "solve", "file": "a.py", "line": 1 }, "error": None,
+                              "hint": None, "tail": { "seconds": 1.0 } } ) )
+            lines = out.getvalue().splitlines()
+            arrow = next( i for i, l in enumerate( lines ) if "↗" in l )
+            end = next( i for i, l in enumerate( lines ) if "PASS" in l )
+            assert arrow < end and lines[ arrow ].strip().startswith( "│ ↗ file://" ), lines
+            assert ( d / "p.html" ).as_uri() in lines[ arrow ], lines
+        finally:
+            if kept is None:
+                os.environ.pop( Rd.ENV, None )
+            else:
+                os.environ[ Rd.ENV ] = kept
+        os.environ[ Rd.ENV ] = "plain"
+        try:
+            out = io.StringIO()
+            Rd.Renderer( out = out, err = out ).view( "file:///x.html" )
+            assert out.getvalue() == "OUTPUT: file:///x.html\n", out.getvalue()
+        finally:
+            if kept is None:
+                os.environ.pop( Rd.ENV, None )
+            else:
+                os.environ[ Rd.ENV ] = kept
