@@ -325,11 +325,20 @@ def _waiting_dir( ) -> Path:
     return d
 
 
-def waiting_exclusive( ) -> list:
-    """The requests that are queued and still breathing, that what arrives after waits behind:
-    exclusive ones, and claims that grow ( `grows` )."""
+def _alive( pid ) -> bool:
+    try:
+        os.kill( int( pid ), 0 )
+    except ( OSError, ValueError, TypeError ):
+        return False
+    return True
+
+
+def waiting( ) -> list:
+    """The requests that are queued and still breathing, oldest first ( ADR 0018: FIFO for all ):
+    what arrives after one waits behind it. Claims that grow ( `grows` ) among them. A request of
+    this host whose process is gone is dropped at once, not after `STALE_AFTER`."""
     out, now = [ ], time.time()
-    for path in sorted( _waiting_dir().glob( "*.yaml" ) ):
+    for path in _waiting_dir().glob( "*.yaml" ):
         try:
             age = now - path.stat().st_mtime
         except OSError:
@@ -338,25 +347,35 @@ def waiting_exclusive( ) -> list:
             path.unlink( missing_ok = True )
             continue
         row = yamlish.read( path )
-        if row:
-            row[ "path" ] = str( path )
-            out.append( row )
+        if not row:
+            continue
+        if row.get( "host" ) == host() and row.get( "pid" ) is not None and not _alive( row[ "pid" ] ):
+            path.unlink( missing_ok = True )
+            continue
+        row[ "path" ] = str( path )
+        out.append( row )
+    out.sort( key = lambda r: ( not r.get( "grows" ), float( r.get( "since", 0 ) ), r[ "path" ] ) )
     return out
+
+
+waiting_exclusive = waiting       # its name before ADR 0018, when only exclusive requests and growing claims waited
 
 
 def _fits( needs: dict, exclusive: bool, others: list, ahead: list = ( ), keep = ( ) ):
     """( waiting_for, devices ). `waiting_for` is None when it fits.
 
-    `ahead` are the requests already queued: exclusive ones, and claims that grow
-    ( `grow` ). Whatever arrives after one waits behind it: otherwise a steady
-    stream of small work would starve a benchmark for ever, which is the one
-    thing a queue is for. `keep`: the cards a growing claim already has, given
+    `ahead` are the requests queued before this one, and claims that grow
+    ( `grow` ). Whatever arrives after one waits behind it ( FIFO, ADR 0018 ):
+    otherwise a steady stream of small work would starve a benchmark, or a
+    service waiting for a card, for ever, which is the one thing a queue is for. `keep`: the cards a growing claim already has, given
     first when they still fit.
     """
-    if ahead and not exclusive:
+    if ahead:
         first = ahead[ 0 ]
-        why = "more than it holds" if first.get( "grows" ) else "the machine to itself"
-        return f"{first.get( 'label', 'something' )}, which is waiting for {why}", [ ]
+        why = "more than it holds" if first.get( "grows" ) else "the machine to itself" if first.get( "exclusive" ) \
+            else "its turn"
+        more = f" ( {len( ahead )} ahead )" if len( ahead ) > 1 else ""
+        return f"{first.get( 'label', 'something' )}, which is waiting for {why}{more}", [ ]
     if exclusive and others:
         return f"the machine to itself ({len( others )} running)", [ ]
     if any( o.get( "exclusive" ) for o in others ):
@@ -435,43 +454,51 @@ def _shares( needs: dict, got: list, exclusive: bool ) -> dict:
     return { } if any( s is None for s in shares ) else { "card_ram": shares }
 
 
-def _acquire( needs: dict, exclusive: bool, label: str, mine: Path, echo, base = None ) -> list:
-    """Block until the claim fits, then write it. Returns the devices given."""
+class GaveUp( RuntimeError ):
+    """A wait for a claim abandoned by its `give_up` ( a service nobody waits for any more, ADR 0018 )."""
+
+
+def _acquire( needs: dict, exclusive: bool, label: str, mine: Path, echo, base = None, give_up = None ) -> list:
+    """Block until the claim fits, then write it. Returns the devices given. `give_up()`, asked at each
+    poll while it waits: True abandons the wait ( `GaveUp` )."""
     queued = _waiting_dir() / mine.name
-    waited_for = None
+    waited_for, since = None, time.time()
     try:
         while True:
             with _lock():
                 others = [ o for o in held() if o[ "path" ] != str( mine ) ]
-                ahead = [ w for w in waiting_exclusive() if w[ "path" ] != str( queued ) ]
-                waiting, got = _fits( needs, exclusive, others, ahead )
-                if waiting is not None:
+                ahead = [ w for w in waiting() if w[ "path" ] != str( queued )
+                          and ( w.get( "grows" ) or ( float( w.get( "since", 0 ) ), w[ "path" ] ) < ( since, str( queued ) ) ) ]
+                blocked, got = _fits( needs, exclusive, others, ahead )
+                if blocked is not None:
                     # What is only kept warm gives way: ask it, and wait for it to go.
                     keen = [ o for o in others if not o.get( "preemptible" ) ]
                     gives = [ o for o in others if o.get( "preemptible" ) ]
                     if gives and _fits( needs, exclusive, keen, ahead )[ 0 ] is None:
                         for o in gives:
                             evict( o[ "path" ] )
-                        waiting = ", ".join( o.get( "label", "something" ) for o in gives ) + \
+                        blocked = ", ".join( o.get( "label", "something" ) for o in gives ) + \
                             ", kept warm, to make room"
-                if waiting is None:
+                if blocked is None:
                     yamlish.write( mine, { "label": label, "pid": os.getpid(), "host": host(),
                                            "exclusive": exclusive, "since": time.time(),
                                            "devices": got, **needs, **_shares( needs, got, exclusive ),
                                            **( { "base": base } if base is not None else { } ) } )
                     return got
-                if exclusive:
-                    if queued.exists():
-                        os.utime( queued, None )
-                    else:
-                        yamlish.write( queued, { "label": label, "pid": os.getpid(),
-                                                 "host": host(), "since": time.time() } )
-            if waiting != waited_for:
+                # Every waiter is recorded, the oldest first ( ADR 0018 ): a later request that fits does not pass it.
+                if queued.exists():
+                    os.utime( queued, None )
+                else:
+                    yamlish.write( queued, { "label": label, "pid": os.getpid(), "host": host(), "since": since,
+                                             "exclusive": exclusive, "needs": needs } )
+            if blocked != waited_for:
                 if echo:
-                    echo( f"  waiting for {waiting}" )
+                    echo( f"  waiting for {blocked}" )
                 from .agents import arrival
-                arrival.waiting( f"room on {host()}: {waiting}", key = "queue" )      # ADR 0009
-                waited_for = waiting
+                arrival.waiting( f"room on {host()}: {blocked}", key = "queue" )      # ADR 0009
+                waited_for = blocked
+            if give_up is not None and give_up():
+                raise GaveUp( f"stopped waiting for {blocked}" )
             time.sleep( POLL )
     finally:
         queued.unlink( missing_ok = True )
@@ -481,7 +508,7 @@ def _acquire( needs: dict, exclusive: bool, label: str, mine: Path, echo, base =
 
 
 @contextlib.contextmanager
-def claim( needs: dict, *, exclusive = False, label = "", enabled = True, echo = None, base = None ):
+def claim( needs: dict, *, exclusive = False, label = "", enabled = True, echo = None, base = None, give_up = None ):
     """Hold a share of the machine for the duration of the block. `base`: what the run is started
     with, by what it is told ( the environment, the command line ), when `needs` is more ( claimed up
     front ): what `require( extra = True )` adds to. `needs` by default."""
@@ -501,7 +528,8 @@ def claim( needs: dict, *, exclusive = False, label = "", enabled = True, echo =
 
     needs = normalize( needs )
     mine = _claims_dir() / f"{host()}-{os.getpid()}-{time.time_ns()}.yaml"
-    got = _acquire( needs, exclusive, label, mine, echo, base = None if base is None else normalize( base ) )
+    got = _acquire( needs, exclusive, label, mine, echo, base = None if base is None else normalize( base ),
+                    give_up = give_up )
 
     stop = threading.Event()
     beat = threading.Thread( target = _heartbeat, args = ( mine, stop ), daemon = True )
@@ -635,15 +663,15 @@ def grow( path, needs: dict, *, exclusive = False, extra = False, label = None, 
                     return [ int( d ) for d in row.get( "devices" ) or [ ] ]
                 others = [ o for o in held() if o[ "path" ] != str( mine ) ]
                 keep = [ int( d ) for d in row.get( "devices" ) or [ ] ]
-                waiting, got = _fits( want, excl, others, keep = keep )
-                if waiting is None:
+                blocked, got = _fits( want, excl, others, keep = keep )
+                if blocked is None:
                     rest = { k: v for k, v in row.items() if k not in ( *QUANTITIES, "card_ram" ) }
                     yamlish.write( mine, { **rest, **want, "exclusive": excl, "devices": got,
                                            **_shares( want, got, excl ), **note } )
                     return got
                 if _younger_in_a_cycle( row, mine, want, excl, others ):
                     yamlish.write( mine, { **row, **note, "rerun": True } )
-                    raise Rerun( f"it waits for {waiting}, held by a run that waits for what this one holds: "
+                    raise Rerun( f"it waits for {blocked}, held by a run that waits for what this one holds: "
                                  f"errand runs it again, with what it requires up front" )
                 if request.exists():
                     os.utime( request, None )
@@ -652,12 +680,12 @@ def grow( path, needs: dict, *, exclusive = False, extra = False, label = None, 
                                               "host": host(), "since": row.get( "since", time.time() ),
                                               "grows": True, "claim": mine.name, "exclusive": excl,
                                               "want": want } )
-            if waiting != waited_for:
+            if blocked != waited_for:
                 if echo:
-                    echo( f"  waiting for {waiting}" )
+                    echo( f"  waiting for {blocked}" )
                 from .agents import arrival
-                arrival.waiting( f"room on {host()}: {waiting}", key = "queue" )      # ADR 0009
-                waited_for = waiting
+                arrival.waiting( f"room on {host()}: {blocked}", key = "queue" )      # ADR 0009
+                waited_for = blocked
             time.sleep( POLL )
     finally:
         request.unlink( missing_ok = True )
@@ -672,7 +700,7 @@ def _younger_in_a_cycle( row, mine: Path, want: dict, excl: bool, others: list )
     grow -- this one among them -- when it would fit without them, and does not with them. Two that
     wait for each other are the simplest such case; three or more growing to the whole machine
     ( benchmarks under `-j` ) are another, which no pair shows."""
-    growing = { g.get( "claim" ): g for g in waiting_exclusive() if g.get( "grows" ) }
+    growing = { g.get( "claim" ): g for g in waiting() if g.get( "grows" ) }
     since = lambda o: float( o.get( "since", 0 ) )
     mine_row = { **row, "path": str( mine ) }
     everyone = others + [ mine_row ]
@@ -782,9 +810,9 @@ def try_claim( needs: dict, *, label = "", preemptible = True ) -> Path | None:
     mine = _claims_dir() / f"{host()}-{os.getpid()}-{time.time_ns()}.yaml"
     with _lock():
         others = held()
-        waiting, got = _fits( needs, False, others, waiting_exclusive() )
-        if waiting is not None:
+        if _fits( needs, False, others, waiting() )[ 0 ] is not None:
             return None
+        _, got = _fits( needs, False, others )
         yamlish.write( mine, { "label": label, "pid": os.getpid(), "host": host(), "exclusive": False,
                                "since": time.time(), "devices": got, "preemptible": preemptible, **needs,
                                **_shares( needs, got, False ) } )
@@ -818,7 +846,7 @@ def _heartbeat( path: Path, stop: threading.Event ):
 
 def wait_idle( ) -> int:
     """Return once nothing holds the machine and nothing is queued for it."""
-    while held() or waiting_exclusive():
+    while held() or waiting():
         time.sleep( 1.0 )
     return 0
 
@@ -826,8 +854,9 @@ def wait_idle( ) -> int:
 def describe( ) -> list:
     """One line per live claim, for a banner or a monitor."""
     out = [ ]
-    for row in waiting_exclusive():
-        why = "waits to grow its claim" if row.get( "grows" ) else "waits for the whole machine"
+    for row in waiting():
+        why = "waits to grow its claim" if row.get( "grows" ) else "waits for the whole machine" \
+            if row.get( "exclusive" ) else "waits for its turn"
         out.append( f"{row.get( 'label', '?' )}  {why}  pid {row.get( 'pid' )}" )
     for row in held():
         what = "the whole machine" if row.get( "exclusive" ) else ", ".join(

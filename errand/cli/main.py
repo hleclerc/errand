@@ -39,6 +39,10 @@ def _main( argv = None ):
     from .. import __version__
 
     argv = list( sys.argv[ 1 : ] if argv is None else argv )
+    if argv[ : 1 ] in ( [ "serve" ], [ "hold" ] ):
+        # A service of this machine and this user, not of a project ( ADR 0018 ): its own options, read there.
+        from . import serve
+        return ( serve.main if argv[ 0 ] == "serve" else serve.hold )( argv[ 1 : ] )
     if argv[ : 1 ] == [ "require" ]:
         # Inside a run, on its way to its work: no project to load, nothing to wait for but the queue.
         from .require import main as require

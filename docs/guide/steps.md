@@ -106,6 +106,20 @@ tmp.replace( out / "convergence.html" )
 ```
 :::
 
+### A directory, and what opens it
+
+A view may be a directory: frames written one by one, with an index that names them. Each time the
+run names it again, what changed in it comes back, not the whole of it. `last` names the files that
+must come after the rest ( an index never names a frame not here yet ):
+
+```python
+errand.view( "foam.sviz", last = "manifest.json", open = errand.Static( "index.html" ) )
+```
+
+`open` says what opens it, so nothing is declared elsewhere. `errand.Static( "index.html" )`: the
+directory carries its own page, and it is served as it is, from the copy brought back here, beside
+[`errand web`](./web), while the run is still writing it. The run's page shows it among its views.
+
 ## In a shell script
 
 ```bash
@@ -183,4 +197,4 @@ it iterates, and its final residual as a tracked result.
 
 ## Next
 
-[Results and records](./output) · [What is running](./status) · [The screen](./tui)
+[Results and records](./output) · [What is running](./status) · [The screen](./web)

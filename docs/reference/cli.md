@@ -29,7 +29,10 @@ target is the target's: `errand --env gpu run t.py` and `errand run --env gpu t.
 | `vm stop` | stop the [Windows VMs](/guide/layers/windows) kept warm, here and over every `Ssh` |
 | `queue` | what this machine has, and what holds it — [Sharing a machine](/guide/machine) |
 | `wait` | return once nothing holds the machine and nothing is queued for it |
-| `tui` | the screen, [being redesigned](/guide/tui) |
+| `serve [NAME \| -- CMD]` | a server started if need be, kept while used, under the queue; `serve` alone lists them, `serve stop NAME`, `serve connect NAME [PORT]` ( stdin and stdout relayed to it ); `--gpus` `--gpu-ram` `--ram` `--cpus` `-x` `-n` `--name` `--idle` `--busy-if` `--port [NAME=]ANNOUNCED[:SERVER]` ( repeated for several ports, either side empty for errand to choose ) `--others` ( other accounts may connect ) `--grace` `--ensure` `--url [PORT]` ( only its URL, for a script ) `-f` — [errand serve](/guide/serve) |
+| `hold [--gpus N] [--gpu-ram S] [--ram S] [--cpus N] [-x] [-n LABEL]` | a claim held while stdin is open: prints `granted <cards>`, reads `warm` / `busy`, prints `evict` — [errand hold](/guide/serve#errand-hold) |
+| `web [token]` | every machine's runs, machines and caches, as a page in the browser, served by this machine's agent; `token` prints the token for another browser — [Every run, live in the browser](/guide/web) |
+| `tui` | the same, in the terminal — [errand tui](/guide/web#the-same-in-the-terminal-errand-tui) |
 
 **Environments**
 
@@ -44,7 +47,7 @@ target is the target's: `errand --env gpu run t.py` and `errand run --env gpu t.
 | verb | |
 |---|---|
 | `download URL [--sha256 H]` | a file into the project's cache, as [`errand.download`](/reference/python-api#download) does; prints its path. The next push carries it |
-| `caches [MACHINE...] [--dry-run] [--unused DAYS]` | the library caches a machine holds ( this one by default, else machines of `errand machines` by name ), in the `errand-cache/1` format: what each holds, what is dead, and what no longer serves removed; `--unused`: also what has not served for DAYS days ( [ADR 0020](/adr/0020-a-library-cache-says-what-it-holds), [ADR 0022](/adr/0022-caches-are-looked-after-per-file-system) ). Removing on every machine at once: tab `3` of `errand tui` / `errand web`. `caches hold MACHINE [DIR...]`: MACHINE holds the directories it reaches ( its host agent purges them daily ), e.g. a cluster's login node |
+| `caches [MACHINE...] [--dry-run] [--unused DAYS]` | the library caches a machine holds ( this one by default, else machines of `errand machines` by name ), in the `errand-cache/1` format: what each holds, what is dead, and what no longer serves removed; `--unused`: also what has not served for DAYS days ( [ADR 0020](https://github.com/hleclerc/errand/blob/main/docs/adr/0020-a-library-cache-says-what-it-holds.md), [ADR 0022](https://github.com/hleclerc/errand/blob/main/docs/adr/0022-caches-are-looked-after-per-file-system.md) ). Removing on every machine at once: tab `3` of `errand tui` / `errand web`. `caches hold MACHINE [DIR...]`: MACHINE holds the directories it reaches ( its host agent purges them daily ), e.g. a cluster's login node |
 | `require [--gpus N] [--gpu-ram S] [--ram S] [--cpus N] [-x] [--extra]` | inside a run: grows its claim ( to that much in all; `--extra`: that much more than it was started with ), as [`errand.require`](/reference/python-api#require) does, waits, then prints what to set ( `CUDA_VISIBLE_DEVICES=1` ). Nothing outside errand; exit 75 when stopped to run again |
 
 **Suites**

@@ -126,7 +126,7 @@ download( url: str, sha256: str | None = None, name: str | None = None ) -> Path
 
 The path of the file at `url`, downloaded if it is not there yet, into
 `errand-cache/downloads/<sha256>/<name>` at the project root. `errand-cache` is a
-[cache zone](/guide/layers/ssh#a-cache-zone) of every project: pushed when missing over there,
+[cache zone](/guide/sync#a-cache-zone) of every project: pushed when missing over there,
 brought back when missing here. `sha256` is checked when given, never required; a URL already
 downloaded is found again without the network. Two runs that want one file at once download it once.
 
@@ -144,7 +144,7 @@ gives a `download URL` function that prints the path.
 ```
 
 The function's result, kept by its arguments in `errand-cache/memo/`, the project's
-[cache zone](/guide/layers/ssh#a-cache-zone): computed once, then read back, on this machine and on
+[cache zone](/guide/sync#a-cache-zone): computed once, then read back, on this machine and on
 every machine the cache reaches. A result computed on lmo comes back here after the command, and
 goes to the next machine with its push.
 
@@ -167,7 +167,7 @@ project, the function runs and nothing is kept. `f.memo_dir( *args )` says where
 cache_dir( zone: str ) -> Path
 ```
 
-Where a [cache zone](/guide/layers/ssh#a-cache-zone) is: `zone` ( `"/data-cache"` ), a path from the
+Where a [cache zone](/guide/sync#a-cache-zone) is: `zone` ( `"/data-cache"` ), a path from the
 project root, joined to the root, and created if missing. The root is the nearest directory above the
 current one that holds a project file ( `errand-*.py` ), so the answer is the same in a run over there
 and in a script run by hand here. Pass it down to the library that downloads or memoizes: errand sets
@@ -220,6 +220,42 @@ view( path, title: str = None, content: str | bytes = None ) -> bool
 errand writes it atomically. errand says where it opens, `OUTPUT: file://...`, on the machine that
 drives the run, brought back there at once from a run elsewhere. → False outside errand: nothing said,
 the caller says it if it wants to. → [Where a run is: steps](/guide/steps#view-a-file-that-evolves)
+
+## Services
+
+### Service, services
+
+```python
+errand.services[ name ] = errand.Service( command, *, env = None, gpus = None, gpu_ram = None, ram = None,
+                                          cpus = None, exclusive = False, label = None, busy = None,
+                                          ready = None, idle = "10m", ports = None, others = False,
+                                          grace = "10s", cwd = None )
+```
+
+A server `errand serve NAME` starts if need be and stops when nobody uses it, declared in
+`~/.config/errand/services.py` or a project file.
+
+- `ports`: `{ name: spec }`, a spec being `"ANNOUNCED:SERVER"` ( either side empty: errand chooses ), an
+  int ( the announced side ) or `None`. A bare spec is one port named `port`; the default is one port,
+  both sides chosen. The announced side is where clients connect and errand listens; the server's side
+  is given to the command.
+- `{port:NAME}` in `command` and in the values of `env` is the server's side of port NAME ( also
+  `$PORT_NAME` ); `{port}` and `$PORT` when there is one port.
+- `busy`: a function of the server's ports ( `{ name: port }` ), or a shell command ( exit 0 ) with the
+  same `{port...}`, saying the server is in the middle of something; failing counts as busy. `ready`:
+  a function of the server's ports, for a server that accepts connections before it can answer.
+- `others`: let other accounts of the machine connect ( closed by default, on Linux ).
+
+→ [errand serve](/guide/serve)
+
+### http_json
+
+```python
+http_json( path: str, predicate = bool, port: str = None )
+```
+
+A `busy` probe: `GET http://127.0.0.1:<port><path>` on the server's side of port `port` ( default: the
+first ), its JSON given to `predicate`.
 
 ## What only this machine can supply
 

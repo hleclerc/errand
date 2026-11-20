@@ -23,11 +23,16 @@ What errand takes off your hands:
 
 - **The way in.** ssh, then the allocation, then the container, then the env: declared once as a
   [stack of layers](./environments), crossed by one flag, `--env cluster`.
-- **Setting the place up.** A layer declares what it needs (a Python version, a `requirements.txt`,
-  a container recipe), and errand builds it on first use, then updates it when the declaration
-  changes. → [Keeping them current](./upkeep)
-- **Moving files.** The project is synced there before the run; `--pull DIR` and `-o` bring back
-  what you ask for. → [Results and records](./output)
+- **Installing over there.** A layer declares what it needs (a Python version, a `requirements.txt`,
+  a container recipe), and errand installs it where it runs on first use, then updates it when the
+  declaration changes. Nothing to install by hand, errand included. → [Automatic installations](./upkeep)
+- **Moving files.** Only what changed crosses, both ways; what a run made over there is never
+  deleted; results and live views come back. → [Smart sync](./sync)
+- **Fetching and computing twice.** `errand.download` and `@errand.memo` keep data and results in a
+  cache that reaches every machine. → [Computed once](./caching)
+- **Looking for results.** `errand run -O` opens the run's page in the browser: its console, progress,
+  curves, images and HTML pages, live, wherever it runs. `errand web` lists every run of every machine
+  with its parameters and results. → [Every run, live in the browser](./web)
 - **Watching the connection.** Close the laptop: the work goes on, and `errand attach` picks it up.
   → [Let it run](./detached)
 - **Paying the start again.** Connections, allocations, VMs and imports are kept warm for a while,
@@ -36,7 +41,8 @@ What errand takes off your hands:
   to; Ctrl-C stops it through every layer; what a crashed agent left, the next one stops.
   → [What is running](./status)
 - **Taking turns on a machine.** `-x` keeps the machine to itself for a timing; `--cpus`, `--gpus`
-  take a share, and a card is assigned. → [Sharing a machine](./machine)
+  take a share, and a card is assigned; a run can ask from its own code ( `errand.require` ).
+  → [Sharing a machine](./machine)
 
 ## You stay in control
 

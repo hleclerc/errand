@@ -125,7 +125,7 @@ A run's own files go to its output directory ( `-o`, `$ERRAND_OUT_DIR` ), and th
 point the tool there: `--junitxml`, `--benchmark-storage`. Some tools write where they like:
 coverage into `htmlcov/`, criterion into `target/criterion/`. On another machine, the next push
 would take those for files that do not belong to the copy. The runner says where its tool writes,
-as [zones](/guide/layers/ssh#what-gets-pushed):
+as [zones](/guide/sync#zones):
 
 ```python
 errand.runners.replace( errand.Pytest( args = [ "--cov=src", "--cov-report=html" ],

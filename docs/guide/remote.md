@@ -16,10 +16,10 @@ const moved = {
   "the-paths-are-computed-before-the-run-happens": "/guide/layers/ssh#the-paths-are-computed-before-the-run-happens",
   "through-an-interactive-shell": "/guide/layers/ssh#through-an-interactive-shell",
   "options-go-to-ssh": "/guide/layers/ssh#options-go-to-ssh",
-  "what-gets-pushed": "/guide/layers/ssh#what-gets-pushed",
+  "what-gets-pushed": "/guide/sync#what-gets-pushed",
   "building-over-there": "/guide/layers/ssh#building-over-there",
   "adding-an-allocation": "/guide/layers/ssh#adding-an-allocation",
-  "results-are-pulled-not-pushed": "/guide/layers/ssh#results-are-pulled-not-pushed",
+  "results-are-pulled-not-pushed": "/guide/sync#results-are-pulled-not-pushed",
   "what-only-this-machine-can-supply": "/guide/layers/ssh#what-only-this-machine-can-supply"
 }
 onMounted( () => {

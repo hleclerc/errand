@@ -214,3 +214,34 @@ Unchanged for the Windows VM, which keeps calling it as it does.
 5. **sviz** through `errand serve --ensure` (ADR 0017, step 6).
 6. **`forward`**: the agent's socket operation, one channel per connection; then `sviz open --there`.
 7. The guide (`docs/guide/serve.md`, beside `machine.md` and `agents.md`), the API reference.
+
+## Progress
+
+- 2026-11-19: steps 1 to 4 and 7 done ( uncommitted ). The queue is FIFO for every request ( `queue.waiting`, a
+  dead waiter of this host dropped at once ); `errand/serve.py` ( `Service`, `services`, `http_json`, the keeper,
+  `ensure`, `stop`, `connect` ); `errand serve`, `errand hold` ( `cli/serve.py` ); services in the agents' table and
+  `errand status`; `tests/test_serve.py`; `docs/guide/serve.md`. A keeper whose declaration holds a function reads
+  the declaring files again ( `spec.json` has `wire: null` ). Not tried yet: Ollama on lmo through the tunnel of
+  boucles. Left: step 5 ( sviz ), step 6 ( `forward` ).
+
+Tried on lmo, 2026-11-20: Ollama declared in `~/.config/errand/services.py` ( models of the system
+install through `OLLAMA_MODELS` ), started in 6.5 s, relayed, `in use` then `warm`, evicted by an
+`errand hold --gpus 1` in about a second. The model did not load: a `--no-queue` run held 8.4 GB of
+the card, which the queue cannot know. `--url` added for scripts.
+
+## Amendment, 2026-11-20: named ports, both sides, owners
+
+- **Ports are named**, `ports = { name: "ANNOUNCED:SERVER" }`, either side empty for errand to choose; a
+  bare spec is one port named `port`. The command gets `{port:NAME}` / `$PORT_NAME` ( `{port}`, `$PORT`
+  with one port ); a placeholder that names no port is refused when the service is declared. `port =`
+  is gone.
+- **Both sides can be fixed.** The announced side is chosen once and kept per name ( `ports.json` ); the
+  server's side is chosen free at each start, or fixed and checked free ( a clear failure otherwise ).
+  They cannot be the same number: the keeper listens on one, the server on the other. A server that
+  must sit where its clients expect it gets that number as its announced side.
+- **Only this account's connections are relayed**, on Linux: the keeper looks up the client socket's uid
+  in `/proc/net/tcp` and closes the others ( `others = True` opens it ). Not done: macOS / Windows ( no
+  cheap peer lookup on TCP ), and the server's side, still open to every account ( Unix socket or a
+  private network namespace would close it ).
+- Tried on lmo the same day: `qwen3:14b` answered through `errand serve ollama --url`; a run of another
+  session, now queued, waited for the busy service, then started as soon as it stopped.

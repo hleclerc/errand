@@ -124,72 +124,11 @@ Ssh( host = "frontend", user = "me", jump = "me@gate.example.org", root = "/home
 is `ssh -J me@gate.example.org me@frontend`. `jump` takes a list for several gateways, gone through in
 order. Names are resolved from the last gateway: `frontend` may be a name only the inside knows.
 
-## What gets pushed
+## The project crosses by sync
 
-The push sends the project, without the obvious. `.git`, `__pycache__`, `*.pyc`, `.mypy_cache` and
-`.pytest_cache` are no part of a copy. `errand-outputs` ( at any depth ), `build`, `dist`, `*.so`,
-`*.o`, `node_modules`, `.venv` and `*.egg-info` are written over there and left alone. So is what
-the project's layers build there, by its exact path ( an image with its `.new`, `.prev` and
-`.part` ).
-
-The copy over there is kept identical to the project here: anything found only over there is
-deleted, and errand prints what went. A run that writes into the copy, outside `errand-outputs`,
-loses it at the next push, unless that place is declared as a **zone**:
-
-```python
-errand.configure( zones = { "/results": "back" } )   # written over there, brought back here
-```
-
-A zone is left alone by the push. A `back` zone written as a path from the project root
-( `/results` ) is also fetched after each command; written as a name ( `results`, anywhere in the
-tree ) it is only left alone, as a `build` zone is. A runner whose tool writes somewhere of its own
-says so the same way: [What a tool writes elsewhere](/guide/runners/#what-a-tool-writes-elsewhere).
-
-### A cache zone
-
-Downloaded data and results too costly to compute again belong to neither side. A **cache** zone
-is added to on both sides, and nothing in it is ever replaced or deleted:
-
-```python
-errand.configure( zones = { "/data-cache": "cache" } )
-```
-
-- the push sends what the copy lacks: a node with no internet finds the data downloaded here;
-- what a run downloads or writes there stays, and is no change outside the zones;
-- after each command, what the copy has and this side lacks comes back ( a path from the root only,
-  as for `back` ), so the next machine gets it too;
-- a file with other contents on each side is a **conflict**: said at each sync, left as it is on
-  both. Name files after what they hold ( a hash, a version, the parameters ) and there is none;
-- a deletion is never carried: a file removed on one side comes back from the other. Remove it on
-  both. errand never prunes a cache.
-
-A run finds it with `errand.cache_dir( "/data-cache" )`, which it passes to whatever downloads or
-memoizes. For a file at a URL, `errand.download( url )` does it all, in `errand-cache`, a cache zone
-every project has: the file under its hash, and, on a node with no internet, asked of the host over
-there, then of this side, which sends it. For a result too long to compute twice, `@errand.memo` keeps
-it there by its inputs: computed on one machine, it reaches the others. The why: ADR 0012.
-
-`errand-outputs` is excluded both ways on purpose: each side's records, plans and builds are its
-own. The only runs you get back are the ones you just asked for.
-
-## How the project crosses
-
-The push is a **sync**, by manifest. Each side keeps a manifest of its files ( size, mtime, hash ).
-The local side sends its own, the agent over there answers with what it lacks, and whole files
-cross, compressed. The manifest of the copy is kept in the copy ( `.errand-copy` ). So two hosts
-that share a file system ( a cluster's login and compute nodes ) share it too, with nothing to
-declare. The agent walks the copy when it starts and when it goes, and trusts the manifest in
-between. A change made over there outside a zone is reported, with when it was first seen, before
-it is overwritten.
-
-A changed file crosses whole: a large file that changes a little ( a checkpoint, a dataset appended
-to ) is sent again in full. Keep such files in a zone ( `back`, `cache` ) or out of the project.
-
-| on lmo, from a Mac | sync |
-|---|---:|
-| 2597 files, 407 MB, cold | 20.9 s |
-| the same, nothing changed | 0.73 s |
-| one file changed | 0.78 s |
+The project is pushed by a **sync by manifest**, through errand's agent over there: only what changed
+crosses ( 0.7 s when nothing did ), what a run made over there is never deleted, and what a run writes
+into the copy is declared once as a zone ( `back`, `build`, `cache` ). → [Smart sync](../sync)
 
 ## Building over there
 
@@ -212,16 +151,8 @@ errand.envs[ "cluster" ] = errand.Env( [ errand.Ssh( host = "login.hpc", root = 
 
 ## Results are pulled, not pushed
 
-A finished remote run stays over there until something collects it. A command you wait for collects
-its results as its last step. [`errand attach`](../detached#close-the-laptop) collects those of a
-command whose connection was lost, and `errand status` or `errand watch` those of a
-[`--batch`](../detached) submission.
-
-A run comes back once it has written its `result.yaml`, which it writes last: one still under way
-stays over there until the next collection, rather than coming back half written. A pull never
-deletes here, by either transfer: a run you have that is gone over there stays. Nor does a push
-delete over there the records of runs made there: a run tree a `--out` pattern put in the project
-( `runs/…` ) is left alone by the push for every run it holds that is not here, and the push says so.
+A finished remote run stays over there until something collects it: the command you wait for, as its
+last step, else `errand attach`, `errand status` or `errand watch`. → [What comes back](../sync#what-comes-back)
 
 ## What only this machine can supply
 

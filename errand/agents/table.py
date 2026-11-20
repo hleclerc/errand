@@ -370,7 +370,18 @@ def scan( guests = True, only: Path | None = None, resources = True ) -> dict:
                 asked.append( { "vm": vm[ "name" ], **guest_table( vm ) } )
     nodes = [ { "node": node, "job": job, **node_table( d, job, node ) } for d, job, node in held ]
     return { "host": socket.gethostname(), "time": time.time(), "procs": procs, "vms": machines, "guests": asked,
-             "nodes": nodes, "zygotes": zygotes( dirs ), "resources": _resources() if resources else None }
+             "nodes": nodes, "zygotes": zygotes( dirs ), "services": _services(),
+             "resources": _resources() if resources else None }
+
+
+def _services( ) -> list:
+    """The services this machine keeps ( `errand serve`, ADR 0018 ): what each does."""
+    try:
+        from .. import serve
+        return [ { k: s.get( k ) for k in ( "name", "state", "detail", "address", "ports", "connections", "waiting", "label" ) }
+                 for s in serve.running() ]
+    except Exception:
+        return [ ]
 
 
 def caches_summary( ) -> dict | None:

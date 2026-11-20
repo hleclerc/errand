@@ -331,6 +331,51 @@ if test( "what arrives after an exclusive request waits behind it" ):
         assert not Q.waiting_exclusive()
 
 
+if test( "every request waits in order: one that fits does not pass an older waiter ( ADR 0018 )" ):
+    with private_queue():
+        Q._capacity = { "cpus": 2.0, "ram": 16000.0, "gpus": 0.0 }
+        order = [ ]
+
+        def until( cond ):
+            end = time.time() + 10
+            while not cond():
+                assert time.time() < end, Q.describe()
+                time.sleep( 0.05 )
+
+        def want( label, cpus ):
+            with Q.claim( { "cpus": cpus }, label = label ):
+                order.append( label )
+
+        with Q.claim( { "cpus": 2 }, label = "running" ):
+            big = threading.Thread( target = want, args = ( "big", 2 ) )
+            big.start()
+            until( lambda: Q.waiting() )
+            small = threading.Thread( target = want, args = ( "small", 0 ) )
+            small.start()
+            until( lambda: len( Q.waiting() ) >= 2 )
+            rows = Q.waiting()
+            assert [ r[ "label" ] for r in rows ] == [ "big", "small" ], rows
+            assert "its turn" in "\n".join( Q.describe() ), Q.describe()
+            time.sleep( 0.5 )
+            assert order == [ ], order
+        big.join( 10 ); small.join( 10 )
+        assert order == [ "big", "small" ], order
+        assert not Q.waiting()
+
+
+if test( "a waiter whose process is gone is dropped at once" ):
+    with private_queue():
+        dead = subprocess.run( [ sys.executable, "-c", "import os; print( os.getpid() )" ],
+                               capture_output = True, text = True ).stdout.strip()
+        yamlish.write( Q._waiting_dir() / "gone.yaml", { "label": "gone", "pid": int( dead ), "host": Q.host(),
+                                                         "since": time.time() - 1 } )
+        assert Q.waiting() == [ ]
+        t0 = time.time()
+        with Q.claim( { }, label = "next" ):
+            pass
+        assert time.time() - t0 < 2.0
+
+
 if test( "`errand run -x cmd` runs the command through the queue and says its code" ):
     with private_queue() as tmp:
         r = subprocess.run( [ sys.executable, "-m", "errand", "run", "-x", sys.executable, "-c",

@@ -175,10 +175,12 @@ The machine (gpu-box)
 `errand wait` returns once nothing holds the machine and nothing waits for it: the end of a script
 that must not start before the benchmarks are done.
 
-## An exclusive request is not overtaken
+## First come, first served
 
-Whatever arrives after a queued exclusive request, or after a claim waiting to grow, **waits behind
-it**. Otherwise a steady stream of small runs would starve a benchmark for ever.
+Every request that waits is recorded, and **the oldest goes first**: whatever arrives after a queued
+request waits behind it, even when it would fit now. Otherwise a steady stream of small runs would
+starve a benchmark, or a [service](./serve) waiting for a card, for ever. A claim waiting to grow
+( `errand.require` ) is ahead of everything. A request whose process is gone is dropped at once.
 
 ## A card is assigned, not merely counted
 

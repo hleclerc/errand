@@ -44,13 +44,16 @@ __all__ = [
     "Vars", "Venv", "Micromamba", "Conda", "Uv", "Nix", "Guix", "Module",
     "Apptainer", "Docker", "Podman", "Ssh", "Slurm", "Mpi", "Preload", "Windows", "WindowsBox", "Missing",
     "Runner", "Level", "Outcome", "RunContext", "Errand", "Pytest", "Catch2", "Cargo",
-    "Python", "Executable",
+    "Python", "Executable", "services", "Service", "http_json",
 ]
 
 # Everything past the declaration surface is reached lazily: an entry file
 # imports from here, and finding entries means importing EVERY candidate file,
 # so that path must stay as cheap as a couple of stdlib modules.
 _LAZY = {
+    "services"  : "errand.serve",
+    "Service"   : "errand.serve",
+    "http_json" : "errand.serve",
     "main"      : "errand.cli",
     "configure" : "errand.config",
     "Env"       : "errand.config",

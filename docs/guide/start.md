@@ -15,6 +15,14 @@ The first word after errand's options is a `.py`, a file to execute, or a comman
 it belongs to that command. Each run is recorded in `errand-outputs/runs/`: what ran, how it ended,
 what it printed.
 
+```bash
+errand run -O train.py --lr 1e-3   # -O, --open: its page in the browser, live
+```
+
+The run's page shows its console, progress and curves as they come, and the images and pages it
+writes ( [`errand.view`](./steps#view-a-file-that-evolves) ), here or on a cluster. `errand web`
+lists every run. → [Every run, live in the browser](./web)
+
 ## 2. Declare a place
 
 ```bash

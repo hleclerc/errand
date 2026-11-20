@@ -1,4 +1,9 @@
-# Keeping environments current
+# Automatic installations
+
+An environment is installed where it runs, from what it declares, and kept current: nothing to do by
+hand on the other machine, not even installing errand ( it brings itself, and a Python when there is
+none ). The first command that needs a conda env, a venv or an image builds it there; the next one
+after a change to its declaration updates it.
 
 ```bash
 errand envs             # what is declared, and what state it is in
@@ -61,7 +66,7 @@ The push to another machine deletes what is only over there. What a layer builds
 ( an image with its `.new`, `.prev` and `.part`, a uv environment ) is excluded by its exact path, for
 every environment of the project. Anything else that exists only over there goes at the next push,
 and errand prints what went. Keep what you put there by hand outside the project's copy, or declare
-it as a [zone](./layers/ssh#what-gets-pushed).
+it as a [zone](./sync#zones).
 
 ## Where an image gets built
 

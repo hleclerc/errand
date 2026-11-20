@@ -63,7 +63,7 @@ export default defineConfig( {
             { text: 'Vars',                      link: '/guide/layers/vars' },
             { text: 'Missing',                   link: '/guide/layers/missing' },
           ] },
-          { text: 'Keeping them current', link: '/guide/upkeep' },
+          { text: 'Automatic installations', link: '/guide/upkeep' },
           { text: 'Choosing by tags',     link: '/guide/tags' },
         ]
       },
@@ -72,10 +72,13 @@ export default defineConfig( {
         items: [
           { text: 'Running a command',        link: '/guide/running' },
           { text: 'Results and records',      link: '/guide/output' },
+          { text: 'Smart sync',               link: '/guide/sync' },
+          { text: 'Data and results, computed once', link: '/guide/caching' },
           { text: 'Where a run is: steps',    link: '/guide/steps' },
           { text: 'Let it run: --batch, attach', link: '/guide/detached' },
           { text: 'Several runs: grids',      link: '/guide/matrices' },
           { text: 'Several processes (MPI)',  link: '/guide/mpi' },
+          { text: 'Every run, live: errand web', link: '/guide/web' },
         ]
       },
       {
@@ -84,9 +87,9 @@ export default defineConfig( {
           { text: 'What is running',          link: '/guide/status' },
           { text: 'Agents and keeping warm',  link: '/guide/agents' },
           { text: 'Sharing a machine',        link: '/guide/machine' },
+          { text: 'Servers kept while used',  link: '/guide/serve' },
           { text: 'Slurm allocations',        link: '/guide/layers/slurm' },
           { text: 'Windows VMs',              link: '/guide/layers/windows' },
-          { text: 'The screen',               link: '/guide/tui' },
         ]
       },
       {

@@ -40,6 +40,9 @@ VERBS = {
     "download": ( "a file into the project's cache, as errand.download does: errand download URL", [ "sha256" ] ),
     "caches": ( "the caches of the libraries the runs use ( $ERRAND_CACHES ), and what they no longer need, removed: "
                 "errand caches [MACHINE...] [--unused DAYS]", [ "dry_run", "unused" ] ),
+    "serve" : ( "a server kept while used, under the queue: errand serve [NAME | -- CMD], list, stop NAME, connect NAME "
+                "( errand serve --help )", [ ] ),
+    "hold"  : ( "a claim held while stdin is open: granted, warm / busy, evict ( errand hold --help )", [ ] ),
     "require": ( "inside a run: grow its claim, as errand.require does, then print what to set ( ADR 0014 )",
                  [ "exclusive", "cpus", "ram", "gpus", "gpu_ram" ] ),
 }

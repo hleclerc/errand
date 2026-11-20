@@ -256,7 +256,7 @@ def show_running( root: Path, everything = False, got = None ) -> int:
     started it: this project in full, one line per other project ( `--all`: all in full ), the
     machines errand boots, and the machines that could not be asked. -> how many processes."""
     got = tables() if got is None else got
-    rows, machines, failed, warm = [ ], [ ], [ ], [ ]
+    rows, machines, failed, warm, served = [ ], [ ], [ ], [ ], [ ]
     for machine, table, error in got:
         if table is None:
             failed.append( ( machine, error ) )
@@ -264,11 +264,13 @@ def show_running( root: Path, everything = False, got = None ) -> int:
         rows += _rows( machine, table )
         machines += [ { **vm, "machine": machine } for vm in table.get( "vms", [ ] ) ]
         warm += [ { **z, "machine": machine } for z in table.get( "zygotes", [ ] ) ]
+        served += [ { **v, "machine": machine } for v in table.get( "services", [ ] ) ]
         failed += [ ( f"{machine} > windows {g[ 'vm' ][ : 8 ]}", g[ "error" ] ) for g in table.get( "guests", [ ] ) if g.get( "error" ) ]
         failed += [ ( f"{machine} > {n[ 'node' ]} ( slurm job {n[ 'job' ]} )", n[ "error" ] ) for n in table.get( "nodes", [ ] ) if n.get( "error" ) ]
     # The bridges to environment agents are what is kept warm, not work: counted, listed under --all.
     agents_up = [ r for r in rows if r.get( "kind" ) == "agent" and not r.get( "waiting" ) and r[ "state" ] == "running" ]
-    work = [ r for r in rows if not r.get( "vm" ) and r not in agents_up ]
+    # A service's keeper is said as the service, below, not as work ( ADR 0018 ).
+    work = [ r for r in rows if not r.get( "vm" ) and r not in agents_up and "errand.serve keep" not in str( r.get( "what" ) ) ]
     mine = _project_names( root )
     projects = { }
     for r in work:
@@ -281,7 +283,7 @@ def show_running( root: Path, everything = False, got = None ) -> int:
     if asleep:
         print( dim( f"  not asked: {', '.join( asleep )} ( no work sent there lately, or switched off: `a` in errand tui,"
                     " `errand machines watch NAME on` )" ) )
-    if not work and not machines:
+    if not work and not machines and not served:
         print( dim( "  nothing" ) )
     current = sorted( ( n for n in projects if n in mine ) )
     for name in current + sorted( n for n in projects if n not in mine and everything ):
@@ -303,6 +305,14 @@ def show_running( root: Path, everything = False, got = None ) -> int:
         size = f", {vm[ 'cpus' ]} cpus {vm[ 'ram' ]}" if vm.get( "cpus" ) else ""
         state = bad( "orphaned: QEMU without its keeper" ) if vm[ "state" ] == "orphaned" else vm[ "state" ]
         print( f"  {vm[ 'machine' ]}: windows vm {vm[ 'name' ][ : 8 ]} " + state + dim( size ) )
+    for v in served:
+        ports = v.get( "ports" ) or { }
+        where = " ".join( f"{n}={p[ 'address' ]}" for n, p in ports.items() ) if len( ports ) > 1 else v.get( "address" ) or ""
+        conns = f", {v[ 'connections' ]} connection{'s' * ( v[ 'connections' ] != 1 )}" if v.get( "connections" ) else ""
+        queued = f", {v[ 'waiting' ]} waiting" if v.get( "waiting" ) else ""
+        print( f"  {v[ 'machine' ]}: service {v[ 'name' ]} " + ( good( v[ "state" ] ) if v[ "state" ] in ( "busy", "in use" )
+                                                                  else v[ "state" ] )
+               + dim( f"  {where}{conns}{queued}" + ( f"  {v[ 'detail' ]}" if v.get( "detail" ) and not conns else "" ) ) )
     if everything:
         for a in agents_up:
             print( dim( f"  {a[ 'machine' ]}: {a[ 'what' ]} kept warm for {Path( str( a.get( 'project' ) or '?' ) ).name}" ) )

@@ -117,13 +117,13 @@ errand run --env cluster --pull plots --pull checkpoints python train.py
 Each `DIR` is relative to the project root, and comes back after the command, whether it passed or
 failed. Other ways something comes back:
 
-- a `back` [zone](./layers/ssh#what-gets-pushed), declared once in the project:
+- a `back` [zone](./sync#zones), declared once in the project:
   `errand.configure( zones = { "/results": "back" } )`;
 - `fetch = [ "build" ]` on a [`Windows`](./layers/windows) or [`WindowsBox`](./layers/windows-box)
   layer, after each command.
 
 Only what was asked for comes back. The rest of the copy over there, and the records of other
-runs, stay where they are ( [Results are pulled, not pushed](./layers/ssh#results-are-pulled-not-pushed) ).
+runs, stay where they are ( [Results are pulled, not pushed](./sync#results-are-pulled-not-pushed) ).
 
 ## The runs tree
 

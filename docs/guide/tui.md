@@ -1,7 +1,15 @@
+---
+search: false
+sidebar: false
+aside: false
+---
+
 # The screen
 
-::: info Being redesigned
-`errand tui` is being rebuilt as a monitor of processes and machines: what runs where, what waits,
-what is kept warm, with a way to follow and stop each of them. This page will describe it once it
-lands. Until then, [`errand status`](./status) gives the same picture in the terminal.
-:::
+This page moved: [Every run, live in the browser](/guide/web#the-same-in-the-terminal-errand-tui).
+
+<script setup>
+import { onMounted } from 'vue'
+import { withBase } from 'vitepress'
+onMounted( () => location.replace( withBase( "/guide/web" + ( location.hash || "#the-same-in-the-terminal-errand-tui" ) ) ) )
+</script>

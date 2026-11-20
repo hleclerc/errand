@@ -138,3 +138,17 @@
   .vp-doc .by-hand-vs-errand .arrow { text-align: center; }
   .vp-doc .by-hand-vs-errand .arrow::before { content: "↓"; }
 }
+
+/* errand serve: the ports diagram ( guide/serve.md ) */
+.port-diagram { width: 100%; max-width: 760px; height: auto; margin: 20px 0; display: block; }
+.port-diagram text { fill: var(--vp-c-text-1); font-family: var(--vp-font-family-base); font-size: 13px; }
+.port-diagram .head { font-weight: 600; font-size: 14px; }
+.port-diagram .dim { fill: var(--vp-c-text-2); font-size: 12px; }
+.port-diagram .mono { font-family: var(--vp-font-family-mono); font-size: 12px; }
+.port-diagram .box { fill: var(--vp-c-bg-soft); stroke: var(--vp-c-divider); stroke-width: 1.5; }
+.port-diagram .keeper { fill: var(--vp-c-brand-soft); stroke: var(--vp-c-brand-1); stroke-width: 2; }
+.port-diagram .port { fill: var(--vp-c-bg); stroke: var(--vp-c-brand-1); stroke-width: 2.5; }
+.port-diagram .wire { stroke: var(--vp-c-text-2); stroke-width: 1.5; fill: none; }
+.port-diagram .refused { stroke: var(--vp-c-danger-1); stroke-width: 1.5; stroke-dasharray: 5 4; fill: none; }
+.port-diagram .cross { stroke: var(--vp-c-danger-1); stroke-width: 2.5; }
+.port-diagram .link { stroke: var(--vp-c-text-3); stroke-width: 1.5; stroke-dasharray: 3 4; fill: none; }

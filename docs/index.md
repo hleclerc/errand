@@ -22,16 +22,36 @@ features:
     details: "A conda or uv env, Apptainer or Docker, a server over ssh, a Slurm allocation, a Windows VM. Apptainer in Slurm over ssh is three lines."
     link: /guide/environments
     linkText: Environments
-  - icon: 🔄
-    title: Built from what you declare
-    details: "The env from its requirements, the image from its recipe: built on first use, updated when the declaration changes. What already exists is adopted, never rebuilt."
+  - icon: 📊
+    title: Live in the browser
+    details: "errand run -O opens the run's page: its console, progress, curves, images and HTML pages, live, wherever it runs. errand web: every run of every machine, with its parameters and results."
+    link: /guide/web
+    linkText: errand web
+  - icon: 🛠️
+    title: Automatic remote installations
+    details: "Nothing to install over there, not even errand. The env from its requirements, the image from its recipe: installed where it runs on first use, updated when the declaration changes. What already exists is adopted, never rebuilt."
     link: /guide/upkeep
-    linkText: Keeping them current
-  - icon: 📦
-    title: Files there and back
-    details: "The project is synced before the run. What you ask for comes back after: a directory, or an output directory per run."
-    link: /guide/output
-    linkText: Results and records
+    linkText: Automatic installations
+  - icon: 🔄
+    title: Smart sync
+    details: "Only what changed crosses, through the connection already open: 0.7 s when nothing did. What a run made over there is never deleted; results, live views and caches come back."
+    link: /guide/sync
+    linkText: Smart sync
+  - icon: 🗄️
+    title: Computed once, everywhere
+    details: "errand.download fetches a file once, even for a node with no internet. @errand.memo keeps a result by its inputs. Both reach every machine; library caches are kept tidy."
+    link: /guide/caching
+    linkText: Data and results
+  - icon: 🎛️
+    title: A fair share of the machine
+    details: "A run asks for cores, cards, a share of a card's memory, from the command line or from its own code. It waits its turn; a card is assigned, never just counted."
+    link: /guide/machine
+    linkText: Sharing a machine
+  - icon: 🛰️
+    title: Servers kept while used
+    details: "errand serve starts a server on demand, never twice, gives its card back to a computation while it rests, and stops it when nobody uses it."
+    link: /guide/serve
+    linkText: errand serve
   - icon: 🧹
     title: Nothing left behind
     details: "errand status lists what runs on every machine you sent work to. Ctrl-C stops it through every layer. What an agent leaves when it dies, the next one stops."
@@ -95,7 +115,7 @@ errand.envs[ "cluster" ] = errand.Env( [ errand.Ssh( host = "gpu-box", root = "~
 
 <Term scene="stack" caption="errand run --env cluster train.py. The ssh, the allocation and the container are the three layers declared above." />
 
-## Three things you stop doing
+## What you stop doing
 
 **Doing the dance.** `errand run --env cluster python train.py` pushes the project, gets an
 allocation, enters the container, runs, and brings `out/` back with `--pull out`. The output is in
@@ -114,6 +134,15 @@ running   ( on mac, gpu-box: this machine, and every machine work was sent to fr
 
 **Babysitting the connection.** Close the laptop: the work goes on over there, and its results
 still come back ( [`errand attach`](/guide/detached#close-the-laptop) when you want to follow it again ).
+
+**Computing it twice.** `@errand.memo` keeps a result by its inputs and `errand.download` a file by
+its hash, in a cache the sync carries both ways: computed on the GPU server, it is here after the
+command, and on the cluster after the next push. → [Computed once](/guide/caching)
+
+**Fetching a figure to look at it.** `errand run -O` opens the run's page in the browser, and it is
+live: the console, the progress bar, the curves, the images and HTML pages the run redraws, as they
+are written on the cluster. `errand web` lists every run of every machine as a tree, with a table of
+their parameters and results. → [Live in the browser](/guide/web)
 
 ## You stay in control
 

@@ -102,7 +102,7 @@ its machine's name in advance. Its parameters and its environment are known, so 
 ## Results come back when you ask
 
 A finished remote run stays over there until something collects it: `errand status`,
-`errand watch` and `errand attach` do. → [Results are pulled, not pushed](./layers/ssh#results-are-pulled-not-pushed)
+`errand watch` and `errand attach` do. → [Results are pulled, not pushed](./sync#results-are-pulled-not-pushed)
 
 ## Next
 
