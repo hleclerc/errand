@@ -67,6 +67,7 @@ environment.
 ```bash
 errand status          # what runs everywhere, then each --batch submission
 errand watch           # the submissions, live, until everything has landed
+errand stop b7f3       # stop it, wherever it was let go ( its record stays )
 errand forget b7f3     # drop a submission from the list; its results stay
 errand forget finished # drop every one that is over
 ```

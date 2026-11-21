@@ -122,7 +122,7 @@ def _main( argv = None ):
         print( bad( f"errand: {why}" ) )
         return 2
 
-    # The verbs that take no pattern take no word either, `forget`'s id and
+    # The verbs that take no pattern take no word either, `forget`'s and `stop`'s ids and
     # `vm`'s action aside: a stray word is a mistake worth hearing about.
     words = [ ]
     if verb not in ( "run", "list" ):
@@ -133,7 +133,7 @@ def _main( argv = None ):
             print( bad( f"errand {verb}: unknown option {unknown[ 0 ]}" ) )
             return 2
         wanted = { "forget": 1, "vm": 1, "setup": None, "attach": None, "agents": None, "machines": None,
-                   "download": 1, "web": None, "caches": None }.get( verb, 0 )
+                   "download": 1, "web": None, "caches": None, "stop": None }.get( verb, 0 )
         if wanted is not None and len( words ) != wanted:
             print( bad( f"errand {verb}: " + ( f"takes no argument ( got {' '.join( words )} )"
                                                if not wanted else "expects one argument" ) ) )
@@ -181,6 +181,10 @@ def _main( argv = None ):
     if verb == "caches":
         from . import caches as CC
         return CC.main( root, words, dry_run = known.dry_run, unused = known.unused )
+
+    if verb == "stop":
+        from . import stop
+        return stop.main( root, words, mine = bool( getattr( known, "mine", False ) ) )
 
     if verb == "forget":
         if words[ 0 ] == "finished":

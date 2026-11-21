@@ -245,3 +245,17 @@ the card, which the queue cannot know. `--url` added for scripts.
   private network namespace would close it ).
 - Tried on lmo the same day: `qwen3:14b` answered through `errand serve ollama --url`; a run of another
   session, now queued, waited for the busy service, then started as soon as it stopped.
+
+## Progress, 2026-11-20: step 6, `forward`
+
+Done, uncommitted:
+- The agent's `tcp` operation (`agents/tcpop.py`). A channel is a connection to a DECLARED service of the agent's
+  machine: ensured, connected through its announced port (counted as a use), bytes as IN/OUT, EXIT when the
+  service closes, CLOSE closes it. The lookup of the declarations is serialized: `serve.declared` refills one
+  global table.
+- `serve.forward( target, name, port )` and `errand serve forward NAME [--host H | --env E] [--port N]`.
+- `tests/test_forward.py`: a local agent; requests, bodies, 16 connections at once, 3 MB; a name not declared
+  refused.
+- Tried on lmo through ssh: Ollama's `/api/version`, 5.8 s for the first request (sources shipped, agent and
+  Ollama started), then 34 ms per request; stopped right after.
+- Left: `sviz open --there` (step 5); ADR 0026's `there = True`.

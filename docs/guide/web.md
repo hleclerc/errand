@@ -84,7 +84,8 @@ A row can also be killed, through every layer, once confirmed.
 ## Machines
 
 Tab `2`. Each machine of the ledger: its gauges ( CPUs, memory, cards ), measured only while shown,
-what holds it, its VMs and guests, what is kept warm. `a` watches a machine or not, `r` gives it a
+what holds it, its VMs and guests, what is kept warm. `a` switches a machine's gauges off or on ( what
+runs there is followed all the same ), or watches a dormant one; `r` gives it a
 name, `f` forgets it until work is sent there again.
 
 ## Caches

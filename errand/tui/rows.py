@@ -124,7 +124,7 @@ def build( machines, *, folded = (), opened = (), query = "", only = None, mine 
         name = m.name + ( " (here)" if m.here else "" )
         if getattr( m, "dormant", False ):
             # not contacted: greyed, how long without work, and nothing under it until `a`
-            rows.append( Row( name, "off" if m.watch_set is False else ago( time.time() - ( m.last or 0 ) ),
+            rows.append( Row( name, ago( time.time() - ( m.last or 0 ) ),
                               kind = "dormant", data = ( m.name, None ) ) )
             continue
         is_open = m.name not in folded
@@ -155,19 +155,14 @@ def _where( m ) -> str:
     return m.name if len( m.name ) <= 12 else m.name[ : 11 ] + "…"
 
 
-def _at( t: float, now: float ) -> str:
-    """When it started: the hour today, the day and the hour before."""
-    if time.localtime( t )[ : 3 ] == time.localtime( now )[ : 3 ]:
-        return time.strftime( "%H:%M", time.localtime( t ) )
-    return time.strftime( "%d %b %H:%M", time.localtime( t ) )
-
-
 def _work_row( m, p, mine ) -> Row:
-    """What runs or waits: its sign, its machine, what it is; its step, or what it waits for, and when it started."""
+    """What runs or waits: its sign, its machine, what it is; its step, or what it waits for, and for how long it
+    has been there ( as the tree's folders say how long ago, by its machine's clock )."""
     mark, words = state_of( p, m.now() )
     env = f"  {p[ 'env' ]}" if p.get( "env" ) else ""
     said = step_words( p.get( "step" ) ) if mark == "run" else words
-    when = _at( p[ "started" ], time.time() ) if p.get( "started" ) else ""
+    waited = mark == "wait" and ( p.get( "waiting" ) or { } ).get( "since" )      # its words say for how long already
+    when = ago( m.now() - p[ "started" ] ) if p.get( "started" ) and not waited else ""
     return Row( f"{_where( m ):<12} {p[ 'what' ]}{env}", f"{said}  {when}".strip(), kind = "proc", data = ( m.name, p ),
                 mark = mark )
 
@@ -302,9 +297,17 @@ def record_runs( machines, running = (), query = "", only = None ) -> list:
     machines ( the same list: the tree built from it is kept too )"""
     from ..agents import registry as G
     reg = G.shared()
-    reg.refresh( every = 3.0 )
+    # a run that just stopped running: its `result.yaml` read at once ( written as it ends here, brought back from over
+    # there ), and until then said `ending`, not `?`
+    now, running = time.time(), frozenset( running )
+    for x in _was_running[ 0 ] - running:
+        _ending[ x ] = now
+    _was_running[ 0 ] = running
+    for x in [ x for x, t in _ending.items() if now - t > ENDING or x in running ]:
+        del _ending[ x ]
+    reg.refresh( force = bool( _ending ) and now - getattr( reg, "at", 0 ) > 0.2, every = 3.0 )
     recs = _records( reg )
-    key = ( _recs[ 0 ], CHECKED_V[ 0 ], frozenset( running ), query, None if only is None else frozenset( only ),
+    key = ( _recs[ 0 ], CHECKED_V[ 0 ], running, frozenset( _ending ), query, None if only is None else frozenset( only ),
             tuple( ( m.name, getattr( m, "_host", None ) ) for m in machines ) )
     if _every[ 0 ] == key:
         return _every[ 1 ]
@@ -317,9 +320,31 @@ def record_runs( machines, running = (), query = "", only = None ) -> list:
             continue
         if ( only is None and not query ) or ( ( only is None or project_of( r ) in only ) and
                                                _matches( query, m.name, project_of( r ), r.get( "what" ), r.get( "env" ), r.get( "status" ) ) ):
-            out.append( ( m, r, ( r.get( "rel" ) in running or r.get( "leaf" ) in running ) and not r.get( "status" ) ) )
+            busy = ( r.get( "rel" ) in running or r.get( "leaf" ) in running ) and not r.get( "status" )
+            if not busy and not r.get( "status" ) and ( r.get( "rel" ) in _ending or r.get( "leaf" ) in _ending ):
+                r = { **r, "ending": True }
+            out.append( ( m, r, busy ) )
+    for m, r, _ in out:                                    # its result here: no longer ending
+        if r.get( "status" ):
+            _ending.pop( r.get( "rel" ), None )
+            _ending.pop( r.get( "leaf" ), None )
     _every[ 0 ], _every[ 1 ] = key, out
     return out
+
+
+ENDING = 900.0                      # how long a run that stopped running waits for its result before it is said lost
+_ending: dict = { }                 # rel or leaf -> when it stopped running
+_was_running: list = [ frozenset() ]
+
+
+def run_status( r: dict, running = False ) -> str:
+    """what a run of the record says it is: running, its result's status, `ending` ( stopped running, its `result.yaml`
+    not here yet ), `lost` ( it ended without one: killed, its machine gone )"""
+    return "running" if running else r.get( "status" ) or ( "ending" if r.get( "ending" ) else "lost" )
+
+
+def status_mark( status: str ) -> str:
+    return { "PASS": "ok", "FAIL": "FAIL", "SKIP": "skip", "running": "run", "ending": "wait" }.get( status, "lost" )
 
 
 # ── the check ( ADR 0025 ): the runs a machine noted that this one's record does not hold ─────────────────────────
@@ -440,11 +465,19 @@ def key( row: Row ):
     if isinstance( what, dict ) and "tree" in what:
         return ( kind, machine, what[ "tree" ] )                 # a node of the runs' tree ( ADR 0023 )
     if isinstance( what, dict ):
-        # a run by its leaf: the same whether it runs or is done -- the cursor stays on it as it ends
+        if kind in ( "proc", "run" ) and what.get( "leaf" ):
+            # a run by its path under `runs/`, no machine: the same whether it runs over there or is done and brought
+            # back here ( its record names its machine only once its `result.yaml` is here ) -- the cursor stays on it
+            return ( "work", None, run_ident( what ) )
         what = what.get( "leaf" ) or what.get( "ident" ) or what.get( "id" ) or what.get( "name" )
         if kind in ( "proc", "run" ):
             kind = "work"
     return ( kind, machine, what )
+
+
+def run_ident( r: dict ) -> str:
+    """what names a run in `key`: its path under its project's `runs/`, the same here and on the machine it ran on"""
+    return r.get( "rel" ) or rel_of( r.get( "leaf" ) ) or str( r.get( "leaf" ) )
 
 
 def facts( row: Row, m ) -> list:
@@ -462,12 +495,9 @@ def facts( row: Row, m ) -> list:
         return caches.facts( row )
     if row.kind == "dormant":
         line( "machine", m.name )
-        if m.watch_set is False:
-            line( "off", "not contacted: switched off ( a switches it on again; work sent there does too )" )
-        else:
-            line( "dormant", f"no work sent there for {ago( time.time() - ( m.last or 0 ) )}: not contacted, so that no "
-                             "agent starts there for nothing" )
-            line( "a", "contacts it, now and from now on ( saved: errand status too )" )
+        line( "dormant", f"no work sent there for {ago( time.time() - ( m.last or 0 ) )}: not contacted, so that no "
+                         "agent starts there for nothing" )
+        line( "a", "contacts it, now and from now on ( saved: errand status too )" )
         return out
     if row.kind in ( "machine", "broken" ):
         line( "machine", m.name + ( "  ( this machine )" if m.here else "" ) )

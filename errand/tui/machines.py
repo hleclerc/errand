@@ -14,14 +14,15 @@ import time
 
 class Machine:
     def __init__( self, name: str, target: dict | None = None, last: float | None = None, names = ( ),
-                  watch = None ):
+                  watch = None, gauges = True ):
         self.name, self.target = name, target          # target None: this machine
         self.names   = list( names ) or [ name ]       # every name it is reached by ( `ledger.groups` )
         self.last    = last                            # when work was last sent there ( the ledger's )
-        self.watch_set = watch                         # True / False when set with `a`, None: as its work says
-        # not contacted: switched off ( `a` ), or no work there for a day: no agent started for nothing
+        self.watch_set = watch                         # True when always contacted, None: as its work says
+        self.gauges  = gauges                          # its gauges measured ( switched off with `a` )
+        # not contacted: no work there for a day, no agent started for nothing ( `a` contacts it )
         idle = target is not None and last is not None and time.time() - last > _dormant_after()
-        self.dormant = target is not None and ( watch is False or ( watch is None and idle ) )
+        self.dormant = target is not None and watch is not True and idle
         self.table   : dict | None = None
         self.history : dict | None = None
         self.error   : str | None = None
@@ -87,8 +88,10 @@ class Machine:
                 self.wake.clear()
 
     def want_resources( self, on: bool ):
-        """its resources measured and said while something shows them ( the machines tab ), not otherwise"""
-        on = bool( on )
+        """its resources measured and said while something shows them ( the machines tab ), not otherwise; never when
+        its gauges are switched off ( `a` )"""
+        self._wanted = bool( on )
+        on = bool( on ) and self.gauges
         if on == getattr( self, "_resources", False ):
             return
         self._resources = on
@@ -194,7 +197,7 @@ def watched( ) -> list:
     out = [ Machine( ledger.here_name() ) ]
     for g in ledger.groups():                         # a machine once, whatever names it is reached by
         if g[ "name" ] not in ( m.name for m in out ):
-            out.append( Machine( g[ "name" ], g[ "target" ], g[ "last" ], g[ "names" ], g.get( "watch" ) ) )
+            out.append( Machine( g[ "name" ], g[ "target" ], g[ "last" ], g[ "names" ], g.get( "watch" ), g.get( "gauges", True ) ) )
     return out
 
 

@@ -437,6 +437,61 @@ if test( "errand agents lists what the hub keeps, and stop takes it all down, th
         assert "no hub running" in errand( "agents" ).stdout
 
 
+if test( "agents stop finds every agent here by its directory, no hub needed: an older one terminated, a busy one left" ):
+    agents = fresh()
+    from errand.agents import stopping
+    with scratch() as d:
+        base = Path( d ) / "agents"
+        names = ( "host-new-x", "env-old-y", "env-busy-z" )
+        conns = { n: agents.open( local( base / n, keep = 60 ), noted = False ) for n in names }
+        pids = { n: c.ping()[ "pid" ] for n, c in conns.items() }
+        agents.start( conns[ "env-busy-z" ], [ "sh", "-c", f"echo $$ > {d}/busy; while :; do sleep 0.1; done" ] )
+        work = wait_for( f"{d}/busy" )
+        asked = agents.ask_hub
+
+        def older( root, req, timeout = 30.0 ):        # an agent of sources older than `stop`: it does not answer it
+            return None if req.get( "op" ) == "stop" and Path( root ).name == "env-old-y" else asked( root, req, timeout )
+        agents.ask_hub = older
+        try:
+            said = { s[ "id" ]: s[ "how" ] for s in stopping.sweep( roots = [ Path( d ) ] ) }
+        finally:
+            agents.ask_hub = asked
+        assert said == { "env-old-y": "stopped ( older sources: terminated )", "env-busy-z": "left: 1 running",
+                         "host-new-x": "stopped" }, said
+        assert gone( pids[ "host-new-x" ] ) and gone( pids[ "env-old-y" ] ) and not gone( pids[ "env-busy-z" ], 0.5 )
+        assert list( stopping.sweep( roots = [ Path( d ) ], spare = base / "env-busy-z" ) ) == [ ], "the one doing it spared"
+        said = { s[ "id" ]: s[ "how" ] for s in stopping.sweep( "busy", force = True, roots = [ Path( d ) ] ) }
+        assert said == { "env-busy-z": "stopped" } and gone( pids[ "env-busy-z" ] ) and gone( work, 15 ), said
+        for c in conns.values():
+            c.close()
+        agents._open.clear()
+
+
+if test( "agents stop: one held by another node of a shared file system is not asked here, but there" ):
+    agents = fresh()
+    from errand.agents import stopping
+    with scratch() as d:
+        base = Path( d ) / "agents"
+        conn = agents.open( local( base / "env-far-x", keep = 60 ), noted = False )
+        pid = conn.ping()[ "pid" ]
+        assert ( base / "env-far-x" / "host" ).read_text() == __import__( "socket" ).gethostname(), "it says where it runs"
+        ( base / "env-far-x" / "host" ).write_text( "node-elsewhere" )
+        hopped = [ ]
+        kept = stopping._hop
+        stopping._hop = lambda host, names, match, force: hopped.append( ( host, names ) ) or [ { "id": f"{host}: {n}", "how": "stopped" } for n in names ]
+        try:
+            said = stopping.sweep( roots = [ Path( d ) ] )
+        finally:
+            stopping._hop = kept
+        assert hopped == [ ( "node-elsewhere", [ "env-far-x" ] ) ] and said == [ { "id": "node-elsewhere: env-far-x", "how": "stopped" } ], said
+        assert not gone( pid, 0.5 ), "not asked here"
+        assert stopping.sweep( roots = [ Path( d ) ], hop = False ) == [ { "id": "env-far-x", "how": "unreachable: held on node-elsewhere" } ]
+        ( base / "env-far-x" / "host" ).unlink()
+        assert stopping.sweep( roots = [ Path( d ) ] ) == [ { "id": "env-far-x", "how": "stopped" } ] and gone( pid )
+        conn.close()
+        agents._open.clear()
+
+
 if test( "a remote shell's command is told apart from its options" ):
     from errand.agents.rsh import command_of
     assert command_of( [ "lmo", "sh", "-c", "true" ] ) == "sh -c true"

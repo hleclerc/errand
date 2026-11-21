@@ -120,7 +120,7 @@ if test( "errand web: what agents say becomes notices; `/events` pushes them to 
             n0 = w._said_n
             m.event( { "output": [ "p1" ] } )
             n, lists, details = w.notices( n0, wait = 2 )
-            assert n > n0 and not lists and json.dumps( [ "work", "box", "/x/leaf" ] ) in details, ( lists, details )
+            assert n > n0 and not lists and json.dumps( [ "work", None, "/x/leaf" ] ) in details, ( lists, details )
             c = http.client.HTTPConnection( "127.0.0.1", w.port, timeout = 10 )
             cookie = None
             c2 = http.client.HTTPConnection( "127.0.0.1", w.port, timeout = 10 )

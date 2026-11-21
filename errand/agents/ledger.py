@@ -157,6 +157,7 @@ def groups( ) -> list:
         oldest = min( rs, key = lambda r: ( r.get( "first", float( "inf" ) ), len( r[ "name" ] ) ) )
         groups.append( { "label": label, "name": label or oldest[ "name" ], "names": sorted( r[ "name" ] for r in rs ),
                          "watch": next( ( r[ "watch" ] for r in rs if r.get( "watch" ) is not None ), None ),
+                         "gauges": all( gauges( r ) for r in rs ),
                          "target": latest[ "target" ], "last": latest.get( "last", 0 ),
                          "host": next( ( r[ "host" ] for r in rs if r.get( "host" ) ), None ) } )
     return sorted( groups, key = lambda g: -g[ "last" ] )
@@ -201,10 +202,32 @@ def set_watch( name: str, on ) -> list:
 
 
 def watched( rec: dict, now = None ) -> bool:
-    """Whether errand contacts it: as set ( `set_watch` ), else while work was sent there lately."""
-    if rec.get( "watch" ) is not None:
-        return bool( rec[ "watch" ] )
+    """Whether `errand status`, `errand tui` and `errand web` contact it: always when set so ( `set_watch` ), else
+    while work was sent there lately. ( A `watch: false` of older ledgers meant its gauges unwanted: `gauges`. )
+    `errand agents stop` contacts every machine, whatever this says."""
+    if rec.get( "watch" ) is True:
+        return True
     return not dormant( rec, now )
+
+
+def gauges( rec: dict ) -> bool:
+    """Whether its gauges ( CPU, memory, GPUs ) are measured while the machines tab shows them: not when switched off
+    ( `set_gauges`, `a` in errand tui / web ) -- what runs there is followed all the same."""
+    return rec.get( "gauges" ) is not False and rec.get( "watch" ) is not False
+
+
+def set_gauges( name: str, on: bool ) -> list:
+    """The gauges of the machine `name` ( any of its names, or its label ) measured or not, from now on. -> its names."""
+    names = next( ( g[ "names" ] for g in groups() if name in g[ "names" ] or name == g[ "label" ] ), [ ] )
+    for p, rec in _files():
+        if rec.get( "name" ) in names:
+            rec[ "gauges" ] = bool( on )
+            if rec.get( "watch" ) is False:
+                rec[ "watch" ] = None                        # ( an older ledger's way of saying it )
+            tmp = p.with_suffix( ".tmp" )
+            tmp.write_text( json.dumps( rec ) )
+            tmp.replace( p )
+    return names
 
 
 def dormant( rec: dict, now = None ) -> bool:

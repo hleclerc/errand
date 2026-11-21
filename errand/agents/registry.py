@@ -3,7 +3,9 @@ here, wherever the run ran -- a run sent to another machine has its directory he
 The runs' tab is built from it, with exact counts.
 
 Kept as an index in memory and on disk ( `runs-index.json` in errand's cache ): one compact record per run, with the date
-of its `result.yaml`, so that a run is read once, again only when its record changes. `refresh()` walks the directories'
+of its `result.yaml`, so that a run is read once, again only when its record changes. What a run is ( name, file,
+parameters, machine ) comes from its `launch.yaml`, written as it starts ( here too for a run sent away ); how it went
+from its `result.yaml`. `refresh()` walks the directories'
 dates ( 0.25 s for 63,000 runs ) and reads what changed; it runs when the bell rings ( a run ends, is brought back ) and
 every `SWEEP` seconds. The host agent holds one, which serves the page; the TUI another, from the same file.
 
@@ -227,8 +229,8 @@ class Registry:
                     at = res.stat().st_mtime
                 except OSError:
                     at = 0.0
-                if had is not None and had.at == at:
-                    continue
+                if had is not None and had.at == at and ( had.name or not ( Path( leaf ) / "launch.yaml" ).exists() ):
+                    continue                                       # ( no result yet: its `launch.yaml` once there )
                 self._read( root, top, leaf, name, at )
                 changed = True
         gone = [ l for l in self.runs if l not in found ]
@@ -245,7 +247,9 @@ class Registry:
         return changed
 
     def _read( self, root, top, leaf, name, at ):
-        said = read_result( Path( leaf ) / "result.yaml" ) if at else { }
+        # what it is from its `launch.yaml` ( written as it starts ), how it went from its `result.yaml` ( an older
+        # errand's: everything there )
+        said = { **read_result( Path( leaf ) / "launch.yaml" ), **( read_result( Path( leaf ) / "result.yaml" ) if at else { } ) }
         rel = os.path.relpath( leaf, top ).replace( os.sep, "/" )
         started = _started( said.get( "stamp" ) or name, at or _mtime( leaf ) )
         run = Run( sys_intern( root ), rel, at, started = started,

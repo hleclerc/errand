@@ -32,7 +32,9 @@ VERBS = {
     "wait"  : ( "wait until nothing holds the machine", [ ] ),
     "status": ( "what runs on every machine work was sent to, then how the --batch work is going", [ "all" ] ),
     "watch" : ( "the same, live", [ ] ),
-    "forget": ( "drop a submission from the list: errand forget ID, or every one that is over: errand forget finished", [ ] ),
+    "stop"  : ( "stop what runs, by the id errand status shows ( running or waiting in a queue ), on any machine: "
+                "errand stop [ID...] ( alone: chosen in a list )", [ "mine" ] ),
+    "forget": ( "drop a --batch submission from the list ( nothing is stopped ): errand forget ID, or every one that is over: errand forget finished", [ ] ),
     "attach": ( "follow again what a command left running ( a lost connection ), and bring it back", [ ] ),
     "vm"    : ( "the virtual machines kept warm between commands: errand vm stop", [ ] ),
     "agents": ( "what is kept between commands: errand agents [stop [NAME]]", [ "force" ] ),
@@ -125,6 +127,8 @@ def build_parser( tag_names = ( ) ):
     p.add_argument( "--unused", dest = "unused", type = float, default = None, metavar = "DAYS",
                     help = "caches: also what has not served for DAYS days ( ADR 0022 )" )
     p.add_argument( "--sha256", default = None, help = "download: the hash the file must have ( never required )" )
+    p.add_argument( "--mine", dest = "mine", action = "store_true",
+                    help = "stop: everything this project runs, on every machine work was sent to" )
     p.add_argument( "--all", dest = "all", action = "store_true", help = "status: every project in full, not one line each" )
 
     for name in tag_names:

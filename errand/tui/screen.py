@@ -578,11 +578,11 @@ class Screen:
         threading.Thread( target = go, daemon = True ).start()
 
     def activate( self ):
-        """`a`: a machine contacted or not, from now on ( `actions.toggle_watch` )."""
+        """`a`: a machine not contacted, contacted from now on; one contacted, its gauges off or on ( `actions.toggle_watch` )."""
         from . import actions as A
         row = self.list.current()
         if row is None or row.kind not in ( "machine", "broken", "dormant" ):
-            self.message = "a: on a machine, to watch it or not"
+            self.message = "a: on a machine, to watch it, or its gauges off or on"
             return
         try:
             self.message = A.toggle_watch( self.machine( row.data[ 0 ] ) )
@@ -681,7 +681,7 @@ def detail_rows( row, m, got, preview = None ) -> list:
     return out
 
 
-OWN  = ( "stdout.txt", "stderr.txt", "steps.jsonl", "result.yaml", "summary.yaml" )   # what errand writes in every run
+OWN  = ( "stdout.txt", "stderr.txt", "steps.jsonl", "result.yaml", "launch.yaml", "summary.yaml" )   # what errand writes in every run
 RICH = ( ".html", ".htm", ".svg", ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".mp4", ".webm" )
 
 

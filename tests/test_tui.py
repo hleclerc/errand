@@ -69,7 +69,9 @@ if test( "the runs tab: what runs, what waits, every run as a tree ( ADR 0023 ),
     rows = R.build( [ a_machine() ] )
     assert rows[ 1 ].label.split()[ 1 ] == "run" and "test_x.py::solve" in rows[ 1 ].label, "the machine, then what"
     waits = rows[ 4 ].detail
-    assert "waiting: slurm job 81234 pending, 2 min" in waits and re.search( r"\d\d:\d\d$", waits ), waits
+    assert waits.endswith( "waiting: slurm job 81234 pending, 2 min" ), "how long it waits, once, not an hour ( " + waits + " )"
+    runs = rows[ 2 ].detail
+    assert not re.search( r"\d\d:\d\d", runs ) and re.search( r"\d+ (s|min|h)", runs ), "a run running says for how long: " + runs
     assert rows[ 5 ].open is False and rows[ 5 ].detail.startswith( "1 run" ), "its file, folded: how many runs, when"
     run = next( r for r in R.build( [ a_machine() ], unfold = True ) if r.kind == "run" )
     assert run.mark == "FAIL" and re.match( r"\d\d:\d\d", run.label ), run.label
@@ -386,7 +388,7 @@ if test( "a machine without work for a day is greyed and not contacted until a; 
         shutil.rmtree( base, ignore_errors = True )
 
 
-if test( "a on a watched machine stops watching it, saved; agents kept warm are no work" ):
+if test( "a on a watched machine switches its gauges off, saved, what runs followed still; agents kept warm are no work" ):
     from errand.agents import ledger
     from errand.tui import rows as R
     from errand.tui.loop import handle
@@ -405,14 +407,20 @@ if test( "a on a watched machine stops watching it, saved; agents kept warm are 
         assert dict( R.facts( rows[ 0 ], m ) )[ "agents" ].startswith( "1 kept warm" )
         screen = Screen( [ m ] )
         screen.list.rows = rows
+        sent = [ ]
+        m._call = type( "C", ( ), { "send": lambda self, kind, data: sent.append( data ) } )()
+        m.want_resources( True )
         handle( screen, ord( "a" ) )
-        assert m.dormant and m.table is None and "not watched" in screen.message, screen.message
-        assert ledger.groups()[ 0 ][ "watch" ] is False and not ledger.watched( ledger.groups()[ 0 ] ), "not saved"
-        assert R.build( [ m ], tab = "machines" )[ 0 ].detail == "off"
-        ledger.note( { "kind": "ssh", "host": "lmo", "options": [ ], "python": "python3", "keep_alive": 900 } )
-        os.utime( next( ( base / "ledger" ).glob( "*.json" ) ), ( 0, 0 ) )        # past REFRESH: written again
-        ledger.note( { "kind": "ssh", "host": "lmo", "options": [ ], "python": "python3", "keep_alive": 900 } )
-        assert ledger.groups()[ 0 ][ "watch" ] is None and ledger.watched( ledger.groups()[ 0 ] ), "work sent there: watched again"
+        assert not m.dormant and m.table is not None and not m.gauges and "gauges not measured" in screen.message, screen.message
+        assert sent == [ b'{"resources": true}', b'{"resources": false}' ], sent
+        g = ledger.groups()[ 0 ]
+        assert g[ "gauges" ] is False and ledger.watched( g ), "saved, and still contacted"
+        m.want_resources( True )
+        assert len( sent ) == 2, "the machines tab shown again: still no gauges"
+        handle( screen, ord( "a" ) )
+        assert m.gauges and ledger.groups()[ 0 ][ "gauges" ] is True and sent[ -1 ] == b'{"resources": true}', sent
+        old = { "name": "x", "watch": False }                                      # an older ledger's `watch: false`
+        assert not ledger.gauges( old ) and ledger.watched( { **old, "last": time.time() } ), "read as its gauges off"
     finally:
         if kept is None:
             os.environ.pop( "ERRAND_CACHE_DIR", None )

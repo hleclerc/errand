@@ -94,6 +94,7 @@ errand shell --env win          # cmd.exe in the Windows guest
 errand agents              # the hub, and each agent it keeps a connection to
 errand agents stop gpu     # those whose name contains "gpu"
 errand agents stop         # all of them, and the hub
+errand agents restart      # all of them stopped, then this machine's agent started again, with its page
 ```
 
 ```text
@@ -104,6 +105,12 @@ errand agents stop         # all of them, and the hub
 
 Stopping goes from the far end: an environment before the machine or the allocation it runs in. An
 agent with something running is left alone and says so; `--force` stops it, and what it runs.
+
+It does not depend on the hub: every agent of this machine is found by its directory, whichever errand
+started it ( an agent of older sources too, and the one serving the page ), and on each machine reached
+lately, the agent there does the same. After a change to errand itself, `errand agents restart` starts
+from nothing: everything stopped, then this machine's agent started again from these sources, and the
+address of its page said ( the same port and token: a tab already open just reloads ).
 
 ## Watching, without asking again
 

@@ -85,20 +85,23 @@ def _records( d: Path ) -> list:
 
 
 def _result( leaf: str ) -> dict:
+    """what its `result.yaml` says, else what its `launch.yaml` does ( it runs: what it is, not yet how it went )"""
     from .. import yamlish
-    path = Path( leaf ) / "result.yaml"
-    try:
-        mtime = path.stat().st_mtime_ns
-    except OSError:
-        _results.pop( leaf, None )
-        return { }
-    got = _results.get( leaf )
-    if got is None or got[ 0 ] != mtime:
+    for name in ( "result.yaml", "launch.yaml" ):
+        path = Path( leaf ) / name
         try:
-            got = _results[ leaf ] = ( mtime, yamlish.read( path ) or { } )
-        except Exception:
-            return { }
-    return got[ 1 ]
+            mtime = path.stat().st_mtime_ns
+        except OSError:
+            continue
+        got = _results.get( leaf )
+        if got is None or got[ 0 ] != ( name, mtime ):
+            try:
+                got = _results[ leaf ] = ( ( name, mtime ), yamlish.read( path ) or { } )
+            except Exception:
+                return { }
+        return got[ 1 ]
+    _results.pop( leaf, None )
+    return { }
 
 
 def runs( limit = 50 ) -> dict:

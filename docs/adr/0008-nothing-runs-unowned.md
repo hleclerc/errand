@@ -166,6 +166,14 @@ result of an earlier run with the same parameters. It also has to check the subm
      real install.
    - Side fix: a result carries its command's `stamp`, and a `--batch` submission only takes the
      results of its own stamp.
+   - *2026-11-20*: `errand stop ID...` ( `--mine` ): the same `kill` as `k` in `errand tui`, from the
+     command line, by the id `status` shows, on whichever machine runs it ( this one directly, another
+     through its agent ). The kill op takes `wait`: the escalation is done before the answer, so a
+     command that leaves sees the end. A run waiting in a machine's queue is a process of its agent
+     like another: stopped, its `waiting/` request goes ( a dead pid is dropped at once ) and what was
+     behind it moves up. A `--batch` submission is stopped by its handle ( process group, `scancel` ).
+     `errand stop` alone, at a terminal, lists what runs or waits and asks which; `status` shows the ids
+     of the projects it says in one line.
 
 ## Settled with Hugo, 2026-11-14
 

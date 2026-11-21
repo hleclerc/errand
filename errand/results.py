@@ -34,6 +34,7 @@ from pathlib import Path
 from . import yamlish
 
 RESULT   = "result.yaml"
+LAUNCH   = "launch.yaml"     # what the run is, written as it starts: its name, file, parameters, machine
 SUMMARY  = "summary.yaml"
 OUTPUT   = "output.txt"
 STDOUT   = "stdout.txt"      # the process's own streams, as written to its descriptors
@@ -42,7 +43,7 @@ LATEST   = "latest"
 
 # What a run directory holds from its start on ( `steps.FILE` included ): with them and without
 # `result.yaml`, a run is still going -- or died before its record was written.
-RUN_MARKS = ( OUTPUT, STDOUT, STDERR, "steps.jsonl" )
+RUN_MARKS = ( OUTPUT, STDOUT, STDERR, "steps.jsonl", LAUNCH )
 
 
 _STAMP = None
@@ -334,17 +335,34 @@ def _peak_windows( ) -> float | None:
 
 # ── writing ──────────────────────────────────────────────────────────────────
 
-def crash_record( *, entry, root, env_name, where, tags, params, version, provenance = None ) -> str:
+def launch_record( *, entry, root, env_name, where, tags, params, version, provenance = None ) -> dict:
+    """What a run is, known as it starts ( `launch.yaml` ): its name, file, parameters, environment, machine. Read
+    for the lists without its `result.yaml`, which says how it went; written here, and on the side that drives it in
+    the run's directory there ( `cli.render` ), so that a run sent away is known here from its start."""
+    commit, dirty = provenance if provenance is not None else git_commit( root )
+    return { "name": entry.name, "file": _under( entry.file, root ), "line": entry.line, "date": now(),
+             "stamp": stamp(), "env": env_name, "place": where, "host": socket.gethostname().split( "." )[ 0 ],
+             "commit": commit, "dirty": dirty, "errand": version, "params": _plain( params ), "tags": _plain( tags ) }
+
+
+def note_launch( leaf: Path, launch: dict ):
+    """`launch.yaml` in the directory here of a run that runs elsewhere ( its `head` said it ): the lists know it from
+    its start, its machine and parameters included. Best effort; never over a run already back."""
+    try:
+        if ( leaf / RESULT ).exists() or ( leaf / LAUNCH ).exists():
+            return
+        leaf.mkdir( parents = True, exist_ok = True )
+        yamlish.write( leaf / LAUNCH, launch )
+    except OSError:
+        pass
+
+
+def crash_record( launch: dict ) -> str:
     """The record of a run whose process ended before writing its own, rendered when it starts: what
     the keeper of its streams writes then ( `streams.raw` ), so that it reads as what it was."""
-    commit, dirty = provenance if provenance is not None else git_commit( root )
-    return yamlish.dump( {
-        "name": entry.name, "file": _under( entry.file, root ), "line": entry.line, "date": now(),
-        "stamp": stamp(), "env": env_name, "place": where, "host": socket.gethostname().split( "." )[ 0 ],
-        "commit": commit, "dirty": dirty, "errand": version, "status": "FAIL",
-        "error": f"the process ended during the run, before its record was written ( see {STDERR} )",
-        "duration_s": None, "ram_mb": None, "params": _plain( params ), "tags": _plain( tags ),
-        "results": { }, "output_file": None } )
+    return yamlish.dump( { **launch, "status": "FAIL",
+                           "error": f"the process ended during the run, before its record was written ( see {STDERR} )",
+                           "duration_s": None, "ram_mb": None, "results": { }, "output_file": None } )
 
 
 def write_result( leaf: Path, *, entry, root, env_name, where, tags, status, error,

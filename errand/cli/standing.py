@@ -1,7 +1,10 @@
 """What stays between commands, and what is still running: `errand agents`, and the head of `errand status`.
 
     errand agents                 the hub, and every agent it keeps a stream to
-    errand agents stop [NAME]     those whose name holds NAME go now ( all of them, and the hub, without )
+    errand agents stop [NAME]     those whose name holds NAME go now ( all of them, and the hub, without ): those the
+                                  hub reaches, every one of this machine ( older sources too ), those of the machines
+                                  reached lately; one that runs something stays, unless --force
+    errand agents restart         all of them stopped, then this machine's host agent started again: its page back
 
 An agent with something running is left alone, unless `--force`. An allocation held warm goes
 with its agent: the job ends.
@@ -67,7 +70,16 @@ def _show_kept_here():
         print( dim( f"  windows vm {vm[ 'name' ][ : 8 ]}  {vm[ 'state' ]}  keeper pid {vm[ 'keeper' ]}  ( errand vm stop )" ) )
 
 
-def stop( match: str | None, force = False ) -> int:
+def stop( match: str | None, force = False, machines = True ) -> int:
+    """The hubs' agents, then every agent of this machine found by its directory ( any sources, reached by a hub or
+    not: `agents.stopping` ), then those of the machines reached lately, by their agent there."""
+    from ..agents import stopping
+
+    def said( who, how ):
+        line = f"  {who}: {how}"
+        print( warn( line + "  ( --force stops it )" ) if how.startswith( "left" ) else
+               bad( line ) if how.startswith( "unreachable" ) or how.endswith( "still there" ) else dim( line ) )
+
     seen = 0
     for root in hubs():
         got = agents.ask_hub( root, { "op": "stop", "match": match, "force": force }, timeout = 120 )
@@ -75,13 +87,31 @@ def stop( match: str | None, force = False ) -> int:
             continue
         seen += 1
         for s in got.get( "stopped" ) or [ ]:
-            line = f"  {s[ 'id' ]}: {s[ 'how' ]}"
-            print( warn( line + "  ( --force stops it )" ) if s[ "how" ].startswith( "left" ) else dim( line ) )
+            said( s[ "id" ], s[ "how" ] )
         if got.get( "hub" ):
             print( dim( f"  hub {root.name}: stopped" ) )
-    if not seen:
-        print( dim( "  no hub running: nothing to stop" ) )
-    return 0
+    here = stopping.sweep( match or "", force )
+    for s in here:
+        said( s[ "id" ], s[ "how" ] )
+    failed = stopping.remote( match or "", force, say = said ) if machines else 0
+    if not seen and not here:
+        print( dim( "  no agent running here" ) )
+    left = any( s[ "how" ].startswith( "left" ) for s in here )
+    return 1 if left or failed else 0
+
+
+def restart( force = False ) -> int:
+    """`errand agents restart`: every agent stopped ( `stop` ), then this machine's host agent started again, of these
+    sources -- and its page with it: its address said ( the same port, the same token: a tab open on it reloads )."""
+    from .. import web
+    rc = stop( None, force )
+    got = web.ensure()
+    if got is None:
+        print( bad( f"  no page: the host agent in {web.host_agent_dir()} serves none ( its log says why )" ) )
+        return 1
+    print( dim( f"  host agent {web.host_agent_dir().name}: started" ) )
+    print( f"  {got[ 'url' ]}?o={web.once()}" + dim( f"   ( once, within {web.ONCE_FOR / 60:.0f} min; a tab already open reloads )" ) )
+    return rc
 
 
 def main( words: list, force = False ) -> int:
@@ -89,7 +119,10 @@ def main( words: list, force = False ) -> int:
         return show()
     if words[ 0 ] == "stop" and len( words ) <= 2:
         return stop( words[ 1 ] if len( words ) == 2 else None, force )
-    print( bad( f"errand agents: unknown action {' '.join( words )!r} ( `errand agents`, `errand agents stop [NAME]` )" ) )
+    if words == [ "restart" ]:
+        return restart( force )
+    print( bad( f"errand agents: unknown action {' '.join( words )!r} "
+                "( `errand agents`, `errand agents stop [NAME]`, `errand agents restart` )" ) )
     return 2
 
 
@@ -279,9 +312,9 @@ def show_running( root: Path, everything = False, got = None ) -> int:
     print( head( "\nrunning" ) + dim( f"   ( on {', '.join( m for m, _, _ in got )}: this machine"
                                        + ( ", and every machine work was sent to from it )" if got[ 1 : ] else " )" ) ) )
     from ..agents import ledger
-    asleep = [ r[ "name" ] + ( " ( off )" if r.get( "watch" ) is False else "" ) for r in ledger.groups() if not ledger.watched( r ) ]
+    asleep = [ r[ "name" ] for r in ledger.groups() if not ledger.watched( r ) ]
     if asleep:
-        print( dim( f"  not asked: {', '.join( asleep )} ( no work sent there lately, or switched off: `a` in errand tui,"
+        print( dim( f"  not asked: {', '.join( asleep )} ( no work sent there lately: `a` in errand tui,"
                     " `errand machines watch NAME on` )" ) )
     if not work and not machines and not served:
         print( dim( "  nothing" ) )
@@ -300,7 +333,10 @@ def show_running( root: Path, everything = False, got = None ) -> int:
                 by.setdefault( ( r[ "machine" ], state ), 0 )
                 by[ ( r[ "machine" ], state ) ] += 1
             said = ", ".join( f"{n} {s if s in ( 'running', 'waiting' ) else bad( s )} on {m}" for ( m, s ), n in sorted( by.items() ) )
-            print( f"  {name}: " + said )
+            # the ids, for `errand stop`, as long as they hold on the line
+            ids = [ r[ "id" ] if r[ "id" ].startswith( "pgid" ) else r[ "id" ][ : 8 ] for r in projects[ name ] ]
+            shown = dim( f"   {' '.join( ids )}" if len( ids ) <= 6 else f"   {' '.join( ids[ : 5 ] )} … ( --all lists them )" )
+            print( f"  {name}: " + said + shown )
     for vm in machines:
         size = f", {vm[ 'cpus' ]} cpus {vm[ 'ram' ]}" if vm.get( "cpus" ) else ""
         state = bad( "orphaned: QEMU without its keeper" ) if vm[ "state" ] == "orphaned" else vm[ "state" ]
@@ -310,9 +346,11 @@ def show_running( root: Path, everything = False, got = None ) -> int:
         where = " ".join( f"{n}={p[ 'address' ]}" for n, p in ports.items() ) if len( ports ) > 1 else v.get( "address" ) or ""
         conns = f", {v[ 'connections' ]} connection{'s' * ( v[ 'connections' ] != 1 )}" if v.get( "connections" ) else ""
         queued = f", {v[ 'waiting' ]} waiting" if v.get( "waiting" ) else ""
+        source = f"  ( {v[ 'source' ]} )" if v.get( "source" ) and v[ "state" ] in ( "ready", "unverified", "wrong version" ) else ""
         print( f"  {v[ 'machine' ]}: service {v[ 'name' ]} " + ( good( v[ "state" ] ) if v[ "state" ] in ( "busy", "in use" )
+                                                                  else bad( v[ "state" ] ) if v[ "state" ] == "wrong version"
                                                                   else v[ "state" ] )
-               + dim( f"  {where}{conns}{queued}" + ( f"  {v[ 'detail' ]}" if v.get( "detail" ) and not conns else "" ) ) )
+               + dim( f"  {where}{conns}{queued}{source}" + ( f"  {v[ 'detail' ]}" if v.get( "detail" ) and not conns else "" ) ) )
     if everything:
         for a in agents_up:
             print( dim( f"  {a[ 'machine' ]}: {a[ 'what' ]} kept warm for {Path( str( a.get( 'project' ) or '?' ) ).name}" ) )
@@ -369,17 +407,28 @@ def machines_main( words ) -> int:
         width = max( len( r[ "name" ] ) for r in rows )
         for r in rows:
             also = [ n for n in r[ "names" ] if n != r[ "name" ] ]
-            state = "" if ledger.watched( r ) else "  off" if r.get( "watch" ) is False else "  dormant: not asked"
+            state = ( "" if ledger.watched( r ) else "  dormant: not asked" ) + ( "" if ledger.gauges( r ) else "  gauges off" )
             print( f"  {r[ 'name' ]:{width}}  {dim( _ago( time.time() - r[ 'last' ] ) + ' ago' )}" + dim( state )
                    + ( dim( f"  also {', '.join( also )}" ) if also else "" ) )
-        print( dim( "  errand machines forget NAME · rename NAME LABEL · watch NAME on|off|auto" ) )
+        print( dim( "  errand machines forget NAME · rename NAME LABEL · watch NAME on|auto · gauges NAME on|off" ) )
         return 0
-    if words[ 0 ] == "watch" and len( words ) == 3 and words[ 2 ] in ( "on", "off", "auto" ):
-        names = ledger.set_watch( words[ 1 ], { "on": True, "off": False, "auto": None }[ words[ 2 ] ] )
+    if words[ 0 ] == "gauges" and len( words ) == 3 and words[ 2 ] in ( "on", "off" ):
+        names = ledger.set_gauges( words[ 1 ], words[ 2 ] == "on" )
         if not names:
             print( bad( f"  {words[ 1 ]}: no such machine" ) )
             return 1
-        print( f"  {', '.join( names )}: " + { "on": "watched", "off": "not watched", "auto": "watched while work is sent there" }[ words[ 2 ] ] )
+        print( f"  {', '.join( names )}: gauges " + ( "measured" if words[ 2 ] == "on" else "not measured ( what runs there followed all the same )" ) )
+        return 0
+    if words[ 0 ] == "watch" and len( words ) == 3 and words[ 2 ] == "off":
+        print( bad( "  `watch off` is no more: a machine is contacted while work is sent there; "
+                    f"`errand machines gauges {words[ 1 ]} off` stops measuring it, `forget` leaves it out" ) )
+        return 2
+    if words[ 0 ] == "watch" and len( words ) == 3 and words[ 2 ] in ( "on", "auto" ):
+        names = ledger.set_watch( words[ 1 ], { "on": True, "auto": None }[ words[ 2 ] ] )
+        if not names:
+            print( bad( f"  {words[ 1 ]}: no such machine" ) )
+            return 1
+        print( f"  {', '.join( names )}: " + { "on": "watched", "auto": "watched while work is sent there" }[ words[ 2 ] ] )
         return 0
     if words[ 0 ] == "rename" and len( words ) == 3:
         names = ledger.rename( words[ 1 ], words[ 2 ] )

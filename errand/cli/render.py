@@ -538,6 +538,9 @@ class Renderer:
         elif op == "head":
             here = self.local_root or LOCAL_ROOT[ 0 ]
             local = str( Path( here ) / m[ "rel" ] ) if m.get( "rel" ) and here else None
+            if local and m.get( "launch" ):         # a run sent away: known here from its start, by its directory
+                from ..results import note_launch
+                note_launch( Path( local ), m[ "launch" ] )
             self.head( m[ "name" ], m[ "site" ], m.get( "params" ), gpus = m.get( "gpus" ), leaf = m.get( "leaf" ), local = local )
         elif op == "ran" and "status" in m:
             e = m.get( "entry" ) or { }

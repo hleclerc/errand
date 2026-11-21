@@ -6,6 +6,7 @@
     rsh       a remote shell, through the agent ( `rsh.py` )
     table     what runs on this machine on errand's behalf, read from disk, as JSON ( `table.py` )
     caches    a `caches` or `caches_remove` request answered here, as JSON ( `look.caches`, ADR 0022 )
+    stop      the agents of this machine asked to go, as JSON ( `stopping.sweep`: a node reached by ssh from another )
 """
 from __future__ import annotations
 
@@ -24,6 +25,13 @@ def main( argv = None ) -> int:
         req = json.loads( argv[ 1 ] )
         req.setdefault( "op", "caches" )
         print( "errand-caches " + json.dumps( answer( req ) ), flush = True )
+        return 0
+    if argv[ : 1 ] == [ "stop" ] and len( argv ) == 2:
+        import json
+        from .stopping import sweep
+        req = json.loads( argv[ 1 ] )
+        got = sweep( req.get( "match" ) or "", bool( req.get( "force" ) ), only = req.get( "only" ), hop = False )
+        print( "errand-stop " + json.dumps( got ), flush = True )
         return 0
     if argv[ : 1 ] == [ "rsh" ] and len( argv ) >= 3:
         from .rsh import main as rsh

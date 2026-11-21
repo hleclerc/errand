@@ -271,6 +271,22 @@ another port than the first ). It is what a key in
 command="errand serve connect ollama",no-pty ssh-ed25519 AAAA… boucles@laptop
 ```
 
+## From here: forward
+
+```bash
+errand serve forward ollama --host lmo            # or --env E: the machine of that environment
+```
+
+prints `http://127.0.0.1:PORT` (`--port N` to choose it). Every connection to that port goes to
+the service over there: through the agents' connection that errand already holds, one channel
+per connection, with no new ssh login and no tunnel to set up. The first connection starts the
+service there, waiting in the queue if needed. As for a page, only a service **declared** on that
+machine can be reached, never a port named from here. Ctrl-C stops the forward, not the service:
+it stops on its own once idle.
+
+From Python, `errand.serve.forward( target, name )` returns the listening socket, e.g. to put a
+service of another machine behind a page.
+
 ## Seen
 
 ```text
@@ -296,7 +312,125 @@ not ) on its input, prints `evict` when a computation needs the room while it is
 when its input closes. `errand serve` is built on the same claim; `hold` is for whoever wants to
 drive it themselves.
 
-## What it does not do
+## A page that asks for a service
+
+A run's page served as it is ( `errand.Static`, see [Steps](./steps) ) can ask for services: a
+renderer that draws the current view, a field computed on demand. Each one may run on the machine
+the person chooses in the page: here, where the run wrote the directory, or any machine errand
+knows ( ADR 0026, 0027 ).
+
+### The package says how a service runs
+
+The code of a service comes from a package installed on the machine, never from the page. The
+package ships, beside the code, a file of data, `errand-services.json`, and names its module by an
+entry point:
+
+```toml
+[project.entry-points."errand.services"]
+mytool = "mytool.services"
+```
+
+```json
+{ "format": 1, "package": { "name": "mytool", "pip": "mytool" },
+  "services": {
+    "field": { "protocol": 1, "text": "Computes a field of the scene on demand.",
+               "version_of": [ "field.py" ],
+               "run": [ "{python}", "-m", "mytool.services.field", "--port", "{port}" ], "idle": "5m" } } }
+```
+
+- `run` is a list of words. errand resolves its placeholders on the machine that runs it:
+  - `{python}`: the Python of the env that has the package;
+  - `{file:REL}`: a file of the package, where it is installed there;
+  - `{tool:NAME}`: a program found there, or fetched;
+  - `{port}`: the port, for the keeper.
+- `needs` ( `gpus`, `gpu_kind`, `platforms`, `ram` ) and `tools` say what the machine must have. For
+  a tool, the description gives:
+  - `look`: where it usually is;
+  - `version_from`: where to read its version in files ( `Info.plist`, a directory's name, dpkg,
+    snap );
+  - `min`: the oldest version that will do;
+  - `fetch`: a pinned download per platform ( URL, sha256, the program inside ).
+- **The version** of a service is 8 hex digits of a sha256 over its protocol and the files
+  `version_of` lists. The producer computes it when it writes a directory, and errand computes the
+  same on each machine by reading those files. errand never imports the package.
+
+### The directory says what it asks for
+
+```json
+{ "format": 2, "services": {
+    "field": { "version": "3fa29c1e", "protocol": 1, "optional": true,
+               "package": { "name": "mytool", "version": "1.4" }, "described": { …a copy of the package's entry… } } } }
+```
+
+The directory holds names ( `field#3fa29c1e` ) and a copy of the description, which serves only to
+propose an installation on a machine that lacks the package. It never runs anything, and the
+directory carries no code.
+
+### The page reaches them through its own address
+
+| request | answer |
+|---|---|
+| `GET .errand/services` | per service: `version`, `on` ( the machine chosen ), `state`, `why`, `store`, `found`, `lines` |
+| `GET .errand/machines` | the machines offered, here first, then the run's, then errand's other machines |
+| `GET .errand/machines/<M>[?refresh=1]` | what M's agent found, per service ( it reads files and runs nothing ) |
+| `POST .errand/services/<name>` `{"on": M}` | the machine chosen for that service, kept per view |
+| `POST .errand/copy` `{"on": M}` | the view's files copied into errand's cache on M ( data only ), kept up to date |
+| `POST .errand/machines/<M>/paths` `{"tool", "path"}` | a place for M's agent to look for a tool |
+| `.errand/svc/<name>/<path>` | relayed to `name#version` on the machine chosen ( any method, a body, a WebSocket ), started there first if needed |
+
+The states are:
+
+- `running` or `ready`: declared at this version;
+- `installable`: the lines below make it ready;
+- `unknown`: a version could not be read from files;
+- `unavailable`: greyed, with the reason;
+- `wrong version` or `unverified`: see below;
+- `unreachable`: the machine's agent did not answer.
+
+The relayed request carries **`X-Errand-Root`**: the directory as the service's machine sees it
+( the original, a shared file system, or errand's copy ), percent-encoded.
+
+**Only what both sides name runs.** A page reaches a service only if its `services.json` lists
+`name#version` *and* the machine declares exactly that. Nothing a page sends declares a command.
+
+### The lines to type
+
+For a service that is not ready on a machine, errand composes the lines from what that machine has,
+and the page shows them. Nothing is run until a person types them:
+
+```text
+$ errand serve look --on lmo runs/foam.sviz
+lmo  linux-x86_64  RTX 2080 Ti   the store: original /home/hugo/runs/foam.sviz
+  blender#3fa29c1e         installable
+      · /usr/bin/blender · 4.1.1 ( dpkg ( package blender ) ) — this service needs 5.0 or later
+      · sdot 2026.11.3 in /home/hugo/miniforge3/envs/lmo-jax — provides blender#3fa29c1e, the version this store asks for
+      # blender 5.2.2 from download.blender.org into errand's cache on lmo ( checked against its sha256 8409…a168 ); nothing in it is run
+      errand serve fetch --on lmo https://download.blender.org/…/blender-5.2.2-linux-x64.tar.xz#sha256=8409…
+      # the service blender#3fa29c1e, as sdot 2026.11.3 in lmo-jax describes it, GPU 1, stopped after 10m unused
+      errand serve install --on lmo --gpus 1 --idle 10m blender#3fa29c1e -- /home/hugo/.cache/errand/tools/8409…/unpacked/… -b …
+```
+
+- `errand serve fetch --on M URL#sha256=H`: a file, checked against its hash and kept by its
+  contents. `fetch pip:PKG==V` installs a package into a new env of errand's
+  ( `--into ENV` for an existing one ). A source outside `errand.sources` ( PyPI, conda-forge,
+  download.blender.org by default; change the list in `services.py` ) is refused unless you repeat
+  it with `--source URL`.
+- `errand serve install --on M NAME#VERSION -- WORDS` declares the service as typed, into
+  `services-installed.json` on M. It records the package that provides that version, and that
+  package's files are checked again before every start. If they changed, the state is
+  `wrong version` and the service does not start. With no package behind it, the declaration is
+  `unverified`. Without `-- WORDS`, the command is composed from the package there, shown, and
+  asked.
+- `errand serve probe --on M -- PROG --version` runs a program once to read a version that no file
+  says. Nothing else runs a program to look at it.
+
+`errand serve` and `errand status` list every declared service, `ready` before it ever ran.
+
+**Without errand** ( the directory under `python -m http.server`, or sent to someone ):
+`.errand/services` answers 404, and the page works on its files alone. By convention, a page then
+takes a service's address from its URL ( `?svc.field=http://127.0.0.1:9000` ), and a service
+started by hand is told its directory with `--root DIR`, since no relay adds `X-Errand-Root`. Such
+a service answers CORS for `127.0.0.1` and `localhost`, because the page is on another port.
 
 - **The queue is per user and per machine.** A server started under another account ( a systemd
   service ) is not seen, and its share of the card is not counted. Nor is a run started with
@@ -304,8 +438,7 @@ drive it themselves.
   find the card full.
 - **The server's side of a port is open to every account of the machine**, and so is the announced
   side outside Linux ( see [Only your connections](#only-your-connections) ).
-- **From another machine**: `errand serve connect` through ssh, or an `ssh -L` tunnel to the
-  announced port. A port forwarded through errand's own connection is planned.
+- **From another machine**: `errand serve forward` ( above ), or `errand serve connect` behind an ssh key.
 
 ## Next
 

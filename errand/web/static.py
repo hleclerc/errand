@@ -6,6 +6,8 @@ store: `foam.sviz/index.html`, its manifest, its frames ), served from the copy 
     URL         http://127.0.0.1:<port>/<token>/<id>/          the token IN THE PATH, kept in `static-token` ( 0600 )
     what        only the directories registered in `static-views.json` ( { id: local path } ), read at each request:
                 files, read-only, never above their directory; `index.html` for the directory itself
+    .errand/    reserved in every view: the services its `services.json` asks for, and a relay to them ( ADR 0026,
+                `page_services` ) -- the only thing a page can make run, and only what this machine declares
 
 Why not `errand web` itself: its preview is a sandboxed iframe ( an opaque origin ), which cannot read the files beside
 a page with the cookie, and `allow-same-origin` there would let a run's page post to `/act`. On this origin, the page
@@ -74,10 +76,28 @@ def registered( cache: Path | None = None ) -> dict:
         return { }
 
 
-def register( vid: str, local_dir, cache: Path | None = None ):
-    """the directory `local_dir` served as view `vid`"""
+ORIGINS = "static-origins.json"
+
+
+def origins( cache: Path | None = None ) -> dict:
+    """{ vid: { machine, path } }: where a view's directory was written ( the run's machine ), when it is known"""
+    try:
+        return json.loads( ( Path( cache or bootstrap.local_cache() ) / ORIGINS ).read_text() )
+    except ( OSError, ValueError ):
+        return { }
+
+
+def register( vid: str, local_dir, cache: Path | None = None, origin: dict | None = None ):
+    """the directory `local_dir` served as view `vid`; `origin`: { machine, path } of the directory the run wrote"""
     cache = Path( cache or bootstrap.local_cache() )
     local_dir = str( Path( local_dir ).resolve() )
+    if origin and origins( cache ).get( vid ) != origin:
+        got = origins( cache )
+        got[ vid ] = origin
+        cache.mkdir( parents = True, exist_ok = True )
+        tmp = cache / f".{ORIGINS}.{os.getpid()}.{threading.get_ident()}.tmp"
+        tmp.write_text( json.dumps( got, indent = 1 ) )
+        os.replace( tmp, cache / ORIGINS )
     views = registered( cache )
     if views.get( vid ) == local_dir:
         return
@@ -143,6 +163,11 @@ def start( cache: Path | None = None, at = None ):
                 return self._send( 404, b"not found", head = head )
             if len( parts ) < 2 or parts[ 1 ] not in ( views := registered( cache ) ):
                 return self._send( 404, b"no such view here", head = head )
+            if len( parts ) >= 3 and parts[ 2 ] == ".errand":           # what the page asks errand for ( ADR 0026 )
+                from . import page_services
+                return page_services.answer( self, str( Path( views[ parts[ 1 ] ] ).resolve() ), parts[ 3: ], head, parts[ 1 ] )
+            if self.command not in ( "GET", "HEAD" ):
+                return self._send( 405, b"files are read only", head = head )
             if len( parts ) == 2:                               # ( the files are read relative to the page )
                 self.send_response( 301 )
                 self.send_header( "Location", self.path.split( "?" )[ 0 ] + "/" )
@@ -165,6 +190,11 @@ def start( cache: Path | None = None, at = None ):
 
         def do_HEAD( self ):
             self._route( True )
+
+        def do_POST( self ):                                   # ( only `.errand/svc/...`: relayed to a service )
+            self._route( False )
+
+        do_PUT = do_DELETE = do_PATCH = do_OPTIONS = do_POST
 
     httpd = None
     for p in ( ( at, ) if at is not None else ( port(), 0 ) ):

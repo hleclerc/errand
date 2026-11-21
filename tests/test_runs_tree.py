@@ -284,3 +284,61 @@ if test( "the history, remembered: a new link and a result written later are see
         shutil.rmtree( leaves[ 1 ] )
         assert { Path( r[ "leaf" ] ).name for r in seen.runs( 10 )[ "runs" ] } == { "r0", "r2" }
         assert len( list( ( d / "cache" / "seen" ).glob( "*.json" ) ) ) == 2, "its link gone"
+
+if test( "a run sent away keeps its key as it ends and its result comes back; until then `ending`, not `?`" ):
+    from errand import yamlish
+    from errand.tui import rows as R
+    from errand.tui import runtree as T
+    with scratch() as d:
+        rel = "exp.py/foam/2026-11-19_10h00m00-jax@far"
+        leaf = d / "here" / "errand-outputs" / "runs" / rel
+        leaf.mkdir( parents = True )                                         # its directory here, no result yet
+        record( d )
+        far, mac = M( "far" ), M( "mac", here = True )
+        far._host = "farhost"
+        far.table = { "procs": [ { "id": "p1", "state": "running", "what": "exp.py::foam", "started": time.time(),
+                                    "leaf": f"/home/me/proj/errand-outputs/runs/{rel}" } ] }
+
+        def look():
+            return [ r for r in R.build( [ mac, far ], tab = "runs", unfold = True ) if r.kind in ( "proc", "run" ) ]
+        busy = look()
+        keys = { json.dumps( R.key( r ) ) for r in busy }
+        assert len( busy ) == 2 and len( keys ) == 1, ( "one key under running and in the tree", keys )
+        far.table = { "procs": [ ] }                                         # it ended over there, not brought back yet
+        ending = look()
+        assert [ ( r.mark, json.dumps( R.key( r ) ) in keys ) for r in ending ] == [ ( "wait", True ) ], \
+            [ ( r.mark, r.label, R.key( r ) ) for r in ending ]
+        assert "ending" in ending[ 0 ].label, ending[ 0 ].label
+        ( leaf / "result.yaml" ).write_text( yamlish.dump( { "name": "foam", "file": "exp.py", "env": "jax", "host": "farhost",
+                                                             "status": "PASS", "stamp": "2026-11-19_10h00m00" } ) )
+        time.sleep( 0.25 )                                                   # ( the record read again at most every 0.2 s )
+        done = look()                                                        # brought back: its machine named, its key the same
+        assert [ ( r.mark, r.data[ 0 ], json.dumps( R.key( r ) ) in keys ) for r in done ] == [ ( "ok", "far", True ) ], \
+            [ ( r.mark, r.data[ 0 ], R.key( r ) ) for r in done ]
+        tree = R.tree_of( R.record_runs( [ mac, far ] ) )
+        assert T.path_to( tree, R.key( done[ 0 ] ) ), "found by its key: what is above it opened"
+
+if test( "launch.yaml: what a run is, read before its result; one written here for a run sent away; never brought back half" ):
+    from errand import results, yamlish
+    from errand.tui import rows as R
+    with scratch() as d:
+        rel = "exp.py/foam/2026-11-19_10h00m00-jax@far"
+        leaf = d / "here" / "errand-outputs" / "runs" / rel
+        launch = { "name": "foam", "file": "exp.py", "env": "jax", "place": "jax@far", "host": "farhost",
+                   "stamp": "2026-11-19_10h00m00", "params": { "n": 3 } }
+        results.note_launch( leaf, launch )                                  # its `head` said: written here
+        assert ( leaf / "launch.yaml" ).is_file() and not ( leaf / "result.yaml" ).exists()
+        reg = record( d )
+        run = reg.runs[ str( leaf ) ]
+        assert ( run.name, run.host, run.params, run.status ) == ( "foam", "farhost", { "n": 3 }, None ), run.dump()
+        far, mac = M( "far" ), M( "mac", here = True )
+        far._host = "farhost"
+        got = [ r for r in R.build( [ mac, far ], tab = "runs", unfold = True ) if r.kind == "run" ]
+        assert [ r.data[ 0 ] for r in got ] == [ "far" ], "its machine known from its start"
+        ( leaf / "launch.yaml" ).write_text( "name: other\n" )
+        results.note_launch( leaf, launch )
+        assert ( leaf / "launch.yaml" ).read_text() == "name: other\n", "never written over"
+        assert results.unfinished_runs( [ rel ], [ f"{rel}/launch.yaml" ] ) == { rel }, "not brought back before its result"
+        ( leaf / "result.yaml" ).write_text( yamlish.dump( { **launch, "status": "PASS", "duration_s": 2.0 } ) )
+        reg.refresh( force = True )
+        assert reg.runs[ str( leaf ) ].status == "PASS"

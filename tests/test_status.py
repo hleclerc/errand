@@ -165,7 +165,8 @@ if test( "status: this project in full, one line per other one, --all expands; t
     for want in ( "aaaaaaaa", "bbbbbbbb", "orphaned", "lmo > windows 80103674", "dddddddd", "guitar:",
                   "1 running on lmo", "1 unowned on lmo", "lmo: windows vm 80103674 ready", "n22: cannot say", "connect timed out" ):
         assert want in said, f"{want!r} not in:\n{said}"
-    assert "cccccccc" not in said, "another project was shown in full without --all"
+    assert "run cccccccc3" not in said, "another project was shown in full without --all"
+    assert "cccccccc" in said.split( "guitar:" )[ 1 ].splitlines()[ 0 ], "its ids are not on its line ( errand stop needs them )"
     out = io.StringIO()
     with patched( S, tables = tables ), contextlib.redirect_stdout( out ):
         S.show_running( Path( "/x/sdot" ), everything = True )

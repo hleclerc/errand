@@ -22,8 +22,9 @@ class Views:
     """`Views( local_root, pull, where )`: `pull( rel )` brings the file `rel` ( from the copy's root ) into
     `local_root`, None when the copy is the project here. Called with each `view` mark."""
 
-    def __init__( self, local_root, pull = None, where: str = "", say = None ):
+    def __init__( self, local_root, pull = None, where: str = "", say = None, there: str | None = None ):
         self.root, self.pull, self.where = Path( local_root ), pull, where
+        self.there = there                      # the copy's root over there: a view's origin ( ADR 0027 §3 )
         if say is None:
             from .render import Renderer
             say = Renderer().view               # on a line of its own, among the cases ( ADR 0016 )
@@ -120,8 +121,12 @@ class Views:
         mark = f"{Path( leaf ).name}/" if leaf else None
         rel = path.split( mark, 1 )[ 1 ] if mark and mark in f"/{path}" else None
         vid = S.view_id( leaf, rel ) if rel else S.view_id( str( local.resolve() ), "" )
+        origin = None
+        if self.pull is not None and self.there and self.where and not Path( path ).is_absolute():
+            import posixpath
+            origin = { "machine": self.where, "path": posixpath.join( str( self.there ), path ) }
         try:
-            S.register( vid, local )
+            S.register( vid, local, origin = origin )
         except OSError:
             return None
         from ..web import _wake, said

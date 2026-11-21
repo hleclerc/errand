@@ -44,7 +44,7 @@ __all__ = [
     "Vars", "Venv", "Micromamba", "Conda", "Uv", "Nix", "Guix", "Module",
     "Apptainer", "Docker", "Podman", "Ssh", "Slurm", "Mpi", "Preload", "Windows", "WindowsBox", "Missing",
     "Runner", "Level", "Outcome", "RunContext", "Errand", "Pytest", "Catch2", "Cargo",
-    "Python", "Executable", "services", "Service", "http_json",
+    "Python", "Executable", "services", "Service", "http_json", "sources",
 ]
 
 # Everything past the declaration surface is reached lazily: an entry file
@@ -54,6 +54,7 @@ _LAZY = {
     "services"  : "errand.serve",
     "Service"   : "errand.serve",
     "http_json" : "errand.serve",
+    "sources"   : "errand.serve",
     "main"      : "errand.cli",
     "configure" : "errand.config",
     "Env"       : "errand.config",

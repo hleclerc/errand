@@ -14,6 +14,7 @@ import re
 import time
 
 from .panes import Row
+from .rows import run_status, status_mark
 
 _PARAM = re.compile( r"\s([A-Za-z_][\w.]*)=(\S*)" )
 OUT = ( "/errand-outputs/runs/", "/runs/" )
@@ -208,12 +209,13 @@ def find( node: Node, id: str ) -> Node | None:
 def path_to( root: Node, key ) -> list:
     """the ids of the nodes to open for the row `key` ( `rows.key` ) to be shown: those above it, and the one that lists
     it ( a run's set or entry; a table's entry ) -> [ ] when it is not in the tree"""
+    from .rows import run_ident
     kind, _, what = key if isinstance( key, ( list, tuple ) ) and len( key ) == 3 else ( None, None, None )
 
     def hit( n: Node ) -> bool:
         if kind in ( "tnode", "tset", "thead" ):
             return n.id == what
-        return kind == "work" and any( r.get( "leaf" ) == what for _, r, _ in n.runs )
+        return kind == "work" and any( run_ident( r ) == what or r.get( "leaf" ) == what for _, r, _ in n.runs )
 
     def walk( n: Node, above: list ):
         if hit( n ):
@@ -293,7 +295,7 @@ def rows( root: Node, *, folded = (), opened = (), query = "", now = None, unfol
         cols = pnames + [ f"→{k}" for k in rnames ] + [ "status", "last", "took", "env", "runs" ]
 
         def cells( params, res, m, last, running, n ):
-            status = "running" if running else ( last.get( "status" ) or "lost" )
+            status = run_status( last, running )
             took = f"{last[ 'duration' ]:.1f} s" if isinstance( last.get( "duration" ), ( int, float ) ) else ""
             return ( [ _show( params.get( k ) ) for k in pnames ] + [ _show( res.get( k ) ) for k in rnames ] +
                      [ status, _at( last.get( "started" ) or 0, now ), took, f"{last.get( 'env' ) or ''}@{m.name}", str( n ) ] )
@@ -326,7 +328,7 @@ def rows( root: Node, *, folded = (), opened = (), query = "", now = None, unfol
             running = info[ i ][ 5 ]
             gone = bool( GOING ) and all( going( m, r ) for m, r, _ in s.runs )
             out.append( Row( line( values[ i ] ), "", kind = "tset", data = ( None, { "tree": s.id } ), depth = depth, open = o,
-                             mark = "going" if gone else "run" if running else { "PASS": "ok", "FAIL": "FAIL", "SKIP": "skip" }.get( info[ i ][ 4 ].get( "status" ), "lost" ) ) )
+                             mark = "going" if gone else status_mark( run_status( info[ i ][ 4 ], running ) ) ) )
             if o:
                 out.extend( _run( m, r, running, depth + 1, now ) for m, r, running in _newest( s.runs ) )
 
@@ -339,14 +341,14 @@ def _newest( runs ):
 
 
 def _run( m, r, running, depth, now ) -> Row:
-    status = "running" if running else ( r.get( "status" ) or "lost" )
+    status = run_status( r, running )
     took = f"{r[ 'duration' ]:.1f} s" if isinstance( r.get( "duration" ), ( int, float ) ) else ""
     if going( m, r ):
         status, mark = "removing", "going"
     elif r.get( "there" ):                                 # the check found it on its machine only ( ADR 0025 )
         status, mark = f"on {m.name} only", "there"
     else:
-        mark = "run" if running else { "PASS": "ok", "FAIL": "FAIL", "SKIP": "skip" }.get( status, "lost" )
+        mark = status_mark( status )
     name = m.name if len( m.name ) <= 12 else m.name[ : 11 ] + "…"
     return Row( f"{_at( r.get( 'started' ) or 0, now )}  {name:<12} {r.get( 'env' ) or '':<12} {status:<7} {took}".rstrip(), "",
                 kind = "run", data = ( m.name, r ), depth = depth, mark = mark )

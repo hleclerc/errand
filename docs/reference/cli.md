@@ -17,13 +17,14 @@ target is the target's: `errand --env gpu run t.py` and `errand run --env gpu t.
 | `shell` | an interactive shell in an environment. Nothing is recorded |
 | `attach [ID]` | follow again what a command left running when its connection was lost, and bring its results back — [Let it run](/guide/detached) |
 | `watch` | how the `--batch` work is going, live, until everything has landed |
-| `forget ID`, `forget finished` | drop a `--batch` submission from the list, or every one that is over, keeping their results |
+| `forget ID`, `forget finished` | drop a `--batch` submission from the list, or every one that is over, keeping their results; nothing is stopped ( `errand stop ID` stops it ) |
 
 **What is running**
 
 | verb | |
 |---|---|
 | `status [--all]` | what runs on this machine and every machine work was sent to, what waits, what is kept warm, then the `--batch` work — [What is running](/guide/status) |
+| `stop [ID...]`, `stop --mine` | stop a run by the id `status` shows, running or waiting in a machine's queue, on any machine; a `--batch` submission by its id; `--mine`: everything this project runs; alone, at a terminal, chosen in a list — [What is running](/guide/status#stopping-a-run) |
 | `machines [forget NAME...]` | the machines `errand status` and `errand tui` ask, and forgetting one: not asked any more until work is sent there again — [Status](/guide/status#the-machines-asked) |
 | `agents [stop [NAME]]` | the hub and its agents, and stopping them; `--force` even with something running — [Agents](/guide/agents#listing-and-stopping-agents) |
 | `vm stop` | stop the [Windows VMs](/guide/layers/windows) kept warm, here and over every `Ssh` |
@@ -166,6 +167,7 @@ errand run --env cluster nvidia-smi
 errand run -o --env gpu train.py --epochs 3
 errand run --batch --env cluster --pull out python train.py
 errand status --all
+errand stop 6575aafc
 errand agents stop cluster
 errand machines forget old-box
 errand run --grid=, --env gpu,cluster ./bench

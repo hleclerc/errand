@@ -22,9 +22,14 @@ command that asked for it ( `keep`: the agent owns it, lists it, stops it ). It 
     use         open connections ( every one passes the keeper ), or the probe saying busy; never throughput
     stops       evicted while warm, `idle` without connection nor busy, `errand serve stop`, the server ending
 
-Its state is a directory, `~/.cache/errand/serve/<name>/`: `spec.json` ( what to start ), `keeper.pid`, `state.json`
-( what it does, for `errand serve list` and `errand status` ), `ports.json` ( the announced ports, kept ), `keeper.log`,
-`wanted` ( touched by an `errand serve` that waits for it ), `stop` ( asked to go ).
+Its state is a directory, `~/.cache/errand/serve/<name>/`: `keeper.pid`, `state.json` ( what it does, for `errand serve
+list` and `errand status` ), `ports.json` ( the announced ports, kept ), `keeper.log`, `wanted` ( touched by an `errand
+serve` that waits for it ), `stop` ( asked to go ). What to start is the declaration, read again by its name by the keeper
+( ADR 0027 §6 ): the user's file, `services-installed.json` ( an ad hoc service is written there, `adhoc`, and leaves it
+when it stops ), or the project's files, whose directory the keeper is given.
+
+A name may carry a version, `blender#3fa29c1e` ( ADR 0027 ): several versions of one service are declared side by side,
+and the one declared from a package is checked against that package's files before every start.
 """
 from __future__ import annotations
 
@@ -48,6 +53,11 @@ START_WAIT    = 60.0      # seconds for a keeper to say it exists
 
 # The services declared by the files errand reads: `errand.services[ name ] = errand.Service( ... )`.
 services: dict = { }
+declaring = threading.RLock()            # ( `declared` refills that one table: one reader at a time )
+
+# Where `errand serve fetch` may take code from without a second word ( ADR 0027 §4 ): `errand.sources`, the user's to
+# change in `~/.config/errand/services.py`. A store may name another source; the person then repeats it ( --source ).
+sources: list = [ "https://pypi.org/simple", "conda-forge", "https://download.blender.org/" ]
 
 
 # ── declaring ────────────────────────────────────────────────────────────────
@@ -97,6 +107,8 @@ class Service:
         self.others    = bool( others )
         self.grace     = seconds( grace, 10.0 )
         self.cwd       = str( cwd ) if cwd else None
+        self.source    = None               # where it is declared: services.py, installed, adhoc, project
+        self.provider  = None               # the package description it comes from ( `errand-services.json` ), if any
         dummy = { n: 1 for n in self.ports }
         for text in [ *self.command, *self.env.values(), *( [ busy ] if isinstance( busy, str ) else [ ] ) ]:
             fill( text, dummy )             # a `{port:NAME}` that names no port: said now, not at start
@@ -198,18 +210,33 @@ def user_file( ) -> Path:
 
 
 def declared( cwd = None, warn = None ) -> dict:
-    """The services declared: the user's file, then the project's files around `cwd`, if any. -> { name: Service }"""
+    """The services declared: the user's file, those `errand serve install` wrote ( `services-installed.json`, the user's
+    file wins ), then the project's files around `cwd`, if any. -> { name: Service }"""
+    with declaring:
+        return _declared( cwd, warn )
+
+
+def _declared( cwd, warn ) -> dict:
     services.clear()
     f = user_file()
     if f.is_file():
         import runpy
         runpy.run_path( str( f ), run_name = "errand_services" )
+    for svc in services.values():
+        if isinstance( svc, Service ) and svc.source is None:
+            svc.source = "services.py"
+    from .install import services as _installed                    # ( `errand serve install`, ADR 0026: after the user's file )
+    for name, svc in _installed().items():
+        services.setdefault( name, svc )
     try:
         from .config import load
         from .cli.project import find_root
         root = find_root( Path( cwd or os.getcwd() ) )
         if root is not None and any( Path( root ).glob( "errand-*.py" ) ):
             load( Path( root ), warn = warn )
+            for svc in services.values():
+                if isinstance( svc, Service ) and svc.source is None:
+                    svc.source = "project"
     except Exception as err:            # a project that does not load must not hide the user's services
         if warn:
             warn( f"the project's files: {err}" )
@@ -230,9 +257,15 @@ def home( ) -> Path:
     return d
 
 
+def valid_name( name: str ) -> str:
+    """a service's name: letters, digits, _ . -, and a version after `#` ( `blender#3fa29c1e` )"""
+    if not re.fullmatch( r"[A-Za-z0-9_.-]+(#[A-Za-z0-9_.-]+)?", str( name ) ) or str( name ).startswith( "." ):
+        raise ValueError( f"a service's name: letters, digits, _ . -, a version after # ( got {name!r} )" )
+    return str( name )
+
+
 def spot( name: str ) -> Path:
-    if not re.fullmatch( r"[A-Za-z0-9_.-]+", name ) or name.startswith( "." ):
-        raise ValueError( f"a service's name: letters, digits, _ . - ( got {name!r} )" )
+    valid_name( name )
     d = home() / name
     d.mkdir( parents = True, exist_ok = True )
     return d
@@ -294,13 +327,44 @@ def state( name: str ) -> dict:
     return { "name": name, **st }
 
 
-def listed( ) -> list:
-    """Every service this machine knows of, running or not, by name."""
-    return [ state( d.name ) for d in sorted( home().iterdir() ) if d.is_dir() and ( d / "spec.json" ).exists() ]
+def readiness( name: str, svc: Service ) -> str | None:
+    """why a declared service is not ready ( `wrong version: ...`, `unverified` ), None when it is"""
+    if "#" in name and getattr( svc, "provider", None ):
+        from .install import check
+        return check( name, { "provider": svc.provider } )
+    if "#" in name and getattr( svc, "source", None ) == "installed":
+        return "unverified"
+    return None
+
+
+def listed( cwd = None ) -> list:
+    """Every service this machine knows of ( ADR 0027 §6 ): each one declared ( the user's file, the installed ones,
+    the project's around `cwd` ), `ready` when it has never run or is stopped, and each one with a state here."""
+    try:
+        decl = declared( cwd = cwd or str( home() ) )
+    except Exception:
+        decl = { }
+    names = set( decl ) | { d.name for d in home().iterdir() if d.is_dir() and ( ( d / "state.json" ).exists() or ( d / "keeper.pid" ).exists() ) }
+    out = [ ]
+    for name in sorted( names ):
+        st = state( name )
+        svc = decl.get( name )
+        if svc is not None:
+            st[ "source" ] = svc.source
+            if st.get( "state" ) in ENDED:
+                why = readiness( name, svc )
+                if why is None:
+                    st = { **st, "state": "ready" }
+                elif why == "unverified":
+                    st = { **st, "state": "unverified", "detail": "declared by hand: no package here provides this version" }
+                else:
+                    st = { **st, "state": "wrong version", "detail": why }
+        out.append( st )
+    return out
 
 
 def running( ) -> list:
-    return [ s for s in listed() if s.get( "state" ) not in ENDED ]
+    return [ s for s in listed() if s.get( "state" ) not in ENDED + ( "ready", "unverified", "wrong version" ) ]
 
 
 def free_port( ) -> int:
@@ -746,7 +810,7 @@ def _human( s: float ) -> str:
     return f"{s} s" if s < 90 else f"{s // 60} min" if s < 5400 else f"{s // 3600} h {s % 3600 // 60:02d}"
 
 
-def keep( name: str ) -> int:
+def keep( name: str, cwd: str | None = None ) -> int:
     """`python -m errand.serve keep NAME`: the keeper, as the agent starts it. Its output, and its server's, in
     `keeper.log`: whoever started it may be gone."""
     d = spot( name )
@@ -757,16 +821,21 @@ def keep( name: str ) -> int:
     sys.stdout = os.fdopen( 1, "w", buffering = 1 )
     sys.stderr = os.fdopen( 2, "w", buffering = 1 )
     ( d / "keeper.pid" ).write_text( str( os.getpid() ) )
-    spec = _read_json( d / "spec.json" )
-    if spec.get( "wire" ) is not None:
-        svc = Service( **{ k: v for k, v in spec[ "wire" ].items() } )
-    else:
-        svc = declared( spec.get( "cwd" ) ).get( name )
-        if svc is None:
-            _write_json( d / "state.json", { "state": "failed", "detail": f"no service {name!r} is declared any more",
-                                             "pid": os.getpid() } )
-            return 1
-    return Keeper( name, svc ).run()
+    svc = declared( cwd ).get( name )
+    if svc is None:
+        _write_json( d / "state.json", { "state": "failed", "detail": f"no service {name!r} is declared any more",
+                                         "pid": os.getpid() } )
+        return 1
+    why = readiness( name, svc )
+    if why and why != "unverified":                     # ( its package changed since: not started, said )
+        _write_json( d / "state.json", { "state": "failed", "detail": why, "pid": os.getpid() } )
+        return 1
+    try:
+        return Keeper( name, svc ).run()
+    finally:
+        if svc.source == "adhoc":
+            from .install import forget
+            forget( name )
 
 
 # ── asking for it ────────────────────────────────────────────────────────────
@@ -791,11 +860,11 @@ def _errand_path( ) -> str:
     return str( Path( __file__ ).resolve().parent.parent )
 
 
-def start_keeper( name: str ):
+def start_keeper( name: str, cwd: str | None = None ):
     """Through this machine's host agent, as one of its processes that outlives this command ( `keep` ): the agent
     owns it, lists it, stops it. No agent to be had: a session of its own, still on this machine."""
     d = spot( name )
-    argv = [ sys.executable, "-m", "errand.serve", "keep", name ]
+    argv = [ sys.executable, "-m", "errand.serve", "keep", name, *( [ str( cwd ) ] if cwd else [ ] ) ]
     env = { "PYTHONPATH": os.pathsep.join( p for p in ( _errand_path(), os.environ.get( "PYTHONPATH", "" ) ) if p ) }
     ( d / "keeper.pid" ).unlink( missing_ok = True )
     started = False
@@ -831,8 +900,8 @@ class Failed( RuntimeError ):
 
 def ensure( name: str, svc: Service | None = None, *, cwd = None, echo = None, wait = True ) -> dict:
     """The service `name` running, its keeper started if need be, and, with `wait`, answering. -> its state ( with
-    `address` ). `svc`: an ad hoc service ( its spec written for the keeper ); None: a declared one, read again by
-    the keeper from the files around `cwd`. Two at once start one."""
+    `address` ). `svc`: an ad hoc service ( declared `adhoc` in `services-installed.json` until it stops ); None: a
+    declared one, read again by the keeper by its name ( the files around `cwd` too ). Two at once start one."""
     d = spot( name )
     with _start_lock( d ):
         st = state( name )
@@ -841,14 +910,16 @@ def ensure( name: str, svc: Service | None = None, *, cwd = None, echo = None, w
                 wire = svc.wire()
                 if wire is None:
                     raise ValueError( "an ad hoc service is plain data: its probe is a command ( --busy-if )" )
-                spec = { "name": name, "wire": wire, "cwd": str( cwd or os.getcwd() ) }
-            else:
-                spec = { "name": name, "wire": None, "cwd": str( cwd or os.getcwd() ) }
-            _write_json( d / "spec.json", spec )
+                from .install import declare
+                ports = { n: f"{a or ''}:{i or ''}" for n, ( a, i ) in svc.ports.items() }
+                extra = { k: wire[ k ] for k in ( "env", "label", "busy", "cwd", "others", "grace", "exclusive" )
+                          if wire.get( k ) not in ( None, { }, False ) }
+                declare( name, svc.command, needs = svc.needs() | { "idle": svc.idle }, adhoc = True,
+                         extra = { **extra, "ports": ports } )
             ( d / "state.json" ).unlink( missing_ok = True )
             ( d / "stop" ).unlink( missing_ok = True )
             ( d / "wanted" ).touch()
-            start_keeper( name )
+            start_keeper( name, str( cwd or os.getcwd() ) )
     said = None
     while True:
         ( d / "wanted" ).touch()
@@ -937,10 +1008,73 @@ def connect( name: str, svc: Service | None = None, cwd = None, port: str = None
     return 0
 
 
+def forward( target: dict, name: str, port: int = 0, port_name: str | None = None, echo = None ):
+    """A local port ( 127.0.0.1, `port`, 0: any free one ) whose every connection goes through the agent `target` to the
+    service `name` over there, one channel per connection ( the agent's `tcp` operation ), the service ensured there by
+    the first. -> the listening socket ( its thread serves until it is closed )."""
+    from . import agents
+    from .agents import frames as F
+    lst = socket.socket()
+    lst.setsockopt( socket.SOL_SOCKET, socket.SO_REUSEADDR, 1 )
+    lst.bind( ( "127.0.0.1", int( port ) ) )
+    lst.listen( 64 )
+
+    def one( client: socket.socket ):
+        try:
+            call = agents.open( target ).open( { "op": "tcp", "service": name, **( { "port": port_name } if port_name else { } ) } )
+            got = call.reply( timeout = 3600 )                   # ( the service may wait in the queue )
+            if got.get( "error" ):
+                raise Failed( got[ "error" ] )
+        except Exception as err:
+            if echo:
+                echo( f"{name}: {err}" )
+            with contextlib.suppress( OSError ):
+                client.close()
+            return
+
+        def up():
+            try:
+                for chunk in iter( lambda: client.recv( 65536 ), b"" ):
+                    call.send( F.IN, chunk )
+            except OSError:
+                pass
+            with contextlib.suppress( Exception ):
+                call.send( F.EOF )
+
+        threading.Thread( target = up, daemon = True ).start()
+        try:
+            while True:
+                kind, payload = call.next()
+                if kind == F.OUT:
+                    client.sendall( payload )
+                elif kind == F.EXIT:
+                    break
+        except Exception:
+            pass
+        finally:
+            with contextlib.suppress( Exception ):
+                call.close()
+            with contextlib.suppress( OSError ):
+                client.shutdown( socket.SHUT_RDWR )
+            with contextlib.suppress( OSError ):
+                client.close()
+
+    def accept():
+        while True:
+            try:
+                client, _ = lst.accept()
+            except OSError:
+                return
+            threading.Thread( target = one, args = ( client, ), daemon = True ).start()
+
+    threading.Thread( target = accept, daemon = True ).start()
+    return lst
+
+
 if __name__ == "__main__":
-    if len( sys.argv ) == 3 and sys.argv[ 1 ] == "keep":
+    if len( sys.argv ) in ( 3, 4 ) and sys.argv[ 1 ] == "keep":
         # As `errand.serve`, not `__main__`: the files it reads fill `errand.services`, which is that module's.
         from errand.serve import keep as _keep
-        sys.exit( _keep( sys.argv[ 2 ] ) )
-    print( "usage: python -m errand.serve keep NAME", file = sys.stderr )
+        sys.exit( _keep( sys.argv[ 2 ], sys.argv[ 3 ] if len( sys.argv ) == 4 else None ) )
+    print( "usage: python -m errand.serve keep NAME [CWD]", file = sys.stderr )
     sys.exit( 2 )

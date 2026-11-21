@@ -97,6 +97,7 @@ body.dragging { user-select: none; }
 .row.going .label { text-decoration: line-through; text-decoration-color: var(--faint); }
 .row .fold { width: 1.2ch; color: var(--dim); flex: none; }
 .row .sign { width: 1.4ch; text-align: center; flex: none; }
+.row .busy { font-size: 0.7em; margin-left: 0.8ch; vertical-align: 0.15em; }
 .row .label { overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
 .row .label .where { color: var(--dim); }
 .row.thead { color: var(--dim); cursor: default; } .row.thead .th { cursor: pointer; } .row.thead .th:hover { color: var(--acc); }
@@ -312,6 +313,15 @@ let cacheDays = load("cacheDays", 30), cacheAll = load("cacheAll", false);
 let tab = load("tab", "runs"), folded = new Set(load("folded", [])), opened = new Set(load("opened", [])), shown = 50, query = "";
 let rows = [], sel = decodeURIComponent(location.hash.slice(1)) || null, focus = "list", showMore = load("more", false);
 let det = null, dsel = -1, said = "", saidAt = 0, modal = null, view = null;   // view: { key, path, dir, got }
+// Where the row looked at is: a run running is both under "running" and in the tree, with one key ( it stays chosen as
+// it ends ), so the key alone does not say which line; of the rows with that key, the one nearest `selAt`.
+let selAt = -1;
+function selIndex() {
+  let b = -1;
+  for (let i = 0; i < rows.length; i++)
+    if (rows[i].key == sel && (b < 0 || Math.abs(i - selAt) < Math.abs(b - selAt))) b = i;
+  return b;
+}
 let marked = new Set(), anchor = null, greyed = new Set();   // rows chosen together ( ⇧ ), rows greyed before the page knows
 
 async function ask(path, opts) {
@@ -375,19 +385,22 @@ function label(r) {
   }
   return esc(r.label);
 }
-function rowHtml(r) {
+function rowHtml(r, i, at) {
   const fold = r.open === null ? "" : r.open ? "▾" : "▸";
-  const sign = SIGNS[r.mark] ? `<span class="sign m-${esc(r.mark)}">${SIGNS[r.mark]}</span>` :
+  // a folder holding a run running says so after its name, not in the column of the runs' signs ( it is no run )
+  const busy = r.kind == "tnode" && r.mark == "run";
+  const sign = busy ? "" : SIGNS[r.mark] ? `<span class="sign m-${esc(r.mark)}">${SIGNS[r.mark]}</span>` :
                r.kind == "thead" || r.kind == "tset" ? `<span class="sign"></span>` : "";   // ( a table's lines start alike )
   const meters = r.meters.length ? `<span class="meters">${r.meters.map(([n, f]) =>
       `<span class="meter"><span>${esc(n)}</span><span class="bar"><i class="${level(f)}" style="width:${Math.round(100 * f)}%"></i></span><b>${Math.round(100 * f)}%</b></span>`).join("")}</span>` : "";
   const going = r.mark == "going" || greyed.has(r.key) ? " going" : "", many = marked.size > 1 && marked.has(r.key) ? " marked" : "";
   const lv = r.level ? ` l-${esc(r.level)}` : "";
-  return `<div class="row ${esc(r.kind)}${lv}${r.key == sel ? " sel" : ""}${many}${going}" data-key="${esc(r.key)}" style="padding-left:${14 + 18 * r.depth}px">` +
-         `<span class="fold">${fold}</span>${sign}<span class="label">${label(r)}</span>${meters}<span class="right">${esc(r.detail)}</span></div>`;
+  return `<div class="row ${esc(r.kind)}${lv}${i == at ? " sel" : ""}${many}${going}" data-key="${esc(r.key)}" data-i="${i}" style="padding-left:${14 + 18 * r.depth}px">` +
+         `<span class="fold">${fold}</span>${sign}<span class="label">${label(r)}${busy ? `<span class="busy m-run" title="a run runs under it">●</span>` : ""}</span>${meters}<span class="right">${esc(r.detail)}</span></div>`;
 }
 function drawList() {
-  put($("list"), rows.map(rowHtml).join("") || `<div class="row note"><span class="label">nothing here</span></div>`);
+  const at = selIndex();
+  put($("list"), rows.map((r, i) => rowHtml(r, i, at)).join("") || `<div class="row note"><span class="label">nothing here</span></div>`);
   document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b.dataset.tab == tab));
 }
 function drawCounts(c) {
@@ -401,24 +414,35 @@ async function state() {
   if (stating) return; stating = true;
   try {
     const p = new URLSearchParams({tab, q: query, shown, folded: [...folded].join(","), opened: [...opened].join(","),
-                                   days: cacheDays, all: cacheAll ? 1 : 0});
+                                   days: cacheDays, all: cacheAll ? 1 : 0, sel: sel || ""});
     const got = await ask("/state?" + p);
+    const was = selIndex();
     rows = got.rows; drawCounts(got.counts);
-    if (!rows.some(r => r.key == sel)) sel = (rows.find(r => r.kind == "proc" || r.kind == "run" || r.kind == "machine") || rows[0] || {}).key || null;
+    // the row looked at is kept ( its key does not change as it ends ); gone all the same ( removed ), the cursor stays
+    // where it was rather than jumping to the top
+    if (!rows.some(r => r.key == sel))
+      sel = (was >= 0 && rows.length ? rows[Math.min(was, rows.length - 1)]
+             : rows.find(r => r.kind == "proc" || r.kind == "run" || r.kind == "machine") || rows[0] || {}).key || null;
+    // the same line as before ( of a run's two, the one nearest where the cursor was )
+    if (was >= 0) selAt = was;
+    selAt = selIndex();
     if (marked.size) { const here = new Set(rows.map(r => r.key)); for (const k of [...marked]) if (!here.has(k)) marked.delete(k); }
     drawList(); detail();
   } catch (e) { say(e.message); } finally { stating = false; }
 }
-function choose(key, reveal = true, many = false) {
+function choose(key, reveal = true, many = false, at = -1) {
   if (!many && marked.size) { marked.clear(); if (key == sel) drawList(); }
-  if (key == sel) return;
-  sel = key; history.replaceState(null, "", "#" + encodeURIComponent(key || "")); det = null; dsel = -1;
+  if (key == sel && (at < 0 || at == selIndex())) return;
+  const same = key == sel;
+  sel = key; selAt = at >= 0 ? at : rows.findIndex(r => r.key == key);
+  if (same) { drawList(); if (reveal) document.querySelector("#list .row.sel")?.scrollIntoView({block: "nearest"}); return; } history.replaceState(null, "", "#" + encodeURIComponent(key || "")); det = null; dsel = -1;
   closeView(); drawList(); detail(true);
   if (reveal) document.querySelector("#list .row.sel")?.scrollIntoView({block: "nearest"});
 }
 function move(d) {
   if (!rows.length) return;
-  choose(rows[Math.max(0, Math.min(rows.length - 1, rows.findIndex(r => r.key == sel) + d))].key);
+  const i = Math.max(0, Math.min(rows.length - 1, selIndex() + d));
+  choose(rows[i].key, true, false, i);
 }
 // Several rows chosen together ( ⇧↑ ⇧↓, ⇧-click: from the first one chosen; ⌘-click: one more or one less ), for d, D
 function markTo(key) {
@@ -430,7 +454,7 @@ function markTo(key) {
 }
 function extend(d) {
   if (!rows.length) return;
-  markTo(rows[Math.max(0, Math.min(rows.length - 1, rows.findIndex(r => r.key == sel) + d))].key);
+  markTo(rows[Math.max(0, Math.min(rows.length - 1, selIndex() + d))].key);
 }
 function markOne(key) {
   if (!marked.size) { marked.add(sel); anchor = sel; }
@@ -441,15 +465,22 @@ function toggle(r) {
   if (r.kind == "more") { shown += 50; return refresh(); }
   if (!r.fold) return;
   if (r.fold.startsWith("t:")) {                          // a node of the runs' tree ( ADR 0023 ): folded until opened,
-    if (r.open) { opened.delete(r.fold); folded.add(r.fold); }     // one that holds a run running open until folded
+    if (r.open) { opened.delete(r.fold); folded.add(r.fold); hideUnder(r); }   // one that holds a run running open until folded
     else { folded.delete(r.fold); opened.add(r.fold); }
     keep("opened", [...opened]); keep("folded", [...folded]); return refresh();
   }
   const inOpened = r.kind == "group" || r.kind == "centries", set = inOpened ? opened : folded;
   set.has(r.fold) ? set.delete(r.fold) : set.add(r.fold); keep(inOpened ? "opened" : "folded", [...set]); refresh();
 }
+// a node folded with the row looked at under it: the cursor goes to the node ( else the page would keep it shown )
+function hideUnder(r) {
+  const i = rows.indexOf(r), j = selIndex();
+  if (i < 0 || j <= i) return;
+  for (let k = i + 1; k <= j; k++) if (rows[k].depth <= r.depth) return;
+  sel = r.key; selAt = i; history.replaceState(null, "", "#" + encodeURIComponent(sel)); det = null; dsel = -1; closeView();
+}
 function fold(unfold) {
-  const i = rows.findIndex(r => r.key == sel), r = rows[i];
+  const i = selIndex(), r = rows[i];
   if (!r) return;
   if (r.open !== null && r.open != unfold) return toggle(r);
   if (!unfold && r.open === null) {
@@ -994,7 +1025,7 @@ document.addEventListener("keydown", e => {
   if (done) e.preventDefault();
 });
 function sortNext() {                                   // s: the table above the row, by its next column ( up, then down )
-  let j = rows.findIndex(r => r.key == sel);
+  let j = selIndex();
   while (j >= 0 && (rows[j].kind == "tset" || rows[j].kind == "run")) j--;
   const h = rows[j]; if (!h || h.kind != "thead") return say("s: on a table of parameters, to sort it");
   const cols = h.cols.map(c => c[0]), pre = `s:${h.tree}=`, now = [...opened].find(o => o.startsWith(pre));
@@ -1011,11 +1042,12 @@ function sortBy(tree, col) {                             // a parameter table so
 $("list").addEventListener("click", e => {
   const th = e.target.closest(".th"); if (th) return sortBy(th.dataset.tree, th.dataset.sort);
   const el = e.target.closest(".row"); if (!el) return;
-  const r = rows.find(r => r.key == el.dataset.key); if (!r) return;
+  const at = +el.dataset.i, r = rows[at] && rows[at].key == el.dataset.key ? rows[at] : rows.find(r => r.key == el.dataset.key);
+  if (!r) return;
   setFocus("list");
   if (e.shiftKey && tab == "runs") return markTo(r.key);
   if ((MAC ? e.metaKey : e.ctrlKey) && tab == "runs") return markOne(r.key);
-  choose(r.key, false);
+  choose(r.key, false, false, rows.indexOf(r));
   if (e.target.closest(".fold") || r.kind == "day" || r.kind == "group" || r.kind == "more" || (r.open !== null && e.detail == 2)) toggle(r);
 });
 function pathClick(e, el) {

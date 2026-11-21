@@ -65,19 +65,21 @@ def forget( m, machines: list ) -> str:
 
 
 def toggle_watch( m ) -> str:
-    """`m` contacted or not, from now on -- saved, `errand status` follows it ( `ledger.set_watch` )."""
+    """`a`: a machine not contacted ( no work there lately ) contacted from now on ( `ledger.set_watch` ); one contacted,
+    its gauges switched off or on again ( `ledger.set_gauges` ): what runs there is followed all the same. Saved."""
     from ..agents import ledger
-    if m.here:
-        raise ValueError( "this machine is always watched" )
     if m.dormant:
         ledger.set_watch( m.names[ 0 ], True )
         m.watch_set = True
         m.activate()
         return f"watching {m.name}, from now on"
-    ledger.set_watch( m.names[ 0 ], False )
-    m.watch_set = False
-    m.deactivate()
-    return f"{m.name} is not watched any more ( a again, or work sent there, watches it )"
+    if m.here:
+        raise ValueError( "this machine's gauges are always measured" )
+    m.gauges = not m.gauges
+    ledger.set_gauges( m.names[ 0 ], m.gauges )
+    m.want_resources( getattr( m, "_wanted", False ) )
+    return ( f"{m.name}: its gauges measured again" if m.gauges else
+             f"{m.name}: its gauges not measured any more, what runs there followed all the same ( a again measures them )" )
 
 
 def rename( m, label: str ) -> str:

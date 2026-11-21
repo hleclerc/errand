@@ -405,7 +405,7 @@ def _views( where, root ) -> Views:
     if ssh is None:
         return Views( root )
     return Views( root, lambda rel, **kind: L.fetch_view( rel, ssh.host, where.there, root, ssh.options, say = say, **kind ),
-                  ssh.host )
+                  ssh.host, there = str( where.there ) )
 
 
 # ── coming back ──────────────────────────────────────────────────────────────

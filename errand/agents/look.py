@@ -255,7 +255,8 @@ def tail( path: Path, offset, size = CHUNK, raw = False ) -> dict:
 def kill( req: dict ) -> dict:
     """A process group stopped by its owner's rules, from anywhere on its machine: `pgid` ( and its
     `since`, so that a group of a reused pid is left alone ), `mark`: its marker, for `cancel`.
-    The escalation goes on in a thread: the answer is that it started."""
+    The escalation goes on in a thread: the answer is that it started. With `wait` ( `errand stop`: a
+    command that leaves, with no agent's thread to finish it ), it is done first: `gone` says it ended."""
     from . import procs as P
     if P.WINDOWS:
         return { "error": "stopping from here is not done on Windows yet: stop it from its command" }
@@ -275,6 +276,12 @@ def kill( req: dict ) -> dict:
             P.cancel( Path( req[ "mark" ] ) )
         P._killpg( pgid, P.SIGKILL )
 
+    if req.get( "wait" ):
+        escalate()
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and P._killpg( pgid, 0 ):
+            time.sleep( 0.05 )
+        return { "ok": True, "pid": os.getpid(), "gone": not P._killpg( pgid, 0 ) }
     threading.Thread( target = escalate, daemon = True ).start()
     return { "ok": True, "pid": os.getpid() }
 

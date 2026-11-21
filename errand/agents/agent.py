@@ -130,6 +130,16 @@ class Agent:
                     # Forced: what runs is stopped first, not left behind without its owner.
                     writer.send( channel, F.REPLY, { "ok": True, "running": running } )
                     threading.Thread( target = self.shut, daemon = True ).start()
+            elif op == "stop_here":
+                # `errand agents stop` from another machine: every other agent of this one, older sources included
+                def sweep():
+                    from .stopping import sweep as go
+                    try:
+                        got = { "stopped": go( req.get( "match" ) or "", bool( req.get( "force" ) ), spare = self.root ) }
+                    except Exception as err:
+                        got = { "error": f"{type( err ).__name__}: {err}" }
+                    writer.send( channel, F.REPLY, got )
+                threading.Thread( target = sweep, daemon = True ).start()
             elif op == "download":
                 # A file a run over there wants and cannot reach ( ADR 0013 ): this agent tries, from a thread.
                 def fetch():
@@ -146,12 +156,22 @@ class Agent:
             elif op in ( "sync", "pull", "receive" ):
                 from . import syncop
                 syncop.serve( self, writer, channels, channel, req )      # its own REPLY, from its thread
+            elif op == "tcp":
+                # A connection to a declared service of this machine, carried by the channel ( `errand serve forward` )
+                from .tcpop import TcpChannel
+                ch = channels[ channel ] = TcpChannel( writer, channel )
+                ch.start( req )                                           # ( its REPLY from its thread, once connected )
             elif op == "watch":
                 # A watcher's subscription ( `errand tui` ): events as things change ( `look.Watch` ).
                 w = look.Watch( writer, channel, req, root = self.root if self.root.name.startswith( "host-" ) else None )
                 channels[ channel ] = w
                 writer.send( channel, F.REPLY, { "ok": True } )
                 w.start()
+            elif op == "services":
+                # A page's services on this machine ( ADR 0027 ): look, or what a person typed ( `errand serve ... --on` )
+                from . import servicesop
+                threading.Thread( target = lambda: writer.send( channel, F.REPLY, servicesop.answer( req ) ),
+                                  daemon = True ).start()
             elif op in look.OPS:
                 # What a watcher asks ( `errand tui` ): from a thread, a table may wait on a guest's ssh.
                 threading.Thread( target = lambda: writer.send( channel, F.REPLY, look.answer( req ) ),
@@ -286,6 +306,12 @@ class Agent:
         # Going: the copies it synced are checked once more ( ADR 0006 ), for the next push to say.
         def starting():
             sweep( self.root )
+            # Which machine holds it: its directory may be on a file system other nodes share ( a cluster's home ),
+            # where its socket answers on this one only ( `stopping` goes there )
+            try:
+                ( self.root / "host" ).write_text( socket.gethostname() )
+            except OSError:
+                pass
             from .. import web
             self.web = web.start( self.root )
             if web.serves( self.root ):

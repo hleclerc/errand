@@ -40,14 +40,21 @@ def recorded( machines ):
 
 
 def from_histories():
-    """every `rows.build` of this test file reads the runs from the histories of the machines it is given"""
+    """every `rows.build` of this test file reads the runs from the histories of the machines it is given -- of this
+    file only: the files of a suite share one process, and the others' builds read the record they made"""
+    import sys
+    from pathlib import Path
+    from errand import entries as E
     from errand.tui import rows as R
-    if getattr( R.build, "_histories", False ):
-        return
-    build = R.build
+    mine = Path( sys._getframe( 1 ).f_globals[ "__file__" ] ).resolve()
+    if not getattr( R.build, "_histories", None ):
+        build = R.build
 
-    def histories( machines, **kw ):
-        recorded( machines )
-        return build( machines, **kw )
-    histories._histories = True
-    R.build = histories
+        def histories( machines, **kw ):
+            here = getattr( E.target, "file", None )
+            if here is None or Path( here ).resolve() in histories._histories:
+                recorded( machines )
+            return build( machines, **kw )
+        histories._histories = set()
+        R.build = histories
+    R.build._histories.add( mine )

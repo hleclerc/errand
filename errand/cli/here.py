@@ -9,7 +9,7 @@ import sys
 import time
 from pathlib import Path
 
-from .. import config, discovery, entries as E, local, mpi, needs, queue, results as R, runner as P, steps, streams
+from .. import config, discovery, entries as E, local, mpi, needs, queue, results as R, runner as P, steps, streams, yamlish
 from .style import bad, capture, dim, GREEN, head, RED, RESET, YELLOW
 from .project import _src_paths, _with_env, build_dir_for, tools_for, TAGS
 from .parsing import shown_params, target_argv
@@ -288,6 +288,10 @@ def run_case( e, modules, *, root, out_root, overrides, env_name, tags, version,
     leaf, entry_root = R.dirs_for( out_root, e, shown, where, root )
     R.clear( leaf )
     R.point_latest_at( leaf )
+    provenance = R.git_commit( root )
+    launch = R.launch_record( entry = e, root = root, env_name = env_name, where = where, tags = tags,
+                              params = shown, version = version, provenance = provenance )
+    yamlish.write( leaf / R.LAUNCH, launch )
     from ..agents import seen
     seen.note( leaf, root, f"{e.file.name}::{e.name}" + "".join( f" {k}={v}" for k, v in shown.items() ), env_name )
     # Where the case says its steps ( ADR 0010 ), and the shell functions that say them.
@@ -312,7 +316,7 @@ def run_case( e, modules, *, root, out_root, overrides, env_name, tags, version,
         from ..agents.ops import say
         say( { "op": "head", "name": e.name, "site": site, "params": { k: str( v ) for k, v in shown.items() },
                **( { "gpus": list( devices ) } if devices else { } ), "leaf": str( Path( leaf ).resolve() ),
-               **( { "rel": rel } if ( rel := _from_root( leaf, root ) ) else { } ) } )
+               **( { "rel": rel } if ( rel := _from_root( leaf, root ) ) else { } ), "launch": launch } )
     else:
         shows.head( e.name, site, { k: str( v ) for k, v in shown.items() }, gpus = devices, leaf = str( Path( leaf ).resolve() ),
                     local = str( Path( leaf ).resolve() ) )
@@ -320,9 +324,7 @@ def run_case( e, modules, *, root, out_root, overrides, env_name, tags, version,
     E.begin_run( e, resolved, leaf )
     status, error, hint = "PASS", None, None
     exit_code = None                  # a process's that ended the run otherwise than well: its stderr is said
-    provenance = R.git_commit( root )
-    crashed = R.crash_record( entry = e, root = root, env_name = env_name, where = where, tags = tags,
-                              params = shown, version = version, provenance = provenance )
+    crashed = R.crash_record( launch )
     # `errand.require` sets the cards in this process when the run is in it: put back as they were.
     with _with_env( handed ), _kept( E._DEVICE_VARS + ( queue.CLAIM, ) ), _followed( journal, marks, root ), \
             streams.raw( leaf, crashed, shows ) as kept:

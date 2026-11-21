@@ -40,6 +40,7 @@ def print_help( parser, verb = None ):
               "list"  : "errand list [options] [target [what the target takes…]]",
               "shell" : "errand shell [--env NAME]",
               "setup" : "errand setup [--env NAME] [--force] [--dry-run]",
+              "stop"  : "errand stop [ID...] | errand stop --mine",
               "forget": "errand forget ID",
               "vm"    : "errand vm stop" }.get( verb, f"errand {verb}" )
     print( f"usage: {usage}\n\n{what}" )

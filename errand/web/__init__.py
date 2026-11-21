@@ -233,7 +233,7 @@ def main( words = ( ), echo = print, browse = True ) -> int:
     got = ensure()
     if got is None:
         echo( f"errand web: the agent in {host_agent_dir()} serves no page ( started by an older errand? "
-              "`errand agents stop`, then again; its log says more )" )
+              "`errand agents restart`; its log says more )" )
         return 1
     if list( words ) == [ "token" ]:
         echo( got[ "token" ] )

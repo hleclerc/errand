@@ -378,8 +378,9 @@ def _services( ) -> list:
     """The services this machine keeps ( `errand serve`, ADR 0018 ): what each does."""
     try:
         from .. import serve
-        return [ { k: s.get( k ) for k in ( "name", "state", "detail", "address", "ports", "connections", "waiting", "label" ) }
-                 for s in serve.running() ]
+        return [ { k: s.get( k ) for k in ( "name", "state", "detail", "address", "ports", "connections", "waiting", "label",
+                                            "source" ) }
+                 for s in serve.listed() ]
     except Exception:
         return [ ]
 

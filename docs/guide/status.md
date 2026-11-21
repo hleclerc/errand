@@ -36,6 +36,31 @@ One command answers the question you otherwise answer with an ssh per machine, a
 
 A machine that cannot be reached is listed as `cannot say`, with the reason, not silently skipped.
 
+## Stopping a run
+
+```bash
+errand stop 6575aafc            # that one, wherever it runs ( a prefix of its id is enough )
+errand stop 6575aafc ea9ec989   # several
+errand stop b7f3                # a --batch submission, by its id
+errand stop --mine              # everything this project runs, on every machine
+errand stop                     # at a terminal: what runs or waits, numbered; answer 1 3, 2-4 or all
+```
+
+The id is the one `errand status` shows: on each run's line for this project, at the end of the
+line of another project ( `--all` shows its runs in full ). The run is found where `errand status` finds it, then its
+machine's agent stops it as `k` in `errand tui` does: INT, TERM after 2 s, KILL after 5 s, to its
+whole process group, then what it said must happen when it stops (a Slurm job it queued is
+cancelled). `errand stop` comes back once it is gone, and `errand status` no longer lists it.
+
+A run **waiting** for room in a machine's queue ( `waiting: room on node14: the machine to itself` )
+is stopped the same way: its place in the queue goes with it, and what waited behind it moves up.
+This is how work left queued by a command stopped on this side is removed, without `errand tui`.
+
+A `--batch` submission was let go by a handle, not given to an agent: `errand stop` ends its
+process group here or over ssh, or `scancel`s its job. Its record stays, with what it wrote;
+`errand forget ID` drops it. A process in a Windows guest, or on a node of an allocation, is not
+stopped from here: `errand vm stop`, `errand agents stop`, or its own command.
+
 ## How it knows
 
 Every machine errand runs work on has an [agent](./agents). The agent writes down each process it
@@ -63,7 +88,8 @@ weeks without work sent there. Looking at a machine ( `errand status`, `errand t
 errand machines                       # which, most recently used first
 errand machines forget h              # not asked any more, until work is sent there again
 errand machines rename cinaps lab     # shown as `lab`, whatever name reaches it
-errand machines watch jz off          # never contacted ( on: always; auto: while work is sent there )
+errand machines watch jz on           # always contacted ( auto: while work is sent there )
+errand machines gauges jz off         # its CPU / memory / GPU gauges not measured; what runs there still followed
 ```
 
 A machine reached under several names ( `cinaps` and `hugo.leclerc@cinaps` ) is one: the same ssh
@@ -72,9 +98,10 @@ the label it was given.
 
 A machine no work was sent to for a day is **dormant**: neither `errand status` nor `errand tui`
 contacts it, so that no agent of errand's starts for nothing on a machine others share ( a cluster's
-login node ). `errand status` names it; `errand tui` shows it greyed. `a` on a machine in `errand tui`
-switches watching it on or off, and it is saved: the next screen and `errand status` do the same.
-Sending work to a machine switched off watches it again.
+login node ). `errand status` names it; `errand tui` shows it greyed. `a` on a dormant machine in
+`errand tui` or `errand web` watches it from now on; on a machine watched, `a` switches its gauges off
+( or on again ): no CPU, memory or GPU measured there, what runs there followed all the same. Both are
+saved. `errand agents stop` contacts every machine, dormant or not.
 
 In `errand tui`: `f` forgets the machine under the cursor, `r` names it, `k` kills what runs there,
 each once confirmed. Forgetting a machine stops nothing over there: `k`, or `errand agents stop`, does.
@@ -87,6 +114,7 @@ each once confirmed. Forgetting a machine stops nothing over there: `k`, or `err
 | everything kept warm | `errand agents stop` |
 | what matches a name | `errand agents stop gpu` |
 | an agent that still runs something | `errand agents stop --force` |
+| everything, then this machine's agent and page again ( errand changed ) | `errand agents restart` |
 | Windows VMs, here and over every `Ssh` | `errand vm stop` |
 | a `--batch` submission | see [Let it run](./detached) |
 

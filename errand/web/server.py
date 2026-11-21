@@ -129,12 +129,13 @@ class Web:
         lists = any( k in e for k in ( "table", "seen", "runs", "resources" ) )
         details = set( )
         procs = { p.get( "id" ): p for p in ( m.table or { } ).get( "procs", [ ] ) }
+        from ..tui import rows as R
         for pid in e.get( "output" ) or [ ]:
             p = procs.get( pid )
             if p:
-                details.add( json.dumps( [ "work", m.name, p.get( "leaf" ) or p.get( "ident" ) or p.get( "id" ) or p.get( "name" ) ] ) )
+                details.add( json.dumps( R.key( _Run( m, p, "proc" ) ) ) )
         for r in ( e.get( "runs" ) or { } ).get( "put" ) or [ ]:
-            details.add( json.dumps( [ "work", m.name, r.get( "leaf" ) ] ) )
+            details.add( json.dumps( R.key( _Run( m, r ) ) ) )
         if "table" in e:
             details.add( "*" )                       # a process started, ended, said a step: whatever is shown
         if not lists and not details:
@@ -203,8 +204,15 @@ class Web:
             from ..tui import caches as K
             K.want( ms, entries = [ o[ 8 : ] for o in opened if o.startswith( "entries:" ) ], days = days )
             self._caches = ( folded, opened, days, every )
+        # the row the page looks at stays shown: what is above it kept open, a run that ends folded away included
+        reach = None
+        if tab == "runs" and q.get( "sel", "" ).startswith( "[" ):
+            try:
+                reach = tuple( json.loads( q[ "sel" ] ) )
+            except ValueError:
+                pass
         rows = R.build( ms, tab = tab, folded = folded, opened = opened, query = q.get( "q", "" ),
-                        shown = int( q.get( "shown" ) or 50 ), days = days, every = every )
+                        shown = int( q.get( "shown" ) or 50 ), days = days, every = every, reach = reach )
         running = waiting = 0
         for m in ms:
             for p in ( m.table or { } ).get( "procs", [ ] ):
@@ -582,7 +590,8 @@ def _can( row, m ) -> dict:
         can[ "rename" ] = True
         if not m.here:
             can[ "forget" ] = True
-            can[ "watch" ] = "watch" if getattr( m, "dormant", False ) else "unwatch"
+            can[ "watch" ] = "watch" if getattr( m, "dormant", False ) else \
+                "gauges on" if not getattr( m, "gauges", True ) else "gauges off"
     return can
 
 
@@ -651,10 +660,8 @@ def run_key( web, ident: str ) -> str | None:
 
 class _Run:
     """what `rows.key` reads of a run's row"""
-    kind = "run"
-
-    def __init__( self, m, rec ):
-        self.data = ( m.name, rec )
+    def __init__( self, m, rec, kind = "run" ):
+        self.data, self.kind = ( m.name, rec ), kind
 
 
 WAITING = """<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="2">

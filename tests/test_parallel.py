@@ -95,7 +95,7 @@ if test( "an entry's output arrives whole, not interleaved", tags = [ "slow" ] )
         # parent wrote them as they came, they would be shuffled -- and worse,
         # unattributable, since neither line says whose it is.
         lines = [ m.group( 1 ) for l in output.splitlines()          # behind its gutter ( ADR 0016 )
-                  if ( m := re.match( r"^(?:    [│┃] )?((?:first|second) \d)$", l ) ) ]
+                  if ( m := re.match( r"^(?: *[│┃] )?((?:first|second) \d)$", l ) ) ]
         assert lines == [ "first 0", "first 1", "first 2",
                           "second 0", "second 1", "second 2" ] or \
                lines == [ "second 0", "second 1", "second 2",
